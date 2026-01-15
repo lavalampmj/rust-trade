@@ -1,5 +1,16 @@
-# Trading pairs to monitor
-symbols = ["BTCUSDT", "ETHUSDT", "ADAUSDT"]
+# Trading pairs to monitor - Top 10 volume pairs on Binance
+symbols = [
+    "BTCUSDT",   # Bitcoin - #1 volume ($871M/day, 19% dominance)
+    "ETHUSDT",   # Ethereum - #2 volume
+    "SOLUSDT",   # Solana - #3 volume
+    "BNBUSDT",   # Binance Coin - #4 volume
+    "XRPUSDT",   # Ripple - #5 volume
+    "TRXUSDT",   # Tron - #6 volume
+    "ADAUSDT",   # Cardano - #7 volume
+    "DOGEUSDT",  # Dogecoin - #8 volume
+    "AVAXUSDT",  # Avalanche - #9 volume
+    "DOTUSDT"    # Polkadot - #10 volume
+]
 
 [server]
 host = "0.0.0.0"

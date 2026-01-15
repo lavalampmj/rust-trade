@@ -16,7 +16,7 @@ use super::{
 use trading_common::data::types::TickData;
 
 // Constants
-const BINANCE_WS_URL: &str = "wss://stream.binance.com:9443/stream";
+const BINANCE_WS_URL: &str = "wss://stream.binance.us:9443/stream";
 const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 
 /// Binance exchange implementation
