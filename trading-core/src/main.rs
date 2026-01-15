@@ -551,7 +551,7 @@ async fn init_application() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing()?;
 
     // Initialize Python strategy system (optional - graceful degradation)
-    let config_path = "config/development.toml";
+    let config_path = "../config/development.toml";
     match trading_common::backtest::strategy::initialize_python_strategies(config_path) {
         Ok(_) => info!("✓ Python strategy system initialized"),
         Err(e) => {

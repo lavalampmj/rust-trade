@@ -33,7 +33,7 @@ max_ticks_per_symbol = 10000
 
 [paper_trading]
 enabled = true
-strategy = "rsi"
+strategy = "rsi_python"
 initial_capital = 10000.0
 
 [strategies]
@@ -49,4 +49,11 @@ id = "sma_python"
 file = "example_sma.py"
 class_name = "ExampleSmaStrategy"
 description = "Example Python SMA implementation"
+enabled = true
+
+[[strategies.python]]
+id = "rsi_python"
+file = "example_rsi.py"
+class_name = "ExampleRsiStrategy"
+description = "Example Python RSI implementation"
 enabled = true
