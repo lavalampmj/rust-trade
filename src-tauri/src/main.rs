@@ -23,6 +23,16 @@ fn main() {
 
     tracing::info!("Trading Core Tauri Application starting...");
 
+    // Initialize Python strategy system (optional - graceful degradation)
+    let config_path = "config/development.toml";
+    match trading_common::backtest::strategy::initialize_python_strategies(config_path) {
+        Ok(_) => tracing::info!("✓ Python strategy system initialized"),
+        Err(e) => {
+            tracing::warn!("⚠ Python strategies unavailable: {}", e);
+            tracing::warn!("  Rust strategies will still work normally");
+        }
+    }
+
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(rt) => {
             tracing::info!("Tokio runtime created successfully");

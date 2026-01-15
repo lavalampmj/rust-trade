@@ -14,6 +14,10 @@ chrono = { version = "0.4.35", features = ["serde"] }
 thiserror = "1.0"
 async-trait = "0.1"
 redis = "0.23.0"
+pyo3 = { version = "0.22", features = ["auto-initialize"] }
+notify = "6.1"
+parking_lot = "0.12"
+toml = "0.8"
 
 [dev-dependencies]
 dotenv = "0.15"
