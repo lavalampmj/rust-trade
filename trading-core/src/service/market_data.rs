@@ -69,8 +69,15 @@ impl MarketDataService {
             self.symbols
         );
 
-        // Create data processing pipeline
-        let (tick_tx, tick_rx) = mpsc::channel::<TickData>(1000);
+        // Create data processing pipeline with larger buffer for backpressure handling
+        // Increased from 1000 to 10000 to handle burst traffic from multiple symbols
+        const CHANNEL_CAPACITY: usize = 10_000;
+        let (tick_tx, tick_rx) = mpsc::channel::<TickData>(CHANNEL_CAPACITY);
+
+        info!(
+            "Data pipeline initialized with buffer capacity: {} ticks",
+            CHANNEL_CAPACITY
+        );
 
         // Start data collection task
         let collection_task = self.start_data_collection(tick_tx).await?;
@@ -107,15 +114,59 @@ impl MarketDataService {
                     break;
                 }
 
-                // Create callback for tick data
+                // Create callback for tick data with backpressure monitoring
                 let tick_tx_clone = tick_tx.clone();
                 let callback = Box::new(move |tick: TickData| {
                     let tx = tick_tx_clone.clone();
+
+                    // Check channel capacity for backpressure monitoring
+                    let capacity = tx.capacity();
+                    let max_capacity = tx.max_capacity();
+                    let utilization_pct = if max_capacity > 0 {
+                        ((max_capacity - capacity) as f64 / max_capacity as f64) * 100.0
+                    } else {
+                        0.0
+                    };
+
+                    // Warn if channel is getting full (>80% utilized)
+                    if utilization_pct > 80.0 {
+                        warn!(
+                            "Processing backpressure detected: channel {}% full ({}/{}), data processing may be falling behind",
+                            utilization_pct as u32,
+                            max_capacity - capacity,
+                            max_capacity
+                        );
+                    } else if utilization_pct > 50.0 {
+                        debug!(
+                            "Channel utilization: {}% ({}/{})",
+                            utilization_pct as u32,
+                            max_capacity - capacity,
+                            max_capacity
+                        );
+                    }
+
                     spawn(async move {
-                        if let Err(e) = tx.send(tick).await {
-                            // Only log error if it's not a channel closed error during shutdown
-                            if !e.to_string().contains("channel closed") {
-                                error!("Failed to send tick data to processing pipeline: {}", e);
+                        // Use try_send for non-blocking check, fallback to send if needed
+                        match tx.try_send(tick.clone()) {
+                            Ok(_) => {
+                                // Successfully sent without blocking
+                            }
+                            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                // Channel is full, warn and use blocking send
+                                warn!(
+                                    "Channel full! Blocking until space available. Symbol: {}, Price: {}",
+                                    tick.symbol, tick.price
+                                );
+
+                                if let Err(e) = tx.send(tick).await {
+                                    if !e.to_string().contains("channel closed") {
+                                        error!("Failed to send tick data after blocking: {}", e);
+                                    }
+                                }
+                            }
+                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                // Channel closed, likely during shutdown
+                                debug!("Tick channel closed, skipping tick");
                             }
                         }
                     });
@@ -175,6 +226,10 @@ impl MarketDataService {
             let mut batch_buffer = Vec::with_capacity(batch_config.max_batch_size);
             let mut last_flush = Instant::now();
             let mut flush_timer = interval(Duration::from_secs(batch_config.max_batch_time));
+
+            // Add periodic health monitoring (every 30 seconds)
+            let mut health_monitor = interval(Duration::from_secs(30));
+            let mut last_tick_count = 0u64;
 
             loop {
                 select! {
@@ -244,6 +299,36 @@ impl MarketDataService {
                             ).await;
                         }
                         break;
+                    }
+
+                    _ = health_monitor.tick() => {
+                        // Periodic health check and metrics logging
+                        let current_stats = stats.lock().await;
+                        let current_tick_count = current_stats.total_ticks_processed;
+                        let ticks_processed_since_last = current_tick_count - last_tick_count;
+                        last_tick_count = current_tick_count;
+
+                        info!(
+                            "Pipeline Health: {} ticks/30s | Total: {} | Batches: {} | Failed: {} | Retries: {} | Buffer: {}/{}",
+                            ticks_processed_since_last,
+                            current_stats.total_ticks_processed,
+                            current_stats.total_batches_flushed,
+                            current_stats.total_failed_batches,
+                            current_stats.total_retry_attempts,
+                            batch_buffer.len(),
+                            batch_config.max_batch_size
+                        );
+
+                        // Warn if batch buffer is getting full
+                        let buffer_utilization = (batch_buffer.len() as f64 / batch_config.max_batch_size as f64) * 100.0;
+                        if buffer_utilization > 80.0 {
+                            warn!(
+                                "Batch buffer {}% full ({}/{}), database writes may be slow",
+                                buffer_utilization as u32,
+                                batch_buffer.len(),
+                                batch_config.max_batch_size
+                            );
+                        }
                     }
                 }
             }

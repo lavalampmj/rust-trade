@@ -16,9 +16,18 @@ pub struct BatchConfig {
 impl Default for BatchConfig {
     fn default() -> Self {
         Self {
-            max_batch_size: 100,
-            max_batch_time: 1,
+            // Increased from 100 to 500 for better throughput with 10 symbols
+            // Reduces database round-trips while maintaining reasonable memory usage
+            max_batch_size: 500,
+
+            // Increased from 1 to 5 seconds to allow larger batches to accumulate
+            // Better balance between latency and database efficiency
+            max_batch_time: 5,
+
+            // Reasonable retry attempts for transient failures
             max_retry_attempts: 3,
+
+            // 1 second delay between retries
             retry_delay_ms: 1000,
         }
     }
