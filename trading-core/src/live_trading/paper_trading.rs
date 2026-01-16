@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::debug;
 
+use crate::metrics;
 use trading_common::backtest::strategy::{Signal, Strategy};
 use trading_common::data::cache::TickDataCache;
 use trading_common::data::repository::TickDataRepository;
@@ -39,6 +40,8 @@ impl PaperTradingProcessor {
     }
 
     pub async fn process_tick(&mut self, tick: &TickData) -> Result<(), String> {
+        // Start timer for paper trading tick processing
+        let timer = metrics::PAPER_TICK_DURATION.start_timer();
         let start_time = Instant::now();
 
         // 1. Get data from cache
@@ -52,6 +55,13 @@ impl PaperTradingProcessor {
         let cache_hit = !recent_ticks.is_empty();
         let cache_time = cache_start.elapsed().as_micros() as u64;
 
+        // Update cache metrics
+        if cache_hit {
+            metrics::CACHE_HITS_TOTAL.inc();
+        } else {
+            metrics::CACHE_MISSES_TOTAL.inc();
+        }
+
         // 2. Policy Handle - Using Existing Policies
         let signal = self.strategy.on_tick(tick);
 
@@ -61,6 +71,10 @@ impl PaperTradingProcessor {
         // 4. Calculate Portfolio Value
         let portfolio_value = self.calculate_portfolio_value(tick.price);
         let total_pnl = portfolio_value - self.initial_capital;
+
+        // Update portfolio metrics
+        metrics::PAPER_PORTFOLIO_VALUE.set(portfolio_value.to_string().parse::<f64>().unwrap_or(0.0));
+        metrics::PAPER_PNL.set(total_pnl.to_string().parse::<f64>().unwrap_or(0.0));
 
         // 5. Record to database
         let processing_time = start_time.elapsed().as_micros() as u64;
@@ -92,6 +106,9 @@ impl PaperTradingProcessor {
             processing_time,
         );
 
+        // Stop timer for paper trading tick processing
+        timer.observe_duration();
+
         Ok(())
     }
 
@@ -112,6 +129,7 @@ impl PaperTradingProcessor {
 
                     self.cash -= cost;
                     self.total_trades += 1;
+                    metrics::PAPER_TRADES_TOTAL.inc();
 
                     debug!(
                         "BUY executed: {} @ {}, position: {}, cash: {}",
@@ -132,6 +150,7 @@ impl PaperTradingProcessor {
                     self.cash += proceeds;
                     self.position -= quantity;
                     self.total_trades += 1;
+                    metrics::PAPER_TRADES_TOTAL.inc();
 
                     if self.position == Decimal::ZERO {
                         self.avg_cost = Decimal::ZERO;

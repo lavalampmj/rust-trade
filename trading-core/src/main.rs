@@ -10,6 +10,7 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 mod config;
 mod exchange;
 mod live_trading;
+mod metrics;
 mod service;
 
 // Import from trading-common
@@ -549,6 +550,19 @@ async fn init_application() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize tracing/logging
     init_tracing()?;
+
+    // Initialize Prometheus metrics
+    metrics::register_metrics()?;
+    metrics::start_uptime_monitor();
+    info!("✓ Prometheus metrics initialized");
+
+    // Start metrics HTTP server on port 9090
+    tokio::spawn(async {
+        if let Err(e) = metrics::start_metrics_server(9090).await {
+            error!("Metrics server error: {}", e);
+        }
+    });
+    info!("📊 Metrics server started on http://0.0.0.0:9090/metrics");
 
     // Initialize Python strategy system (optional - graceful degradation)
     let config_path = "../config/development.toml";

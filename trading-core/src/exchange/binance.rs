@@ -7,6 +7,7 @@ use tokio::time::sleep;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{debug, error, info, warn};
 
+use crate::metrics;
 use super::{
     errors::ExchangeError,
     traits::Exchange,
@@ -99,6 +100,7 @@ impl BinanceExchange {
                 }
                 Err(e) => {
                     reconnect_attempts += 1;
+                    metrics::WS_RECONNECTS_TOTAL.inc();
                     error!(
                         "WebSocket connection failed (attempt {}): {}",
                         reconnect_attempts, e
@@ -136,12 +138,18 @@ impl BinanceExchange {
         callback: &Box<dyn Fn(TickData) + Send + Sync>,
         mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
     ) -> Result<(), ExchangeError> {
+        // Track connection attempt
+        metrics::WS_CONNECTIONS_TOTAL.inc();
+
         // Establish WebSocket connection
         let (ws_stream, _) = connect_async(&self.ws_url)
             .await
             .map_err(|e| ExchangeError::WebSocketError(format!("Failed to connect: {}", e)))?;
 
         debug!("WebSocket connected to {}", self.ws_url);
+
+        // Mark as connected
+        metrics::WS_CONNECTION_STATUS.set(1);
 
         let (mut write, mut read) = ws_stream.split();
 
@@ -176,13 +184,19 @@ impl BinanceExchange {
                         }
                         Some(Ok(Message::Close(_))) => {
                             info!("WebSocket closed by server");
+                            metrics::WS_DISCONNECTIONS_TOTAL.inc();
+                            metrics::WS_CONNECTION_STATUS.set(0);
                             break;
                         }
                         Some(Err(e)) => {
+                            metrics::WS_DISCONNECTIONS_TOTAL.inc();
+                            metrics::WS_CONNECTION_STATUS.set(0);
                             return Err(ExchangeError::WebSocketError(e.to_string()));
                         }
                         None => {
                             info!("WebSocket stream ended");
+                            metrics::WS_DISCONNECTIONS_TOTAL.inc();
+                            metrics::WS_CONNECTION_STATUS.set(0);
                             break;
                         }
                         _ => continue,
@@ -190,6 +204,8 @@ impl BinanceExchange {
                 }
                 _ = shutdown_rx.recv() => {
                     info!("Shutdown signal received, closing WebSocket gracefully");
+                    metrics::WS_DISCONNECTIONS_TOTAL.inc();
+                    metrics::WS_CONNECTION_STATUS.set(0);
                     // Send Close frame to server
                     if let Err(e) = write.send(Message::Close(None)).await {
                         warn!("Failed to send close frame: {}", e);

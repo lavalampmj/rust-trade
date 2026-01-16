@@ -8,6 +8,7 @@ use tracing::{debug, error, info, warn};
 use super::{BatchConfig, BatchStats, ServiceError};
 use crate::exchange::Exchange;
 use crate::live_trading::PaperTradingProcessor;
+use crate::metrics;
 use trading_common::data::types::TickData;
 use trading_common::data::{cache::TickDataCache, repository::TickDataRepository};
 
@@ -119,6 +120,9 @@ impl MarketDataService {
                 let callback = Box::new(move |tick: TickData| {
                     let tx = tick_tx_clone.clone();
 
+                    // Increment tick received counter
+                    metrics::TICKS_RECEIVED_TOTAL.inc();
+
                     // Check channel capacity for backpressure monitoring
                     let capacity = tx.capacity();
                     let max_capacity = tx.max_capacity();
@@ -127,6 +131,10 @@ impl MarketDataService {
                     } else {
                         0.0
                     };
+
+                    // Update channel metrics
+                    metrics::CHANNEL_UTILIZATION.set(utilization_pct);
+                    metrics::CHANNEL_BUFFER_SIZE.set((max_capacity - capacity) as i64);
 
                     // Warn if channel is getting full (>80% utilized)
                     if utilization_pct > 80.0 {
@@ -251,11 +259,12 @@ impl MarketDataService {
                                 // Add to batch buffer
                                 batch_buffer.push(tick);
 
-                                // Update stats
+                                // Update stats and metrics
                                 {
                                     let mut s = stats.lock().await;
                                     s.total_ticks_processed += 1;
                                 }
+                                metrics::TICKS_PROCESSED_TOTAL.inc();
 
                                 // Check if the batch is full
                                 if batch_buffer.len() >= batch_config.max_batch_size {
@@ -308,6 +317,9 @@ impl MarketDataService {
                         let ticks_processed_since_last = current_tick_count - last_tick_count;
                         last_tick_count = current_tick_count;
 
+                        // Update batch buffer size metric
+                        metrics::BATCH_BUFFER_SIZE.set(batch_buffer.len() as i64);
+
                         info!(
                             "Pipeline Health: {} ticks/30s | Total: {} | Batches: {} | Failed: {} | Retries: {} | Buffer: {}/{}",
                             ticks_processed_since_last,
@@ -348,11 +360,12 @@ impl MarketDataService {
         if let Err(e) = repository.get_cache().push_tick(tick).await {
             warn!("Failed to update cache for tick {}: {}", tick.trade_id, e);
 
-            // Update failure stats
+            // Update failure stats and metrics
             {
                 let mut s = stats.lock().await;
                 s.cache_update_failures += 1;
             }
+            metrics::CACHE_UPDATE_FAILURES_TOTAL.inc();
         } else {
             debug!("Cache updated for symbol: {}", tick.symbol);
         }
@@ -373,19 +386,25 @@ impl MarketDataService {
         let mut attempt = 0;
 
         loop {
-            match repository.batch_insert(batch_buffer.clone()).await {
+            // Measure batch insert duration
+            let timer = metrics::BATCH_INSERT_DURATION.start_timer();
+            let result = repository.batch_insert(batch_buffer.clone()).await;
+            timer.observe_duration();
+
+            match result {
                 Ok(inserted_count) => {
                     info!(
                         "Successfully flushed batch: {} ticks inserted",
                         inserted_count
                     );
 
-                    // Update success stats
+                    // Update success stats and metrics
                     {
                         let mut s = stats.lock().await;
                         s.total_batches_flushed += 1;
                         s.last_flush_time = Some(chrono::Utc::now());
                     }
+                    metrics::BATCHES_FLUSHED_TOTAL.inc();
 
                     batch_buffer.clear();
                     break;
@@ -397,11 +416,12 @@ impl MarketDataService {
                         attempt, config.max_retry_attempts, e
                     );
 
-                    // Update retry stats
+                    // Update retry stats and metrics
                     {
                         let mut s = stats.lock().await;
                         s.total_retry_attempts += 1;
                     }
+                    metrics::BATCH_RETRIES_TOTAL.inc();
 
                     if attempt >= config.max_retry_attempts {
                         error!(
@@ -409,11 +429,12 @@ impl MarketDataService {
                             config.max_retry_attempts, batch_size
                         );
 
-                        // Update failure stats
+                        // Update failure stats and metrics
                         {
                             let mut s = stats.lock().await;
                             s.total_failed_batches += 1;
                         }
+                        metrics::BATCHES_FAILED_TOTAL.inc();
 
                         batch_buffer.clear();
                         break;
