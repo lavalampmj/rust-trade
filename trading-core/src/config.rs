@@ -1,4 +1,5 @@
 use config::{Config, ConfigError, File};
+use rust_decimal::Decimal;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -35,12 +36,50 @@ pub struct PaperTrading {
     pub initial_capital: f64,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct Validation {
+    #[serde(default = "default_validation_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_max_price_change_pct")]
+    pub max_price_change_pct: f64,
+    #[serde(default = "default_timestamp_tolerance_minutes")]
+    pub timestamp_tolerance_minutes: i64,
+    #[serde(default = "default_max_past_days")]
+    pub max_past_days: i64,
+}
+
+impl Default for Validation {
+    fn default() -> Self {
+        Self {
+            enabled: default_validation_enabled(),
+            max_price_change_pct: default_max_price_change_pct(),
+            timestamp_tolerance_minutes: default_timestamp_tolerance_minutes(),
+            max_past_days: default_max_past_days(),
+        }
+    }
+}
+
+fn default_validation_enabled() -> bool {
+    true
+}
+fn default_max_price_change_pct() -> f64 {
+    10.0
+}
+fn default_timestamp_tolerance_minutes() -> i64 {
+    5
+}
+fn default_max_past_days() -> i64 {
+    3650
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Settings {
     pub database: Database,
     pub cache: Cache,
     pub symbols: Vec<String>,
     pub paper_trading: PaperTrading,
+    #[serde(default)]
+    pub validation: Validation,
 }
 
 impl Settings {

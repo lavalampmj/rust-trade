@@ -25,6 +25,12 @@ lazy_static! {
         "Total number of ticks processed successfully"
     ).expect("Failed to create ticks_processed_total metric");
 
+    /// Total number of ticks rejected due to validation failure
+    pub static ref TICKS_REJECTED_TOTAL: IntCounter = IntCounter::new(
+        "trading_ticks_rejected_total",
+        "Total number of ticks rejected due to validation failure"
+    ).expect("Failed to create ticks_rejected_total metric");
+
     /// Current channel buffer utilization (0-100%)
     pub static ref CHANNEL_UTILIZATION: Gauge = Gauge::new(
         "trading_channel_utilization_percent",
@@ -199,6 +205,7 @@ pub fn register_metrics() -> Result<(), Box<dyn std::error::Error>> {
     // Tick processing metrics
     REGISTRY.register(Box::new(TICKS_RECEIVED_TOTAL.clone()))?;
     REGISTRY.register(Box::new(TICKS_PROCESSED_TOTAL.clone()))?;
+    REGISTRY.register(Box::new(TICKS_REJECTED_TOTAL.clone()))?;
     REGISTRY.register(Box::new(CHANNEL_UTILIZATION.clone()))?;
     REGISTRY.register(Box::new(CHANNEL_BUFFER_SIZE.clone()))?;
 

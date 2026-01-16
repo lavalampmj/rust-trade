@@ -57,3 +57,19 @@ file = "example_rsi.py"
 class_name = "ExampleRsiStrategy"
 description = "Example Python RSI implementation"
 enabled = true
+
+[validation]
+# Enable tick data validation (default: true)
+enabled = true
+
+# Maximum price change per tick (percentage)
+# 10.0 = allow up to 10% price movement between consecutive ticks
+max_price_change_pct = 10.0
+
+# Timestamp tolerance (minutes)
+# Allow up to 5 minutes clock skew
+timestamp_tolerance_minutes = 5
+
+# Maximum past timestamp (days)
+# Allow historical data up to 10 years old
+max_past_days = 3650

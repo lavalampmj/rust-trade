@@ -10,6 +10,7 @@ use crate::exchange::Exchange;
 use crate::live_trading::PaperTradingProcessor;
 use crate::metrics;
 use trading_common::data::types::TickData;
+use trading_common::data::validator::TickValidator;
 use trading_common::data::{cache::TickDataCache, repository::TickDataRepository};
 
 /// Market data service that coordinates between exchange and data storage
@@ -28,6 +29,8 @@ pub struct MarketDataService {
     stats: Arc<Mutex<BatchStats>>,
     /// Paper trading processor
     paper_trading: Option<Arc<Mutex<PaperTradingProcessor>>>,
+    /// Tick data validator
+    validator: Arc<TickValidator>,
 }
 
 impl MarketDataService {
@@ -36,6 +39,7 @@ impl MarketDataService {
         exchange: Arc<dyn Exchange>,
         repository: Arc<TickDataRepository>,
         symbols: Vec<String>,
+        validator: Arc<TickValidator>,
     ) -> Self {
         let (shutdown_tx, _) = broadcast::channel(16);
 
@@ -47,6 +51,7 @@ impl MarketDataService {
             shutdown_tx,
             stats: Arc::new(Mutex::new(BatchStats::default())),
             paper_trading: None,
+            validator,
         }
     }
 
@@ -229,6 +234,7 @@ impl MarketDataService {
         let stats = Arc::clone(&self.stats);
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let paper_trading = self.paper_trading.clone();
+        let validator = Arc::clone(&self.validator);
 
         let handle = spawn(async move {
             let mut batch_buffer = Vec::with_capacity(batch_config.max_batch_size);
@@ -245,6 +251,13 @@ impl MarketDataService {
                     tick_opt = tick_rx.recv() => {
                         match tick_opt {
                             Some(tick) => {
+                                // Validate tick data
+                                if let Err(e) = validator.validate(&tick) {
+                                    warn!("Tick validation failed for {}: {}", tick.symbol, e);
+                                    metrics::TICKS_REJECTED_TOTAL.inc();
+                                    continue; // Skip invalid tick
+                                }
+
                                 // Update cache immediately
                                 Self::update_cache_async(&repository, &tick, &stats).await;
 

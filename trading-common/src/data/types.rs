@@ -61,6 +61,27 @@ impl TickData {
             is_buyer_maker,
         }
     }
+
+    /// Create TickData without validation (for trusted sources like database reads)
+    pub fn new_unchecked(
+        timestamp: DateTime<Utc>,
+        symbol: String,
+        price: Decimal,
+        quantity: Decimal,
+        side: TradeSide,
+        trade_id: String,
+        is_buyer_maker: bool,
+    ) -> Self {
+        Self {
+            timestamp,
+            symbol,
+            price,
+            quantity,
+            side,
+            trade_id,
+            is_buyer_maker,
+        }
+    }
 }
 
 // =================================================================
