@@ -21,3 +21,4 @@ toml = "0.8"
 
 [dev-dependencies]
 dotenv = "0.15"
+uuid = { version = "1.0", features = ["v4"] }

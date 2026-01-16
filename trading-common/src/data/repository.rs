@@ -953,11 +953,32 @@ mod tests {
         TickDataRepository::new(pool, cache)
     }
 
+    /// Generate a unique test symbol to avoid collisions between parallel tests
+    /// Uses timestamp + random suffix to keep within VARCHAR(20) limit
+    fn generate_test_symbol(prefix: &str) -> String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        // Take last 8 digits of timestamp + random 2 digits
+        let suffix = timestamp % 100000000;
+        let random_suffix = (timestamp % 100) as u8;
+        format!("{}_{}{:02}", prefix, suffix, random_suffix)
+    }
+
+    /// Cleanup database - ensures complete removal of test data
     async fn cleanup_database(pool: &PgPool, symbol: &str) {
+        // Delete all ticks for this symbol
         sqlx::query!("DELETE FROM tick_data WHERE symbol = $1", symbol)
             .execute(pool)
             .await
-            .expect("Failed to clean up database");
+            .expect("Failed to clean up tick_data");
+
+        // Also delete from live_strategy_log if exists
+        let _ = sqlx::query!("DELETE FROM live_strategy_log WHERE symbol = $1", symbol)
+            .execute(pool)
+            .await;
     }
 
     #[tokio::test]
@@ -1154,23 +1175,25 @@ mod tests {
     async fn test_get_recent_ticks_for_backtest() {
         let repo = create_repository().await;
         let pool = repo.get_pool();
-        let symbol = "BTCUSDT_BACKTEST";
+
+        // Use unique symbol to avoid test pollution
+        let symbol = generate_test_symbol("BT_REC");
 
         // Clean up before test
-        cleanup_database(pool, symbol).await;
+        cleanup_database(pool, &symbol).await;
 
         // Insert ticks with different timestamps
         let base_time = Utc::now();
         let ticks = vec![
-            create_test_tick(symbol, "50000.0", "bt1", Some(base_time)),
+            create_test_tick(&symbol, "50000.0", "bt1", Some(base_time)),
             create_test_tick(
-                symbol,
+                &symbol,
                 "51000.0",
                 "bt2",
                 Some(base_time + Duration::seconds(1)),
             ),
             create_test_tick(
-                symbol,
+                &symbol,
                 "52000.0",
                 "bt3",
                 Some(base_time + Duration::seconds(2)),
@@ -1185,47 +1208,49 @@ mod tests {
 
         // Get recent ticks for backtest
         let backtest_ticks = repo
-            .get_recent_ticks_for_backtest(symbol, 3)
+            .get_recent_ticks_for_backtest(&symbol, 3)
             .await
             .expect("Failed to get recent ticks for backtest");
 
         // Verify order is ASC (oldest first)
-        assert_eq!(backtest_ticks.len(), 3);
-        assert_eq!(backtest_ticks[0].trade_id, "bt1");
-        assert_eq!(backtest_ticks[1].trade_id, "bt2");
-        assert_eq!(backtest_ticks[2].trade_id, "bt3");
+        assert_eq!(backtest_ticks.len(), 3, "Should return exactly 3 ticks");
+        assert_eq!(backtest_ticks[0].trade_id, "bt1", "First tick should be bt1");
+        assert_eq!(backtest_ticks[1].trade_id, "bt2", "Second tick should be bt2");
+        assert_eq!(backtest_ticks[2].trade_id, "bt3", "Third tick should be bt3");
         assert!(backtest_ticks[0].timestamp <= backtest_ticks[1].timestamp);
         assert!(backtest_ticks[1].timestamp <= backtest_ticks[2].timestamp);
 
         // Clean up
-        cleanup_database(pool, symbol).await;
+        cleanup_database(pool, &symbol).await;
     }
 
     #[tokio::test]
     async fn test_get_historical_data_for_backtest() {
         let repo = create_repository().await;
         let pool = repo.get_pool();
-        let symbol = "BTCUSDT_BACKTEST";
+
+        // Use unique symbol to avoid test pollution
+        let symbol = generate_test_symbol("BT_HIST");
 
         // Clean up before test
-        cleanup_database(pool, symbol).await;
+        cleanup_database(pool, &symbol).await;
 
         // Insert ticks with different timestamps
         let base_time = Utc::now();
         let ticks = vec![
             create_test_tick(
-                symbol,
+                &symbol,
                 "50000.0",
                 "hist1",
                 Some(base_time - Duration::hours(2)),
             ),
             create_test_tick(
-                symbol,
+                &symbol,
                 "51000.0",
                 "hist2",
                 Some(base_time - Duration::hours(1)),
             ),
-            create_test_tick(symbol, "52000.0", "hist3", Some(base_time)),
+            create_test_tick(&symbol, "52000.0", "hist3", Some(base_time)),
         ];
 
         for tick in ticks {
@@ -1238,23 +1263,23 @@ mod tests {
         let start_time = base_time - Duration::hours(3);
         let end_time = base_time + Duration::hours(1);
         let historical_ticks = repo
-            .get_historical_data_for_backtest(symbol, start_time, end_time, None)
+            .get_historical_data_for_backtest(&symbol, start_time, end_time, None)
             .await
             .expect("Failed to get historical data for backtest");
 
         // Verify order is ASC and within time range
-        assert_eq!(historical_ticks.len(), 3);
-        assert_eq!(historical_ticks[0].trade_id, "hist1");
-        assert_eq!(historical_ticks[1].trade_id, "hist2");
-        assert_eq!(historical_ticks[2].trade_id, "hist3");
+        assert_eq!(historical_ticks.len(), 3, "Should return exactly 3 ticks");
+        assert_eq!(historical_ticks[0].trade_id, "hist1", "First tick should be hist1");
+        assert_eq!(historical_ticks[1].trade_id, "hist2", "Second tick should be hist2");
+        assert_eq!(historical_ticks[2].trade_id, "hist3", "Third tick should be hist3");
 
         for tick in &historical_ticks {
-            assert!(tick.timestamp >= start_time);
-            assert!(tick.timestamp <= end_time);
+            assert!(tick.timestamp >= start_time, "Tick should be after start time");
+            assert!(tick.timestamp <= end_time, "Tick should be before end time");
         }
 
         // Clean up
-        cleanup_database(pool, symbol).await;
+        cleanup_database(pool, &symbol).await;
     }
 
     #[tokio::test]
