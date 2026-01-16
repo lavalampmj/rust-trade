@@ -6,3 +6,6 @@ pub mod types;
 pub use errors::ServiceError;
 pub use market_data::MarketDataService;
 pub use types::*;
+
+#[cfg(test)]
+mod market_data_tests;
