@@ -29,6 +29,8 @@
 - [ ] Multiple timezone support for global markets
 
 ### OHLC Data Management
+- [ ] Open of Session for first bar
+- [ ] Close of Session for cutting last bar short
 - [ ] Design decision: Database storage vs on-the-fly generation
   - Option A: Pre-computed OHLC table (fast queries, storage overhead)
   - Option B: On-demand aggregation (no storage, slower queries)
@@ -58,6 +60,8 @@
 ### Strategy Features
 - [ ] Multi-timeframe strategy support
 - [ ] Strategy parameter optimization framework
+-     Brute Force parameter
+-     Parameter optima search, e.g. genetic, PSO, 
 - [ ] Walk-forward analysis
 - [ ] Strategy portfolio allocation
 - [ ] Risk management rules (max drawdown, position sizing)
