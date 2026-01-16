@@ -7,3 +7,5 @@ Cargo.lock
 
 # Claude Code personal settings
 .claude/settings.local.json__pycache__/
+__pycache__/
+*.pyc

@@ -1,5 +1,4 @@
 use config::{Config, ConfigError, File};
-use rust_decimal::Decimal;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
