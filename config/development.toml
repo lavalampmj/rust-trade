@@ -17,9 +17,9 @@ host = "0.0.0.0"
 port = 8080
 
 [database]
-max_connections = 5
-min_connections = 1
-max_lifetime = 1800
+max_connections = 8  # Increased from 5 for 10 trading pairs
+min_connections = 2  # Keep warm connections ready
+max_lifetime = 1800  # 30 minutes
 
 [cache]
 [cache.memory]
