@@ -13,13 +13,13 @@ use trading_common::data::types::{LiveStrategyLog, TickData};
 pub struct PaperTradingProcessor {
     strategy: Box<dyn Strategy + Send>,
     repository: Arc<TickDataRepository>,
-    initial_capital: Decimal,
+    pub(crate) initial_capital: Decimal,
 
     //Simple status tracking
-    cash: Decimal,
-    position: Decimal,
-    avg_cost: Decimal,
-    total_trades: u64,
+    pub(crate) cash: Decimal,
+    pub(crate) position: Decimal,
+    pub(crate) avg_cost: Decimal,
+    pub(crate) total_trades: u64,
 }
 
 impl PaperTradingProcessor {
@@ -175,7 +175,7 @@ impl PaperTradingProcessor {
         Ok("HOLD".to_string())
     }
 
-    fn calculate_portfolio_value(&self, current_price: Decimal) -> Decimal {
+    pub(crate) fn calculate_portfolio_value(&self, current_price: Decimal) -> Decimal {
         self.cash + (self.position * current_price)
     }
 
