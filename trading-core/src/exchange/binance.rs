@@ -2,6 +2,9 @@
 
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
+use governor::{Quota, RateLimiter, clock::DefaultClock, state::{InMemoryState, NotKeyed}};
+use std::num::NonZeroU32;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -18,18 +21,30 @@ use trading_common::data::types::TickData;
 
 // Constants
 const BINANCE_WS_URL: &str = "wss://stream.binance.us:9443/stream";
-const RECONNECT_DELAY: Duration = Duration::from_secs(5);
+const INITIAL_RECONNECT_DELAY: Duration = Duration::from_secs(1);
+const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(60);
+const MAX_RECONNECT_ATTEMPTS: u32 = 10;
+const RECONNECT_RATE_LIMIT_PER_MINUTE: u32 = 5;
 
 /// Binance exchange implementation
 pub struct BinanceExchange {
     ws_url: String,
+    rate_limiter: Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
 }
 
 impl BinanceExchange {
     /// Create a new Binance exchange instance
     pub fn new() -> Self {
+        // Create rate limiter: 5 reconnection attempts per minute
+        let quota = Quota::per_minute(
+            NonZeroU32::new(RECONNECT_RATE_LIMIT_PER_MINUTE)
+                .expect("RECONNECT_RATE_LIMIT_PER_MINUTE must be > 0")
+        );
+        let rate_limiter = Arc::new(RateLimiter::direct(quota));
+
         Self {
             ws_url: BINANCE_WS_URL.to_string(),
+            rate_limiter,
         }
     }
 
@@ -76,7 +91,7 @@ impl BinanceExchange {
         );
 
         let mut reconnect_attempts = 0;
-        const MAX_RECONNECT_ATTEMPTS: u32 = 10;
+        let mut current_delay = INITIAL_RECONNECT_DELAY;
 
         loop {
             // Check for shutdown signal before each connection attempt
@@ -95,15 +110,15 @@ impl BinanceExchange {
                     );
 
                     // If connection ended normally, it's likely due to shutdown signal
-                    // Exit the reconnection loop
+                    // Exit the reconnection loop (no retry needed)
                     return Ok(());
                 }
                 Err(e) => {
                     reconnect_attempts += 1;
                     metrics::WS_RECONNECTS_TOTAL.inc();
                     error!(
-                        "WebSocket connection failed (attempt {}): {}",
-                        reconnect_attempts, e
+                        "WebSocket connection failed (attempt {}/{}): {}",
+                        reconnect_attempts, MAX_RECONNECT_ATTEMPTS, e
                     );
 
                     if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
@@ -113,11 +128,39 @@ impl BinanceExchange {
                         )));
                     }
 
-                    warn!("Attempting to reconnect in {:?}...", RECONNECT_DELAY);
+                    // Check rate limiter before attempting reconnection
+                    if self.rate_limiter.check().is_err() {
+                        error!(
+                            "Reconnection rate limit exceeded ({} attempts/minute). Waiting before retry...",
+                            RECONNECT_RATE_LIMIT_PER_MINUTE
+                        );
+
+                        // Wait for rate limit window to reset (1 minute)
+                        tokio::select! {
+                            _ = sleep(Duration::from_secs(60)) => {
+                                warn!("Rate limit window reset, will retry connection");
+                            }
+                            _ = shutdown_rx.recv() => {
+                                info!("Shutdown signal received during rate limit wait");
+                                return Ok(());
+                            }
+                        }
+                    }
+
+                    // Exponential backoff: double the delay each time, up to MAX_RECONNECT_DELAY
+                    warn!(
+                        "Attempting to reconnect in {:?}... (exponential backoff, attempt {}/{})",
+                        current_delay, reconnect_attempts, MAX_RECONNECT_ATTEMPTS
+                    );
 
                     // Wait for reconnect delay or shutdown signal
                     tokio::select! {
-                        _ = sleep(RECONNECT_DELAY) => {
+                        _ = sleep(current_delay) => {
+                            // Increase delay for next attempt (exponential backoff)
+                            current_delay = std::cmp::min(
+                                current_delay * 2,
+                                MAX_RECONNECT_DELAY
+                            );
                             // Continue to retry
                             continue;
                         }

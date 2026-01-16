@@ -27,7 +27,8 @@ rust_decimal_macros = "1.8"
 redis = "0.23.0"
 prometheus = "0.13"
 lazy_static = "1.4"
-hyper = { version = "0.14", features = ["server", "tcp", "http1"] } 
+hyper = { version = "0.14", features = ["server", "tcp", "http1"] }
+governor = "0.6" 
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["async_tokio"] }
