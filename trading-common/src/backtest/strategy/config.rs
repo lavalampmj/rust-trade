@@ -11,6 +11,25 @@ pub struct StrategiesConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ResourceLimits {
+    /// Maximum execution time per tick/OHLC call in milliseconds
+    #[serde(default = "default_max_execution_time_ms")]
+    pub max_execution_time_ms: u64,
+}
+
+impl Default for ResourceLimits {
+    fn default() -> Self {
+        Self {
+            max_execution_time_ms: default_max_execution_time_ms(),
+        }
+    }
+}
+
+fn default_max_execution_time_ms() -> u64 {
+    10 // 10ms default timeout
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PythonStrategyConfigEntry {
     pub id: String,
     pub file: String,
@@ -20,6 +39,8 @@ pub struct PythonStrategyConfigEntry {
     pub enabled: bool,
     #[serde(default)]
     pub sha256: Option<String>,
+    #[serde(default)]
+    pub limits: ResourceLimits,
 }
 
 fn default_enabled() -> bool {

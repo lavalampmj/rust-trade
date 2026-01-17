@@ -2,6 +2,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
 use crate::data::types::{TickData, OHLCData, Timeframe, TradeSide};
 use super::base::{Strategy, Signal};
 use rust_decimal::Decimal;
@@ -17,6 +18,14 @@ pub struct PythonStrategy {
     supports_ohlc_cached: bool,
     /// Preferred timeframe (cached)
     preferred_timeframe_cached: Option<Timeframe>,
+
+    // Resource tracking (thread-safe)
+    /// Total CPU time spent in microseconds
+    cpu_time_us: Arc<AtomicU64>,
+    /// Total number of on_tick/on_ohlc calls
+    call_count: Arc<AtomicU64>,
+    /// Peak execution time in microseconds
+    peak_execution_us: Arc<AtomicU64>,
 }
 
 impl PythonStrategy {
@@ -124,8 +133,44 @@ impl PythonStrategy {
                 cached_name: name,
                 supports_ohlc_cached: supports_ohlc,
                 preferred_timeframe_cached: preferred_timeframe,
+                cpu_time_us: Arc::new(AtomicU64::new(0)),
+                call_count: Arc::new(AtomicU64::new(0)),
+                peak_execution_us: Arc::new(AtomicU64::new(0)),
             })
         })
+    }
+
+    /// Get total CPU time spent in microseconds
+    pub fn get_cpu_time_us(&self) -> u64 {
+        self.cpu_time_us.load(Ordering::Relaxed)
+    }
+
+    /// Get total number of calls
+    pub fn get_call_count(&self) -> u64 {
+        self.call_count.load(Ordering::Relaxed)
+    }
+
+    /// Get peak execution time in microseconds
+    pub fn get_peak_execution_us(&self) -> u64 {
+        self.peak_execution_us.load(Ordering::Relaxed)
+    }
+
+    /// Get average execution time in microseconds
+    pub fn get_avg_execution_us(&self) -> u64 {
+        let total = self.cpu_time_us.load(Ordering::Relaxed);
+        let count = self.call_count.load(Ordering::Relaxed);
+        if count > 0 {
+            total / count
+        } else {
+            0
+        }
+    }
+
+    /// Reset resource tracking metrics
+    pub fn reset_metrics(&self) {
+        self.cpu_time_us.store(0, Ordering::Relaxed);
+        self.call_count.store(0, Ordering::Relaxed);
+        self.peak_execution_us.store(0, Ordering::Relaxed);
     }
 }
 
@@ -230,7 +275,10 @@ impl Strategy for PythonStrategy {
     }
 
     fn on_tick(&mut self, tick: &TickData) -> Signal {
-        Python::with_gil(|py| {
+        // Start timing
+        let start = std::time::Instant::now();
+
+        let signal = Python::with_gil(|py| {
             let instance = self.py_instance.lock().unwrap();
             let py_instance = instance.bind(py);
 
@@ -259,7 +307,31 @@ impl Strategy for PythonStrategy {
                     Signal::Hold
                 }
             }
-        })
+        });
+
+        // Record execution time
+        let elapsed_us = start.elapsed().as_micros() as u64;
+        self.cpu_time_us.fetch_add(elapsed_us, Ordering::Relaxed);
+        self.call_count.fetch_add(1, Ordering::Relaxed);
+
+        // Update peak if necessary
+        let current_peak = self.peak_execution_us.load(Ordering::Relaxed);
+        if elapsed_us > current_peak {
+            self.peak_execution_us.store(elapsed_us, Ordering::Relaxed);
+        }
+
+        // Warn if execution is slow (>10ms)
+        if elapsed_us > 10_000 {
+            tracing::warn!(
+                "Strategy {} on_tick took {}ms (peak: {}ms, avg: {}ms)",
+                self.cached_name,
+                elapsed_us / 1000,
+                self.get_peak_execution_us() / 1000,
+                self.get_avg_execution_us() / 1000
+            );
+        }
+
+        signal
     }
 
     fn initialize(&mut self, params: HashMap<String, String>) -> Result<(), String> {
@@ -299,7 +371,10 @@ impl Strategy for PythonStrategy {
     }
 
     fn on_ohlc(&mut self, ohlc: &OHLCData) -> Signal {
-        Python::with_gil(|py| {
+        // Start timing
+        let start = std::time::Instant::now();
+
+        let signal = Python::with_gil(|py| {
             let instance = self.py_instance.lock().unwrap();
             let py_instance = instance.bind(py);
 
@@ -326,7 +401,31 @@ impl Strategy for PythonStrategy {
                     Signal::Hold
                 }
             }
-        })
+        });
+
+        // Record execution time
+        let elapsed_us = start.elapsed().as_micros() as u64;
+        self.cpu_time_us.fetch_add(elapsed_us, Ordering::Relaxed);
+        self.call_count.fetch_add(1, Ordering::Relaxed);
+
+        // Update peak if necessary
+        let current_peak = self.peak_execution_us.load(Ordering::Relaxed);
+        if elapsed_us > current_peak {
+            self.peak_execution_us.store(elapsed_us, Ordering::Relaxed);
+        }
+
+        // Warn if execution is slow (>10ms)
+        if elapsed_us > 10_000 {
+            tracing::warn!(
+                "Strategy {} on_ohlc took {}ms (peak: {}ms, avg: {}ms)",
+                self.cached_name,
+                elapsed_us / 1000,
+                self.get_peak_execution_us() / 1000,
+                self.get_avg_execution_us() / 1000
+            );
+        }
+
+        signal
     }
 
     fn supports_ohlc(&self) -> bool {

@@ -52,6 +52,9 @@ description = "Example Python SMA implementation"
 enabled = true
 sha256 = "69e962762dfbec68b2a0589896c83e6cb0ff26bc69662eefc5a640f9fd56c230"
 
+[strategies.python.limits]
+max_execution_time_ms = 10  # 10ms timeout per tick
+
 [[strategies.python]]
 id = "rsi_python"
 file = "example_rsi.py"
@@ -59,6 +62,9 @@ class_name = "ExampleRsiStrategy"
 description = "Example Python RSI implementation"
 enabled = true
 sha256 = "b4273197ea61f0bbc416aeeb477da3408c02aa118116f71f3c0a30cb42265399"
+
+[strategies.python.limits]
+max_execution_time_ms = 10  # 10ms timeout per tick
 
 [validation]
 # Enable tick data validation (default: true)
