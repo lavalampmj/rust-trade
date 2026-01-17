@@ -7,7 +7,34 @@ pub struct StrategiesConfig {
     #[serde(default = "default_hot_reload")]
     pub hot_reload: bool,
     #[serde(default)]
+    pub hot_reload_config: HotReloadSettings,
+    #[serde(default)]
     pub python: Vec<PythonStrategyConfigEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct HotReloadSettings {
+    #[serde(default = "default_debounce_ms")]
+    pub debounce_ms: u64,
+    #[serde(default = "default_skip_hash_verification")]
+    pub skip_hash_verification: bool,
+}
+
+impl Default for HotReloadSettings {
+    fn default() -> Self {
+        Self {
+            debounce_ms: default_debounce_ms(),
+            skip_hash_verification: default_skip_hash_verification(),
+        }
+    }
+}
+
+fn default_debounce_ms() -> u64 {
+    300 // 300ms default
+}
+
+fn default_skip_hash_verification() -> bool {
+    false // Security-first: verify hashes by default
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -104,6 +131,7 @@ mod tests {
         let config = StrategiesConfig {
             python_dir: PathBuf::from("strategies"),
             hot_reload: true,
+            hot_reload_config: HotReloadSettings::default(),
             python: vec![],
         };
 

@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use notify::{Watcher, RecursiveMode, Event, EventKind, recommended_watcher};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use notify::{Watcher, RecursiveMode, EventKind, recommended_watcher};
 use parking_lot::RwLock as ParkingLotRwLock;
 use sha2::{Sha256, Digest};
 use super::python_bridge::PythonStrategy;
@@ -15,6 +17,82 @@ pub struct StrategyConfig {
     pub description: String,
     pub enabled: bool,
     pub sha256: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HotReloadConfig {
+    /// Enable debouncing (wait before reloading after file change)
+    pub debounce_ms: u64,
+    /// Skip hash verification on hot-reload (development mode only)
+    pub skip_hash_verification: bool,
+}
+
+impl Default for HotReloadConfig {
+    fn default() -> Self {
+        Self {
+            debounce_ms: 300, // 300ms default debounce
+            skip_hash_verification: false,
+        }
+    }
+}
+
+/// Metrics for hot-reload monitoring
+#[derive(Debug, Clone)]
+pub struct ReloadMetrics {
+    pub total_reloads: Arc<AtomicU64>,
+    pub successful_reloads: Arc<AtomicU64>,
+    pub failed_reloads: Arc<AtomicU64>,
+    pub last_reload_timestamp: Arc<AtomicU64>,
+}
+
+impl Default for ReloadMetrics {
+    fn default() -> Self {
+        Self {
+            total_reloads: Arc::new(AtomicU64::new(0)),
+            successful_reloads: Arc::new(AtomicU64::new(0)),
+            failed_reloads: Arc::new(AtomicU64::new(0)),
+            last_reload_timestamp: Arc::new(AtomicU64::new(0)),
+        }
+    }
+}
+
+impl ReloadMetrics {
+    pub fn record_success(&self) {
+        self.total_reloads.fetch_add(1, Ordering::Relaxed);
+        self.successful_reloads.fetch_add(1, Ordering::Relaxed);
+        self.update_timestamp();
+    }
+
+    pub fn record_failure(&self) {
+        self.total_reloads.fetch_add(1, Ordering::Relaxed);
+        self.failed_reloads.fetch_add(1, Ordering::Relaxed);
+        self.update_timestamp();
+    }
+
+    fn update_timestamp(&self) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::from_secs(0))
+            .as_secs();
+        self.last_reload_timestamp.store(now, Ordering::Relaxed);
+    }
+
+    pub fn get_stats(&self) -> ReloadStats {
+        ReloadStats {
+            total_reloads: self.total_reloads.load(Ordering::Relaxed),
+            successful_reloads: self.successful_reloads.load(Ordering::Relaxed),
+            failed_reloads: self.failed_reloads.load(Ordering::Relaxed),
+            last_reload_timestamp: self.last_reload_timestamp.load(Ordering::Relaxed),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ReloadStats {
+    pub total_reloads: u64,
+    pub successful_reloads: u64,
+    pub failed_reloads: u64,
+    pub last_reload_timestamp: u64,
 }
 
 /// Verify strategy file hash matches expected SHA256
@@ -67,15 +145,27 @@ pub struct PythonStrategyRegistry {
 
     /// Strategy directory path
     strategy_dir: PathBuf,
+
+    /// Hot-reload configuration
+    hot_reload_config: HotReloadConfig,
+
+    /// Reload metrics
+    reload_metrics: ReloadMetrics,
 }
 
 impl PythonStrategyRegistry {
     pub fn new(strategy_dir: PathBuf) -> Result<Self, String> {
+        Self::with_hot_reload_config(strategy_dir, HotReloadConfig::default())
+    }
+
+    pub fn with_hot_reload_config(strategy_dir: PathBuf, hot_reload_config: HotReloadConfig) -> Result<Self, String> {
         Ok(Self {
             configs: Arc::new(RwLock::new(HashMap::new())),
             loaded_strategies: Arc::new(ParkingLotRwLock::new(HashMap::new())),
             _watcher: None,
             strategy_dir,
+            hot_reload_config,
+            reload_metrics: ReloadMetrics::default(),
         })
     }
 
@@ -155,61 +245,145 @@ impl PythonStrategyRegistry {
 
         let loaded_strategies = Arc::clone(&self.loaded_strategies);
         let configs = Arc::clone(&self.configs);
+        let hot_reload_config = self.hot_reload_config.clone();
+        let reload_metrics = self.reload_metrics.clone();
 
-        // Spawn background thread for watching
+        // Spawn background thread for watching with debouncing
         std::thread::spawn(move || {
+            let mut pending_paths: HashMap<PathBuf, std::time::Instant> = HashMap::new();
+            let debounce_duration = Duration::from_millis(hot_reload_config.debounce_ms);
+
             loop {
-                match rx.recv() {
+                // Check for new events (non-blocking with timeout)
+                match rx.recv_timeout(Duration::from_millis(50)) {
                     Ok(Ok(event)) => {
                         if matches!(event.kind, EventKind::Modify(_)) {
-                            Self::handle_file_change(
-                                &event,
-                                &loaded_strategies,
-                                &configs
-                            );
+                            // Add/update pending paths with current timestamp
+                            for path in event.paths {
+                                pending_paths.insert(path, std::time::Instant::now());
+                            }
                         }
                     }
-                    Ok(Err(e)) => eprintln!("Watch error: {}", e),
-                    Err(e) => {
-                        eprintln!("Channel error: {}", e);
+                    Ok(Err(e)) => {
+                        eprintln!("⚠ Watch error: {}", e);
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                        // No events, continue to check pending
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                        eprintln!("✗ Watch channel disconnected");
                         break;
                     }
+                }
+
+                // Process pending paths that have exceeded debounce duration
+                let now = std::time::Instant::now();
+                let mut to_process = Vec::new();
+
+                pending_paths.retain(|path, timestamp| {
+                    if now.duration_since(*timestamp) >= debounce_duration {
+                        to_process.push(path.clone());
+                        false // Remove from pending
+                    } else {
+                        true // Keep pending
+                    }
+                });
+
+                // Handle file changes after debounce
+                for path in to_process {
+                    Self::handle_file_change_atomic(
+                        &path,
+                        &loaded_strategies,
+                        &configs,
+                        &hot_reload_config,
+                        &reload_metrics,
+                    );
                 }
             }
         });
 
         self._watcher = Some(Box::new(watcher));
         println!("✓ Hot-reload enabled for {:?}", self.strategy_dir);
+        println!("  Debounce: {}ms", self.hot_reload_config.debounce_ms);
+        println!("  Skip hash verification: {}", self.hot_reload_config.skip_hash_verification);
         Ok(())
     }
 
-    fn handle_file_change(
-        event: &Event,
+    /// Atomic hot-reload with validation before cache invalidation
+    fn handle_file_change_atomic(
+        path: &PathBuf,
         cache: &Arc<ParkingLotRwLock<HashMap<String, Arc<PythonStrategy>>>>,
         configs: &Arc<RwLock<HashMap<String, StrategyConfig>>>,
+        hot_reload_config: &HotReloadConfig,
+        reload_metrics: &ReloadMetrics,
     ) {
-        for path in &event.paths {
-            println!("📝 File changed: {:?}", path);
+        println!("📝 File changed: {:?}", path);
 
-            // Find which strategy config matches this path
-            let configs_read = match configs.read() {
-                Ok(c) => c,
-                Err(_) => return,
-            };
+        // Find which strategy config matches this path
+        let configs_read = match configs.read() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("✗ Failed to acquire config lock: {}", e);
+                reload_metrics.record_failure();
+                return;
+            }
+        };
 
-            let matching_ids: Vec<String> = configs_read
-                .iter()
-                .filter(|(_, config)| config.file_path == *path)
-                .map(|(id, _)| id.clone())
-                .collect();
+        let matching_configs: Vec<(String, StrategyConfig)> = configs_read
+            .iter()
+            .filter(|(_, config)| config.file_path == *path)
+            .map(|(id, config)| (id.clone(), config.clone()))
+            .collect();
 
-            drop(configs_read);
+        drop(configs_read);
 
-            // Invalidate cache for matching strategies
-            let mut cache_write = cache.write();
-            for id in matching_ids {
-                cache_write.remove(&id);
-                println!("🔄 Invalidated cache for strategy: {}", id);
+        if matching_configs.is_empty() {
+            println!("  ⓘ No registered strategies match this file (ignoring)");
+            return;
+        }
+
+        // Attempt to reload each matching strategy
+        for (id, config) in matching_configs {
+            if !config.enabled {
+                println!("  ⓘ Strategy '{}' is disabled (skipping reload)", id);
+                continue;
+            }
+
+            println!("  🔄 Reloading strategy: {}", id);
+
+            // Verify hash if required (skip in dev mode if configured)
+            if !hot_reload_config.skip_hash_verification {
+                if let Some(expected_hash) = &config.sha256 {
+                    if let Err(e) = verify_strategy_hash(&config.file_path, expected_hash) {
+                        eprintln!("  ✗ Hash verification failed for '{}': {}", id, e);
+                        eprintln!("    Tip: Set hot_reload.skip_hash_verification = true in dev mode");
+                        reload_metrics.record_failure();
+                        continue;
+                    }
+                }
+            } else {
+                println!("  ⓘ Hash verification skipped (dev mode)");
+            }
+
+            // Try to load the new version
+            match PythonStrategy::from_file(
+                config.file_path.to_str().unwrap(),
+                &config.class_name
+            ) {
+                Ok(new_strategy) => {
+                    // Success! Now safely replace in cache
+                    let mut cache_write = cache.write();
+                    cache_write.insert(id.clone(), Arc::new(new_strategy));
+                    drop(cache_write);
+
+                    println!("  ✓ Successfully reloaded strategy: {}", id);
+                    reload_metrics.record_success();
+                }
+                Err(e) => {
+                    eprintln!("  ✗ Failed to reload strategy '{}': {}", id, e);
+                    eprintln!("    Keeping old version in cache");
+                    reload_metrics.record_failure();
+                }
             }
         }
     }
@@ -226,6 +400,11 @@ impl PythonStrategyRegistry {
         let mut cache = self.loaded_strategies.write();
         cache.remove(strategy_id);
         println!("🔄 Reloaded strategy: {}", strategy_id);
+    }
+
+    /// Get reload metrics
+    pub fn get_reload_metrics(&self) -> ReloadStats {
+        self.reload_metrics.get_stats()
     }
 }
 

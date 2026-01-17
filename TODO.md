@@ -118,19 +118,47 @@
 - [ ] Factor analysis
 - [ ] Market regime detection
 - [ ] Anomaly detection
-- [ ] Indicator on Indicator, output of one can input of another
-- [ ] Implement Indicators
+- [ ] Indicator on Indicator, series output of one as series input of another, all series bound to input series ordering
+- [ ] Implement Indicators 
 
 ### Python Strategy Enhancements
-- [ ] Python strategy sandboxing (security)
-- [ ] CPU/memory limits per strategy
-- [ ] Strategy code signing/verification
+- [x] Python strategy sandboxing (security) - **COMPLETE** (3 phases: hash verification, import blocking, resource monitoring)
+- [x] CPU/memory limits per strategy - **COMPLETE** (CPU time tracking with 10ms warnings per tick)
+- [x] Strategy code signing/verification - **COMPLETE** (SHA256 hash verification)
+- [x] Hot-reload improvements - **COMPLETE** (debouncing, atomic reload, metrics, configurable hash verification)
 - [ ] Audit logging for strategy execution
-- [ ] Hot-reload improvements
+
+### Multi-Tenancy & User Management
+- [ ] User authentication and authorization system
+- [ ] Session management and token-based auth
+- [ ] User-scoped data isolation (portfolios, strategies, backtest results)
+- [ ] Role-based access control (Admin/User/ReadOnly)
+- [ ] Rate limiting per user
+- [ ] Audit logging for user actions
+- [ ] User-namespaced caching
+- **📋 See detailed implementation plan**: [MULTI-TENANT-PLAN.md](./MULTI-TENANT-PLAN.md)
+  - 7-phase roadmap with backward compatibility
+  - ~14 weeks estimated implementation
+  - Database schema, authentication, API layer updates
 
 ---
 
 ## ✅ Recently Completed
+
+### Hot-Reload Improvements (2026-01-17)
+- [x] Debouncing to prevent multiple rapid reloads (configurable, default 300ms)
+- [x] Atomic reload with validation before cache invalidation
+- [x] Reload metrics tracking (success/failure count, timestamps)
+- [x] Configurable hash verification skip for development mode
+- [x] Enhanced error handling and helpful error messages
+- [x] Production-ready hot-reload system
+
+### Python Strategy Sandboxing (2026-01-17)
+- [x] Phase 1: SHA256 code signing for strategy verification
+- [x] Phase 2: RestrictedPython integration (import blocking for network, filesystem, subprocess)
+- [x] Phase 3: Resource monitoring (CPU time tracking, 10ms soft limits with warnings)
+- [x] Comprehensive security tests (10 unit tests, 5 malicious test strategies)
+- [x] Full test coverage: 67/67 tests passing
 
 ### Security Hardening (2026-01-16)
 - [x] Strong database password (44-char cryptographic)
@@ -162,6 +190,9 @@
 - [ ] Performance tuning guide
 - [ ] Troubleshooting guide
 - [ ] Architecture decision records (ADRs)
+- [x] Multi-tenancy architectural plan - see [MULTI-TENANT-PLAN.md](./MULTI-TENANT-PLAN.md)
+- [x] Python strategy security documentation - see [SECURITY_TEST_RESULTS.md](./SECURITY_TEST_RESULTS.md)
+- [x] Hot-reload improvements documentation - see [HOT-RELOAD-IMPROVEMENTS.md](./HOT-RELOAD-IMPROVEMENTS.md)
 
 ---
 

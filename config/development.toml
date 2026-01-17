@@ -43,6 +43,17 @@ python_dir = "strategies"
 # Enable hot-reload (development only - reloads Python files without restart)
 hot_reload = true
 
+# Hot-reload configuration
+[strategies.hot_reload_config]
+# Debounce time in milliseconds (wait before reloading after file change)
+# This prevents multiple rapid reloads from successive file save events
+debounce_ms = 300
+
+# Skip SHA256 hash verification on hot-reload (development mode only)
+# WARNING: Only enable in trusted development environments
+# Production should always keep this false for security
+skip_hash_verification = true
+
 # Registered Python strategies
 [[strategies.python]]
 id = "sma_python"

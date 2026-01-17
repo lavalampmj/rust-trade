@@ -11,7 +11,10 @@ mod security_tests;
 pub use base::{Signal, Strategy};
 use rsi::RsiStrategy;
 use sma::SmaStrategy;
-pub use python_loader::{PythonStrategyRegistry, StrategyConfig, calculate_file_hash};
+pub use python_loader::{
+    PythonStrategyRegistry, StrategyConfig, calculate_file_hash,
+    HotReloadConfig, ReloadMetrics, ReloadStats
+};
 pub use config::StrategiesConfig;
 
 use std::sync::OnceLock;
@@ -40,7 +43,17 @@ pub fn initialize_python_strategies(config_path: &str) -> Result<(), String> {
     let config = StrategiesConfig::load(config_path)?;
 
     let strategy_dir = config.python_dir.clone();
-    let mut registry = PythonStrategyRegistry::new(strategy_dir)?;
+
+    // Create HotReloadConfig from settings
+    let hot_reload_config = HotReloadConfig {
+        debounce_ms: config.hot_reload_config.debounce_ms,
+        skip_hash_verification: config.hot_reload_config.skip_hash_verification,
+    };
+
+    let mut registry = PythonStrategyRegistry::with_hot_reload_config(
+        strategy_dir,
+        hot_reload_config
+    )?;
 
     // Register all Python strategies from config
     for entry in &config.python {
