@@ -18,6 +18,8 @@ pyo3 = { version = "0.22", features = ["auto-initialize"] }
 notify = "6.1"
 parking_lot = "0.12"
 toml = "0.8"
+sha2 = "0.10"
+hex = "0.4"
 
 [dev-dependencies]
 dotenv = "0.15"

@@ -1,8 +1,9 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use notify::{Watcher, RecursiveMode, Event, EventKind, recommended_watcher};
 use parking_lot::RwLock as ParkingLotRwLock;
+use sha2::{Sha256, Digest};
 use super::python_bridge::PythonStrategy;
 use super::base::Strategy;
 
@@ -13,6 +14,44 @@ pub struct StrategyConfig {
     pub class_name: String,
     pub description: String,
     pub enabled: bool,
+    pub sha256: Option<String>,
+}
+
+/// Verify strategy file hash matches expected SHA256
+fn verify_strategy_hash(path: &Path, expected_hash: &str) -> Result<(), String> {
+    // Read file contents
+    let code = std::fs::read(path)
+        .map_err(|e| format!("Failed to read strategy file: {}", e))?;
+
+    // Calculate SHA256 hash
+    let mut hasher = Sha256::new();
+    hasher.update(&code);
+    let hash = hasher.finalize();
+    let hash_hex = hex::encode(hash);
+
+    // Compare hashes
+    if hash_hex != expected_hash {
+        return Err(format!(
+            "Strategy hash mismatch for {:?}\nExpected: {}\nGot:      {}\n\
+             This indicates the strategy file has been modified.\n\
+             Update the sha256 field in your config or regenerate with: cargo run --bin trading-core -- hash-strategy {:?}",
+            path, expected_hash, hash_hex, path
+        ));
+    }
+
+    Ok(())
+}
+
+/// Calculate SHA256 hash of a file (utility function for CLI)
+pub fn calculate_file_hash(path: &Path) -> Result<String, String> {
+    let code = std::fs::read(path)
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(&code);
+    let hash = hasher.finalize();
+
+    Ok(hex::encode(hash))
 }
 
 pub struct PythonStrategyRegistry {
@@ -78,6 +117,11 @@ impl PythonStrategyRegistry {
 
         if !config.enabled {
             return Err(format!("Strategy '{}' is disabled", strategy_id));
+        }
+
+        // Verify hash if provided in config
+        if let Some(expected_hash) = &config.sha256 {
+            verify_strategy_hash(&config.file_path, expected_hash)?;
         }
 
         // Load Python strategy

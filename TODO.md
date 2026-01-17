@@ -101,6 +101,7 @@
 - [ ] Backtest visualization
 - [ ] Portfolio performance charts
 - [ ] Real-time P&L display
+- [ ] Expose User Settings, subscription to symbols, tick monitoring, session management by market
 
 ### Exchange Integration
 - [ ] Multiple exchange support (Coinbase, Kraken, etc.)

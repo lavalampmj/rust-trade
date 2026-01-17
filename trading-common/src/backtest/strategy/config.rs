@@ -18,6 +18,8 @@ pub struct PythonStrategyConfigEntry {
     pub description: String,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    #[serde(default)]
+    pub sha256: Option<String>,
 }
 
 fn default_enabled() -> bool {

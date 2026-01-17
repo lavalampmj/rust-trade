@@ -40,6 +40,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 run_live_mode().await
             }
         }
+        Some("hash-strategy") => {
+            run_hash_strategy_command(&args);
+            Ok(())
+        }
         None => run_live_mode().await,
         Some("--help") | Some("-h") => {
             print_usage();
@@ -57,11 +61,59 @@ fn print_usage() {
     println!("Trading Core - Cryptocurrency Data Collection & Backtesting System");
     println!();
     println!("Usage:");
-    println!("  cargo run                # Run live data collection");
-    println!("  cargo run live           # Run live data collection");
-    println!("  cargo run backtest       # Run backtesting mode");
-    println!("  cargo run --help         # Show this help message");
+    println!("  cargo run                              # Run live data collection");
+    println!("  cargo run live                         # Run live data collection");
+    println!("  cargo run live --paper-trading         # Run live with paper trading");
+    println!("  cargo run backtest                     # Run backtesting mode");
+    println!("  cargo run hash-strategy <file_path>    # Calculate SHA256 hash of strategy file");
+    println!("  cargo run --help                       # Show this help message");
     println!();
+}
+
+fn run_hash_strategy_command(args: &[String]) {
+    use trading_common::backtest::strategy::calculate_file_hash;
+    use std::path::Path;
+
+    if args.len() < 3 {
+        eprintln!("❌ Error: Missing file path argument");
+        eprintln!();
+        eprintln!("Usage:");
+        eprintln!("  cargo run --bin trading-core -- hash-strategy <file_path>");
+        eprintln!();
+        eprintln!("Example:");
+        eprintln!("  cargo run --bin trading-core -- hash-strategy strategies/example_sma.py");
+        std::process::exit(1);
+    }
+
+    let file_path = &args[2];
+    let path = Path::new(file_path);
+
+    if !path.exists() {
+        eprintln!("❌ Error: File not found: {}", file_path);
+        std::process::exit(1);
+    }
+
+    match calculate_file_hash(path) {
+        Ok(hash) => {
+            println!("✅ SHA256 hash calculated successfully");
+            println!();
+            println!("File: {}", file_path);
+            println!("SHA256: {}", hash);
+            println!();
+            println!("Add this to your config file:");
+            println!();
+            println!("[[strategies.python]]");
+            println!("id = \"your_strategy_id\"");
+            println!("file = \"{}\"", path.file_name().unwrap().to_str().unwrap());
+            println!("class_name = \"YourStrategyClassName\"");
+            println!("enabled = true");
+            println!("sha256 = \"{}\"", hash);
+        }
+        Err(e) => {
+            eprintln!("❌ Error calculating hash: {}", e);
+            std::process::exit(1);
+        }
+    }
 }
 
 async fn run_live_with_paper_trading() -> Result<(), Box<dyn std::error::Error>> {

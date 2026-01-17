@@ -8,7 +8,7 @@ mod config;
 pub use base::{Signal, Strategy};
 use rsi::RsiStrategy;
 use sma::SmaStrategy;
-pub use python_loader::{PythonStrategyRegistry, StrategyConfig};
+pub use python_loader::{PythonStrategyRegistry, StrategyConfig, calculate_file_hash};
 pub use config::StrategiesConfig;
 
 use std::sync::OnceLock;
@@ -48,6 +48,7 @@ pub fn initialize_python_strategies(config_path: &str) -> Result<(), String> {
             class_name: entry.class_name.clone(),
             description: entry.description.clone(),
             enabled: entry.enabled,
+            sha256: entry.sha256.clone(),
         })?;
     }
 
