@@ -71,6 +71,59 @@ fn default_max_past_days() -> i64 {
     3650
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct ReconnectionRateLimitConfig {
+    /// Maximum number of reconnection attempts allowed in the time window
+    #[serde(default = "default_max_reconnect_attempts")]
+    pub max_attempts: u32,
+    /// Time window in seconds (60 = per minute, 3600 = per hour)
+    #[serde(default = "default_reconnect_window_secs")]
+    pub window_secs: u64,
+    /// Optional custom wait duration in seconds when limit is exceeded
+    #[serde(default)]
+    pub wait_on_limit_secs: Option<u64>,
+}
+
+impl Default for ReconnectionRateLimitConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: default_max_reconnect_attempts(),
+            window_secs: default_reconnect_window_secs(),
+            wait_on_limit_secs: None,
+        }
+    }
+}
+
+impl ReconnectionRateLimitConfig {
+    /// Convert to rate limiter config for exchange use
+    pub fn to_rate_limiter_config(&self) -> crate::exchange::rate_limiter::ReconnectionRateLimiterConfig {
+        use crate::exchange::rate_limiter::{ReconnectionRateLimiterConfig as RLConfig, ReconnectionWindow};
+        use std::time::Duration;
+
+        let window = if self.window_secs == 60 {
+            ReconnectionWindow::PerMinute
+        } else if self.window_secs == 3600 {
+            ReconnectionWindow::PerHour
+        } else {
+            ReconnectionWindow::Custom(Duration::from_secs(self.window_secs))
+        };
+
+        RLConfig {
+            max_attempts: self.max_attempts,
+            window,
+            wait_on_limit_exceeded: self.wait_on_limit_secs.map(Duration::from_secs),
+        }
+    }
+}
+
+fn default_max_reconnect_attempts() -> u32 {
+    5
+}
+
+fn default_reconnect_window_secs() -> u64 {
+    60 // Per minute
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Settings {
     pub database: Database,
@@ -79,6 +132,8 @@ pub struct Settings {
     pub paper_trading: PaperTrading,
     #[serde(default)]
     pub validation: Validation,
+    #[serde(default)]
+    pub reconnection_rate_limit: ReconnectionRateLimitConfig,
 }
 
 impl Settings {

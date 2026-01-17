@@ -2,8 +2,6 @@
 
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
-use governor::{Quota, RateLimiter, clock::DefaultClock, state::{InMemoryState, NotKeyed}};
-use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -13,6 +11,7 @@ use tracing::{debug, error, info, warn};
 use crate::metrics;
 use super::{
     errors::ExchangeError,
+    rate_limiter::ReconnectionRateLimiter,
     traits::Exchange,
     types::{BinanceStreamMessage, BinanceSubscribeMessage, BinanceTradeMessage},
     utils::{build_binance_trade_streams, convert_binance_to_tick_data},
@@ -24,23 +23,31 @@ const BINANCE_WS_URL: &str = "wss://stream.binance.us:9443/stream";
 const INITIAL_RECONNECT_DELAY: Duration = Duration::from_secs(1);
 const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(60);
 const MAX_RECONNECT_ATTEMPTS: u32 = 10;
-const RECONNECT_RATE_LIMIT_PER_MINUTE: u32 = 5;
 
 /// Binance exchange implementation
 pub struct BinanceExchange {
     ws_url: String,
-    rate_limiter: Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
+    rate_limiter: Arc<ReconnectionRateLimiter>,
 }
 
 impl BinanceExchange {
-    /// Create a new Binance exchange instance
+    /// Create a new Binance exchange instance with default rate limiting
     pub fn new() -> Self {
-        // Create rate limiter: 5 reconnection attempts per minute
-        let quota = Quota::per_minute(
-            NonZeroU32::new(RECONNECT_RATE_LIMIT_PER_MINUTE)
-                .expect("RECONNECT_RATE_LIMIT_PER_MINUTE must be > 0")
-        );
-        let rate_limiter = Arc::new(RateLimiter::direct(quota));
+        use super::rate_limiter::{ReconnectionRateLimiterConfig, ReconnectionWindow};
+
+        // Default: 5 reconnection attempts per minute
+        let config = ReconnectionRateLimiterConfig {
+            max_attempts: 5,
+            window: ReconnectionWindow::PerMinute,
+            wait_on_limit_exceeded: None,
+        };
+
+        Self::with_rate_limiter(config)
+    }
+
+    /// Create a new Binance exchange instance with custom rate limiting configuration
+    pub fn with_rate_limiter(rate_limit_config: super::rate_limiter::ReconnectionRateLimiterConfig) -> Self {
+        let rate_limiter = Arc::new(ReconnectionRateLimiter::new(rate_limit_config));
 
         Self {
             ws_url: BINANCE_WS_URL.to_string(),
@@ -129,15 +136,17 @@ impl BinanceExchange {
                     }
 
                     // Check rate limiter before attempting reconnection
-                    if self.rate_limiter.check().is_err() {
+                    if !self.rate_limiter.check_allowed() {
+                        let wait_duration = self.rate_limiter.wait_duration();
                         error!(
-                            "Reconnection rate limit exceeded ({} attempts/minute). Waiting before retry...",
-                            RECONNECT_RATE_LIMIT_PER_MINUTE
+                            "Reconnection rate limit exceeded ({} attempts per window). Waiting {:?} before retry...",
+                            self.rate_limiter.max_attempts(),
+                            wait_duration
                         );
 
-                        // Wait for rate limit window to reset (1 minute)
+                        // Wait for rate limit window to reset
                         tokio::select! {
-                            _ = sleep(Duration::from_secs(60)) => {
+                            _ = sleep(wait_duration) => {
                                 warn!("Rate limit window reset, will retry connection");
                             }
                             _ = shutdown_rx.recv() => {

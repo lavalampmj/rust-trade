@@ -92,3 +92,16 @@ timestamp_tolerance_minutes = 5
 # Maximum past timestamp (days)
 # Allow historical data up to 10 years old
 max_past_days = 3650
+
+[reconnection_rate_limit]
+# Maximum number of WebSocket reconnection attempts allowed in the time window
+# Prevents getting banned from exchanges due to excessive reconnection attempts
+max_attempts = 5
+
+# Time window in seconds (60 = per minute, 3600 = per hour)
+# Exchange APIs typically have rate limits on connections
+window_secs = 60
+
+# Optional: Custom wait duration in seconds when rate limit is exceeded
+# If not set, defaults to window_secs
+# wait_on_limit_secs = 60

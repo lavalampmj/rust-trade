@@ -175,9 +175,15 @@ async fn run_live_with_paper_trading() -> Result<(), Box<dyn std::error::Error>>
     // Create repository
     let repository = Arc::new(TickDataRepository::new(pool, cache));
 
-    // Create exchange connection
+    // Create exchange connection with rate limiting configuration
     info!("📡 Initializing exchange connection...");
-    let exchange = Arc::new(BinanceExchange::new());
+    let rate_limit_config = settings.reconnection_rate_limit.to_rate_limiter_config();
+    info!(
+        "🔒 Reconnection rate limit: {} attempts per {} seconds",
+        settings.reconnection_rate_limit.max_attempts,
+        settings.reconnection_rate_limit.window_secs
+    );
+    let exchange = Arc::new(BinanceExchange::with_rate_limiter(rate_limit_config));
     info!("✅ Exchange connection ready");
 
     // Create strategy
@@ -695,9 +701,15 @@ async fn run_live_application(settings: Settings) -> Result<(), Box<dyn std::err
     // Create repository
     let repository = Arc::new(TickDataRepository::new(pool, cache));
 
-    // Create exchange
+    // Create exchange with rate limiting configuration
     info!("📡 Initializing exchange connection...");
-    let exchange = Arc::new(BinanceExchange::new());
+    let rate_limit_config = settings.reconnection_rate_limit.to_rate_limiter_config();
+    info!(
+        "🔒 Reconnection rate limit: {} attempts per {} seconds",
+        settings.reconnection_rate_limit.max_attempts,
+        settings.reconnection_rate_limit.window_secs
+    );
+    let exchange = Arc::new(BinanceExchange::with_rate_limiter(rate_limit_config));
     info!("✅ Exchange connection ready");
 
     // Create validator

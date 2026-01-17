@@ -8,7 +8,7 @@
 ## 🎯 Critical Blockers (Before Production)
 
 ### Security
-- [ ] Add rate limiting to WebSocket reconnections (prevent ban from Binance)
+- [x] Add rate limiting to WebSocket reconnections (prevent ban from Binance) - **COMPLETE** (generic, configurable, 9/9 tests)
 - [ ] Add input validation to TickData constructor (prevent invalid data)
 
 ### Monitoring
@@ -145,6 +145,16 @@
 
 ## ✅ Recently Completed
 
+### WebSocket Reconnection Rate Limiting (2026-01-17)
+- [x] Generic `ReconnectionRateLimiter` implementation (TDD approach)
+- [x] Configurable rate limiting (per minute, per hour, custom windows)
+- [x] TOML configuration support with sensible defaults (5 attempts/min)
+- [x] Integration with BinanceExchange (default + custom config)
+- [x] Comprehensive test coverage (9/9 tests passing, including concurrency)
+- [x] Thread-safe implementation using Arc and lock-free atomics
+- [x] Helpful logging and error messages
+- [x] Production-ready, prevents exchange bans
+
 ### Hot-Reload Improvements (2026-01-17)
 - [x] Debouncing to prevent multiple rapid reloads (configurable, default 300ms)
 - [x] Atomic reload with validation before cache invalidation
@@ -193,6 +203,7 @@
 - [x] Multi-tenancy architectural plan - see [MULTI-TENANT-PLAN.md](./MULTI-TENANT-PLAN.md)
 - [x] Python strategy security documentation - see [SECURITY_TEST_RESULTS.md](./SECURITY_TEST_RESULTS.md)
 - [x] Hot-reload improvements documentation - see [HOT-RELOAD-IMPROVEMENTS.md](./HOT-RELOAD-IMPROVEMENTS.md)
+- [x] WebSocket rate limiting review - see [WEBSOCKET-RATE-LIMITING-REVIEW.md](./WEBSOCKET-RATE-LIMITING-REVIEW.md)
 
 ---
 
