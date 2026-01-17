@@ -1,0 +1,3 @@
+# Python dependencies for trading system
+# RestrictedPython - Sandboxing for Python strategy execution
+RestrictedPython==7.0

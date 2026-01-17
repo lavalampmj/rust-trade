@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule};
+use pyo3::types::{PyDict, PyTuple};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use crate::data::types::{TickData, OHLCData, Timeframe, TradeSide};
@@ -44,12 +44,61 @@ impl PythonStrategy {
                 .and_then(|s| s.to_str())
                 .ok_or("Invalid file name")?;
 
-            let module = PyModule::from_code_bound(py, &code, path, module_name)
-                .map_err(|e| format!("Failed to load Python module: {}", e))?;
+            // Import restricted compiler module
+            let restricted_compiler = py.import_bound("restricted_compiler")
+                .map_err(|e| format!(
+                    "Failed to import restricted_compiler: {}\n\
+                     Make sure RestrictedPython is installed: pip install RestrictedPython==7.0\n\
+                     And strategies/restricted_compiler.py exists",
+                    e
+                ))?;
 
-            // Get the strategy class
-            let strategy_class = module.getattr(class_name)
-                .map_err(|e| format!("Failed to find class '{}': {}", class_name, e))?;
+            // Compile strategy code with restrictions
+            let result = restricted_compiler
+                .getattr("compile_strategy")
+                .map_err(|e| format!("Failed to get compile_strategy function: {}", e))?
+                .call1((code.as_str(), path))
+                .map_err(|e| format!(
+                    "Failed to compile strategy with restrictions: {}\n\
+                     This usually means the strategy code violates security policies.\n\
+                     Check for: prohibited imports (os, subprocess, urllib, socket, sys), \n\
+                     eval/exec usage, or unsafe operations.",
+                    e
+                ))?;
+
+            // Extract bytecode and globals from tuple
+            let tuple = result.downcast::<PyTuple>()
+                .map_err(|e| format!("compile_strategy should return tuple: {}", e))?;
+            let bytecode = tuple.get_item(0)
+                .map_err(|e| format!("Failed to get bytecode from tuple: {}", e))?;
+            let globals_item = tuple.get_item(1)
+                .map_err(|e| format!("Failed to get globals from tuple: {}", e))?;
+            let restricted_globals = globals_item.downcast::<PyDict>()
+                .map_err(|e| format!("restricted_globals should be dict: {}", e))?;
+
+            // Set module metadata in restricted globals
+            restricted_globals.set_item("__name__", module_name)
+                .map_err(|e| format!("Failed to set __name__: {}", e))?;
+            restricted_globals.set_item("__file__", path)
+                .map_err(|e| format!("Failed to set __file__: {}", e))?;
+
+            // Execute bytecode in restricted environment using Python's exec
+            let builtins = py.import_bound("builtins")
+                .map_err(|e| format!("Failed to import builtins: {}", e))?;
+            let exec_fn = builtins.getattr("exec")
+                .map_err(|e| format!("Failed to get exec function: {}", e))?;
+
+            exec_fn.call1((bytecode, restricted_globals))
+                .map_err(|e| format!(
+                    "Failed to execute strategy code: {}\n\
+                     The strategy may be trying to use prohibited operations.",
+                    e
+                ))?;
+
+            // Get the strategy class from restricted globals
+            let strategy_class = restricted_globals.get_item(class_name)
+                .map_err(|e| format!("Failed to get item from globals: {}", e))?
+                .ok_or_else(|| format!("Class '{}' not found in module", class_name))?;
 
             // Instantiate the strategy
             let instance = strategy_class.call0()
@@ -57,18 +106,18 @@ impl PythonStrategy {
 
             // Cache metadata
             let name = instance.call_method0("name")
-                .and_then(|n| n.extract::<String>())
+                .and_then(|n: Bound<'_, PyAny>| n.extract::<String>())
                 .map_err(|e| format!("Failed to get strategy name: {}", e))?;
 
             let supports_ohlc = instance.call_method0("supports_ohlc")
-                .and_then(|b| b.extract::<bool>())
+                .and_then(|b: Bound<'_, PyAny>| b.extract::<bool>())
                 .unwrap_or(false);
 
             let preferred_timeframe = instance.call_method0("preferred_timeframe")
                 .and_then(|t: Bound<'_, PyAny>| t.extract::<Option<String>>())
                 .ok()
                 .flatten()
-                .and_then(|s| parse_timeframe(&s));
+                .and_then(|s: String| parse_timeframe(&s));
 
             Ok(Self {
                 py_instance: Arc::new(Mutex::new(instance.into())),
