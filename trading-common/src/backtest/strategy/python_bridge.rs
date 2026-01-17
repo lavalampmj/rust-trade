@@ -28,6 +28,19 @@ pub struct PythonStrategy {
     peak_execution_us: Arc<AtomicU64>,
 }
 
+impl std::fmt::Debug for PythonStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PythonStrategy")
+            .field("cached_name", &self.cached_name)
+            .field("supports_ohlc_cached", &self.supports_ohlc_cached)
+            .field("preferred_timeframe_cached", &self.preferred_timeframe_cached)
+            .field("cpu_time_us", &self.cpu_time_us.load(Ordering::Relaxed))
+            .field("call_count", &self.call_count.load(Ordering::Relaxed))
+            .field("peak_execution_us", &self.peak_execution_us.load(Ordering::Relaxed))
+            .finish_non_exhaustive()
+    }
+}
+
 impl PythonStrategy {
     /// Load strategy from Python file
     pub fn from_file(path: &str, class_name: &str) -> Result<Self, String> {

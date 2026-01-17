@@ -5,6 +5,9 @@ mod python_bridge;
 mod python_loader;
 mod config;
 
+#[cfg(test)]
+mod security_tests;
+
 pub use base::{Signal, Strategy};
 use rsi::RsiStrategy;
 use sma::SmaStrategy;

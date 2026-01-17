@@ -59,14 +59,16 @@
 
 ### Strategy Features
 - [ ] Multi-timeframe strategy support
-- [ ] Strategy parameter optimization framework
--     Brute Force parameter
--     Parameter optima search, e.g. genetic, PSO, 
-- [ ] Walk-forward analysis
-- [ ] Strategy portfolio allocation
 - [ ] Risk management rules (max drawdown, position sizing)
+- [ ] Strategy capital allocation
 
----
+### Strategy Hosting / BackTesting / Optimization Features
+- [ ] Strategy parameter optimization framework
+-     Brute Force parameter optimization
+-     Parameter optima search, e.g. genetic, PSO, gradient
+- [ ] Walk-forward analysis
+- [ ] Have strategy execution limits, such as Time Limits, Thread Limits, Memory Limits
+- [ ] Gracefully kill strategies in an infinite loop
 
 ## 🔧 Infrastructure & Operations
 
@@ -103,8 +105,8 @@
 - [ ] Real-time P&L display
 - [ ] Expose User Settings, subscription to symbols, tick monitoring, session management by market
 
-### Exchange Integration
-- [ ] Multiple exchange support (Coinbase, Kraken, etc.)
+### Broker and Data Vendor Integration
+- [ ] Multiple exchange support (Coinbase, Kraken, Databento etc.)
 - [ ] Exchange API key management
 - [ ] Live trading (beyond paper trading)
 - [ ] Order execution with retry logic
@@ -116,6 +118,8 @@
 - [ ] Factor analysis
 - [ ] Market regime detection
 - [ ] Anomaly detection
+- [ ] Indicator on Indicator, output of one can input of another
+- [ ] Implement Indicators
 
 ### Python Strategy Enhancements
 - [ ] Python strategy sandboxing (security)
