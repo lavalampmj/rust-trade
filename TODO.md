@@ -47,7 +47,7 @@
 - [ ] OHLC materialized views or tables
 - [ ] OHLC cache strategy (if using on-the-fly)
 - [ ] Historical OHLC backfill process
-- [ ] Create N Tick OHLC, N Volume OHLC, N Range OHLC
+- [ ] Create N Tick OHLC, N Volume OHLC
 
 ---
 

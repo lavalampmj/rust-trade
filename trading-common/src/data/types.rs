@@ -239,6 +239,37 @@ pub enum Timeframe {
     OneWeek,
 }
 
+/// Bar type for OHLC data generation
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BarType {
+    /// Time-based bars using timeframe windows (e.g., 1m, 5m, 1h)
+    TimeBased(Timeframe),
+    /// Tick-based bars - creates one bar every N ticks (e.g., 100-tick bars)
+    TickBased(u32),
+    // Future enhancement: Volume-based bars
+    // VolumeBased(Decimal),
+}
+
+impl BarType {
+    /// Get a string representation of the bar type
+    pub fn as_str(&self) -> String {
+        match self {
+            BarType::TimeBased(timeframe) => timeframe.as_str().to_string(),
+            BarType::TickBased(n) => format!("{}T", n),
+        }
+    }
+
+    /// Check if this is a time-based bar
+    pub fn is_time_based(&self) -> bool {
+        matches!(self, BarType::TimeBased(_))
+    }
+
+    /// Check if this is a tick-based bar
+    pub fn is_tick_based(&self) -> bool {
+        matches!(self, BarType::TickBased(_))
+    }
+}
+
 impl Timeframe {
     pub fn as_duration(&self) -> Duration {
         match self {
@@ -388,7 +419,7 @@ impl OHLCData {
         }
     }
 
-    /// Create OHLC from a collection of tick data
+    /// Create OHLC from a collection of tick data (time-based bars)
     pub fn from_ticks(
         ticks: &[TickData],
         timeframe: Timeframe,
@@ -426,5 +457,339 @@ impl OHLCData {
             volume,
             ticks.len() as u64,
         ))
+    }
+
+    /// Create N-tick OHLC bars from a collection of tick data
+    ///
+    /// Splits ticks into chunks of size `tick_count` and creates one OHLC bar per chunk.
+    /// The timestamp of each bar is the timestamp of the first tick in that chunk.
+    ///
+    /// # Arguments
+    /// * `ticks` - Slice of tick data (should be sorted by timestamp)
+    /// * `tick_count` - Number of ticks per bar (e.g., 100 for 100-tick bars)
+    ///
+    /// # Returns
+    /// Vector of OHLC bars, one per N-tick chunk
+    pub fn from_ticks_n_tick(ticks: &[TickData], tick_count: u32) -> Vec<Self> {
+        if ticks.is_empty() || tick_count == 0 {
+            return Vec::new();
+        }
+
+        let tick_count_usize = tick_count as usize;
+        let mut result = Vec::new();
+
+        // Process ticks in chunks of tick_count
+        for chunk in ticks.chunks(tick_count_usize) {
+            if chunk.is_empty() {
+                continue;
+            }
+
+            let symbol = chunk[0].symbol.clone();
+            let timestamp = chunk[0].timestamp; // Use first tick's timestamp as bar timestamp
+            let open = chunk[0].price;
+            let close = chunk[chunk.len() - 1].price;
+            let mut high = chunk[0].price;
+            let mut low = chunk[0].price;
+            let mut volume = Decimal::ZERO;
+
+            // Calculate high, low, and volume
+            for tick in chunk {
+                if tick.price > high {
+                    high = tick.price;
+                }
+                if tick.price < low {
+                    low = tick.price;
+                }
+                volume += tick.quantity;
+            }
+
+            // For N-tick bars, timeframe is not meaningful, so we use OneMinute as placeholder
+            // In the future, this could be refactored to use BarType instead
+            let ohlc = OHLCData::new(
+                timestamp,
+                symbol,
+                Timeframe::OneMinute, // Placeholder for tick-based bars
+                open,
+                high,
+                low,
+                close,
+                volume,
+                chunk.len() as u64,
+            );
+
+            result.push(ohlc);
+        }
+
+        result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal::Decimal;
+    use std::str::FromStr;
+
+    fn create_test_tick(
+        symbol: &str,
+        price: &str,
+        quantity: &str,
+        timestamp_offset_secs: i64,
+    ) -> TickData {
+        TickData {
+            timestamp: Utc::now() + Duration::seconds(timestamp_offset_secs),
+            symbol: symbol.to_string(),
+            price: Decimal::from_str(price).unwrap(),
+            quantity: Decimal::from_str(quantity).unwrap(),
+            side: TradeSide::Buy,
+            trade_id: format!("trade_{}", timestamp_offset_secs),
+            is_buyer_maker: false,
+        }
+    }
+
+    #[test]
+    fn test_bar_type_as_str() {
+        let time_based = BarType::TimeBased(Timeframe::OneMinute);
+        assert_eq!(time_based.as_str(), "1m");
+
+        let time_based_hour = BarType::TimeBased(Timeframe::OneHour);
+        assert_eq!(time_based_hour.as_str(), "1h");
+
+        let tick_based = BarType::TickBased(100);
+        assert_eq!(tick_based.as_str(), "100T");
+
+        let tick_based_50 = BarType::TickBased(50);
+        assert_eq!(tick_based_50.as_str(), "50T");
+    }
+
+    #[test]
+    fn test_bar_type_checks() {
+        let time_based = BarType::TimeBased(Timeframe::OneMinute);
+        assert!(time_based.is_time_based());
+        assert!(!time_based.is_tick_based());
+
+        let tick_based = BarType::TickBased(100);
+        assert!(tick_based.is_tick_based());
+        assert!(!tick_based.is_time_based());
+    }
+
+    #[test]
+    fn test_from_ticks_n_tick_basic() {
+        // Create 5 ticks
+        let ticks = vec![
+            create_test_tick("BTCUSDT", "50000", "1.0", 0),
+            create_test_tick("BTCUSDT", "50100", "1.5", 1),
+            create_test_tick("BTCUSDT", "49900", "2.0", 2),
+            create_test_tick("BTCUSDT", "50200", "1.2", 3),
+            create_test_tick("BTCUSDT", "50300", "0.8", 4),
+        ];
+
+        // Create 2-tick bars
+        let bars = OHLCData::from_ticks_n_tick(&ticks, 2);
+
+        // Should create 3 bars: [0,1], [2,3], [4]
+        assert_eq!(bars.len(), 3);
+
+        // First bar: ticks 0-1
+        assert_eq!(bars[0].symbol, "BTCUSDT");
+        assert_eq!(bars[0].open, Decimal::from_str("50000").unwrap());
+        assert_eq!(bars[0].high, Decimal::from_str("50100").unwrap());
+        assert_eq!(bars[0].low, Decimal::from_str("50000").unwrap());
+        assert_eq!(bars[0].close, Decimal::from_str("50100").unwrap());
+        assert_eq!(bars[0].volume, Decimal::from_str("2.5").unwrap());
+        assert_eq!(bars[0].trade_count, 2);
+
+        // Second bar: ticks 2-3
+        assert_eq!(bars[1].open, Decimal::from_str("49900").unwrap());
+        assert_eq!(bars[1].high, Decimal::from_str("50200").unwrap());
+        assert_eq!(bars[1].low, Decimal::from_str("49900").unwrap());
+        assert_eq!(bars[1].close, Decimal::from_str("50200").unwrap());
+        assert_eq!(bars[1].volume, Decimal::from_str("3.2").unwrap());
+        assert_eq!(bars[1].trade_count, 2);
+
+        // Third bar: tick 4 (incomplete chunk)
+        assert_eq!(bars[2].open, Decimal::from_str("50300").unwrap());
+        assert_eq!(bars[2].high, Decimal::from_str("50300").unwrap());
+        assert_eq!(bars[2].low, Decimal::from_str("50300").unwrap());
+        assert_eq!(bars[2].close, Decimal::from_str("50300").unwrap());
+        assert_eq!(bars[2].volume, Decimal::from_str("0.8").unwrap());
+        assert_eq!(bars[2].trade_count, 1);
+    }
+
+    #[test]
+    fn test_from_ticks_n_tick_exact_multiple() {
+        // Create exactly 6 ticks for 3-tick bars
+        let ticks = vec![
+            create_test_tick("ETHUSDT", "3000", "1.0", 0),
+            create_test_tick("ETHUSDT", "3100", "1.0", 1),
+            create_test_tick("ETHUSDT", "3050", "1.0", 2),
+            create_test_tick("ETHUSDT", "3200", "1.0", 3),
+            create_test_tick("ETHUSDT", "3150", "1.0", 4),
+            create_test_tick("ETHUSDT", "3250", "1.0", 5),
+        ];
+
+        let bars = OHLCData::from_ticks_n_tick(&ticks, 3);
+
+        // Should create exactly 2 bars
+        assert_eq!(bars.len(), 2);
+
+        // First bar: ticks 0-2
+        assert_eq!(bars[0].open, Decimal::from_str("3000").unwrap());
+        assert_eq!(bars[0].high, Decimal::from_str("3100").unwrap());
+        assert_eq!(bars[0].low, Decimal::from_str("3000").unwrap());
+        assert_eq!(bars[0].close, Decimal::from_str("3050").unwrap());
+        assert_eq!(bars[0].trade_count, 3);
+
+        // Second bar: ticks 3-5
+        assert_eq!(bars[1].open, Decimal::from_str("3200").unwrap());
+        assert_eq!(bars[1].high, Decimal::from_str("3250").unwrap());
+        assert_eq!(bars[1].low, Decimal::from_str("3150").unwrap());
+        assert_eq!(bars[1].close, Decimal::from_str("3250").unwrap());
+        assert_eq!(bars[1].trade_count, 3);
+    }
+
+    #[test]
+    fn test_from_ticks_n_tick_single_tick() {
+        let ticks = vec![create_test_tick("BTCUSDT", "50000", "1.0", 0)];
+
+        let bars = OHLCData::from_ticks_n_tick(&ticks, 1);
+
+        assert_eq!(bars.len(), 1);
+        assert_eq!(bars[0].open, bars[0].close);
+        assert_eq!(bars[0].high, bars[0].low);
+        assert_eq!(bars[0].trade_count, 1);
+    }
+
+    #[test]
+    fn test_from_ticks_n_tick_empty() {
+        let ticks: Vec<TickData> = vec![];
+        let bars = OHLCData::from_ticks_n_tick(&ticks, 10);
+        assert_eq!(bars.len(), 0);
+    }
+
+    #[test]
+    fn test_from_ticks_n_tick_zero_count() {
+        let ticks = vec![create_test_tick("BTCUSDT", "50000", "1.0", 0)];
+        let bars = OHLCData::from_ticks_n_tick(&ticks, 0);
+        assert_eq!(bars.len(), 0);
+    }
+
+    #[test]
+    fn test_from_ticks_n_tick_large_count() {
+        // Create 5 ticks but request 100-tick bars
+        let ticks = vec![
+            create_test_tick("BTCUSDT", "50000", "1.0", 0),
+            create_test_tick("BTCUSDT", "50100", "1.0", 1),
+            create_test_tick("BTCUSDT", "49900", "1.0", 2),
+            create_test_tick("BTCUSDT", "50200", "1.0", 3),
+            create_test_tick("BTCUSDT", "50300", "1.0", 4),
+        ];
+
+        let bars = OHLCData::from_ticks_n_tick(&ticks, 100);
+
+        // Should create 1 incomplete bar with all 5 ticks
+        assert_eq!(bars.len(), 1);
+        assert_eq!(bars[0].trade_count, 5);
+        assert_eq!(bars[0].open, Decimal::from_str("50000").unwrap());
+        assert_eq!(bars[0].close, Decimal::from_str("50300").unwrap());
+        assert_eq!(bars[0].high, Decimal::from_str("50300").unwrap());
+        assert_eq!(bars[0].low, Decimal::from_str("49900").unwrap());
+    }
+
+    #[test]
+    fn test_from_ticks_n_tick_timestamp_ordering() {
+        // Create ticks with specific timestamps
+        let base_time = Utc::now();
+        let ticks = vec![
+            TickData {
+                timestamp: base_time,
+                symbol: "BTCUSDT".to_string(),
+                price: Decimal::from_str("50000").unwrap(),
+                quantity: Decimal::from_str("1.0").unwrap(),
+                side: TradeSide::Buy,
+                trade_id: "1".to_string(),
+                is_buyer_maker: false,
+            },
+            TickData {
+                timestamp: base_time + Duration::seconds(10),
+                symbol: "BTCUSDT".to_string(),
+                price: Decimal::from_str("50100").unwrap(),
+                quantity: Decimal::from_str("1.0").unwrap(),
+                side: TradeSide::Buy,
+                trade_id: "2".to_string(),
+                is_buyer_maker: false,
+            },
+            TickData {
+                timestamp: base_time + Duration::seconds(20),
+                symbol: "BTCUSDT".to_string(),
+                price: Decimal::from_str("50200").unwrap(),
+                quantity: Decimal::from_str("1.0").unwrap(),
+                side: TradeSide::Buy,
+                trade_id: "3".to_string(),
+                is_buyer_maker: false,
+            },
+        ];
+
+        let bars = OHLCData::from_ticks_n_tick(&ticks, 2);
+
+        // First bar should use timestamp of first tick in chunk
+        assert_eq!(bars[0].timestamp, base_time);
+        assert_eq!(bars[1].timestamp, base_time + Duration::seconds(20));
+    }
+
+    #[test]
+    fn test_from_ticks_n_tick_price_extremes() {
+        // Test with price movement including high and low extremes
+        let ticks = vec![
+            create_test_tick("BTCUSDT", "50000", "1.0", 0),
+            create_test_tick("BTCUSDT", "55000", "1.0", 1), // Highest
+            create_test_tick("BTCUSDT", "45000", "1.0", 2), // Lowest
+            create_test_tick("BTCUSDT", "50000", "1.0", 3),
+        ];
+
+        let bars = OHLCData::from_ticks_n_tick(&ticks, 4);
+
+        assert_eq!(bars.len(), 1);
+        assert_eq!(bars[0].high, Decimal::from_str("55000").unwrap());
+        assert_eq!(bars[0].low, Decimal::from_str("45000").unwrap());
+        assert_eq!(bars[0].open, Decimal::from_str("50000").unwrap());
+        assert_eq!(bars[0].close, Decimal::from_str("50000").unwrap());
+    }
+
+    #[test]
+    fn test_from_ticks_n_tick_volume_accumulation() {
+        let ticks = vec![
+            create_test_tick("BTCUSDT", "50000", "1.5", 0),
+            create_test_tick("BTCUSDT", "50100", "2.3", 1),
+            create_test_tick("BTCUSDT", "50200", "0.7", 2),
+        ];
+
+        let bars = OHLCData::from_ticks_n_tick(&ticks, 3);
+
+        assert_eq!(bars.len(), 1);
+        assert_eq!(
+            bars[0].volume,
+            Decimal::from_str("1.5").unwrap()
+                + Decimal::from_str("2.3").unwrap()
+                + Decimal::from_str("0.7").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_from_ticks_n_tick_100_tick_bars() {
+        // Realistic scenario: 250 ticks creating 100-tick bars
+        let mut ticks = Vec::new();
+        for i in 0..250 {
+            let price = format!("{}", 50000 + (i % 100));
+            ticks.push(create_test_tick("BTCUSDT", &price, "1.0", i));
+        }
+
+        let bars = OHLCData::from_ticks_n_tick(&ticks, 100);
+
+        // Should create 3 bars: 100 + 100 + 50
+        assert_eq!(bars.len(), 3);
+        assert_eq!(bars[0].trade_count, 100);
+        assert_eq!(bars[1].trade_count, 100);
+        assert_eq!(bars[2].trade_count, 50);
     }
 }

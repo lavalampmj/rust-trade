@@ -220,7 +220,7 @@ npm start
 - Automatic retry mechanisms and error handling
 
 ### **Advanced Backtesting**
-- Multiple trading strategies (SMA, RSI)
+
 - Professional performance metrics (Sharpe ratio, drawdown, win rate)
 - Portfolio management with P&L tracking
 - Interactive parameter configuration

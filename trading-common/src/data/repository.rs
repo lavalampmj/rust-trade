@@ -649,6 +649,62 @@ impl TickDataRepository {
         Ok(())
     }
 
+    /// Generate N-tick OHLC bars from tick data for a specific time range
+    ///
+    /// Creates OHLC bars where each bar contains exactly N ticks (except possibly the last bar).
+    /// For example, with tick_count=100, every 100 ticks will form one OHLC bar.
+    ///
+    /// # Arguments
+    /// * `symbol` - Trading symbol (e.g., "BTCUSDT")
+    /// * `tick_count` - Number of ticks per bar (e.g., 100 for 100-tick bars)
+    /// * `start_time` - Start of time range
+    /// * `end_time` - End of time range
+    /// * `limit` - Optional limit on number of ticks to fetch
+    ///
+    /// # Returns
+    /// Vector of OHLC bars ordered chronologically
+    pub async fn generate_n_tick_ohlc(
+        &self,
+        symbol: &str,
+        tick_count: u32,
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
+        limit: Option<i64>,
+    ) -> DataResult<Vec<OHLCData>> {
+        debug!(
+            "Generating {}-tick OHLC data: {} from {} to {}",
+            tick_count, symbol, start_time, end_time
+        );
+
+        if tick_count == 0 {
+            return Err(DataError::Validation(
+                "tick_count must be greater than 0".into(),
+            ));
+        }
+
+        // Query all ticks in the time range
+        let ticks = self
+            .get_historical_data_for_backtest(symbol, start_time, end_time, limit)
+            .await?;
+
+        if ticks.is_empty() {
+            debug!("No ticks found for N-tick OHLC generation");
+            return Ok(Vec::new());
+        }
+
+        // Generate N-tick bars using the OHLCData method
+        let ohlc_data = OHLCData::from_ticks_n_tick(&ticks, tick_count);
+
+        debug!(
+            "Generated {} {}-tick OHLC bars for {}",
+            ohlc_data.len(),
+            tick_count,
+            symbol
+        );
+
+        Ok(ohlc_data)
+    }
+
     /// Generate OHLC data from tick data for a specific time range
     pub async fn generate_ohlc_from_ticks(
         &self,
