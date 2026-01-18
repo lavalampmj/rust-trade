@@ -105,3 +105,34 @@ window_secs = 60
 # Optional: Custom wait duration in seconds when rate limit is exceeded
 # If not set, defaults to window_secs
 # wait_on_limit_secs = 60
+
+[alerting]
+# Enable the alerting system for monitoring critical metrics
+enabled = true
+
+# How often to evaluate alert rules (in seconds)
+interval_secs = 30
+
+# Cooldown period between repeated alerts for the same condition (in seconds)
+# This prevents alert spam when a condition persists
+cooldown_secs = 300  # 5 minutes
+
+# Connection pool saturation threshold (0.0-1.0)
+# WARNING alert when pool utilization exceeds this percentage
+pool_saturation_threshold = 0.8  # 80%
+
+# Connection pool critical threshold (0.0-1.0)
+# CRITICAL alert when pool utilization exceeds this percentage
+pool_critical_threshold = 0.95  # 95%
+
+# Batch failure rate threshold (0.0-1.0)
+# WARNING alert when batch failure rate exceeds this percentage
+batch_failure_threshold = 0.2  # 20%
+
+# Channel backpressure threshold (0.0-100.0)
+# WARNING alert when channel utilization exceeds this percentage
+channel_backpressure_threshold = 80.0  # 80%
+
+# WebSocket reconnection storm threshold (number of reconnects)
+# WARNING alert when reconnection count exceeds this value
+reconnection_storm_threshold = 10

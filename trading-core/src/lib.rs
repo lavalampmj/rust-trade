@@ -1,6 +1,7 @@
 // trading-core library: CLI-specific modules
 // Shared types are in trading-common crate
 
+pub mod alerting;
 pub mod config;
 pub mod exchange;
 pub mod live_trading;

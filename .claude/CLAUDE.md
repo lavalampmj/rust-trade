@@ -193,6 +193,46 @@ Exposed commands (src-tauri/src/commands.rs):
 
 **State management**: `AppState` wraps `Arc<TickDataRepository>` for thread-safe sharing across Tauri commands.
 
+#### 8. Alerting System (trading-core/src/alerting/)
+
+**Pattern**: Rule-based monitoring with periodic evaluation and cooldown
+
+Components:
+- `AlertRule`: Threshold-based conditions (connection pool, batch failures, WebSocket health)
+- `AlertEvaluator`: Background task that evaluates rules periodically (default: every 30s)
+- `AlertHandler`: Pluggable handlers (logging, future: email, Slack, PagerDuty)
+
+**Alert Rules** (6 production-ready rules):
+1. **Connection Pool Saturation** (WARNING): Active connections ≥ 80% of max
+2. **Connection Pool Critical** (CRITICAL): Active connections ≥ 95% of max
+3. **Batch Failure Rate** (WARNING): Batch failures ≥ 20% of total batches
+4. **WebSocket Disconnected** (CRITICAL): Connection status = 0
+5. **WebSocket Reconnection Storm** (WARNING): Reconnections > 10 attempts
+6. **Channel Backpressure** (WARNING): Channel utilization ≥ 80%
+
+**Cooldown mechanism**: 5-minute default cooldown between repeated alerts to prevent spam
+
+**Integration**:
+- Initialized during application startup in `main.rs::init_alerting_system()`
+- Reads thresholds from `config/development.toml` `[alerting]` section
+- Monitors Prometheus metrics (DB pool, batches, WebSocket, channel utilization)
+- Logs alerts to stdout/stderr with severity levels (INFO/WARNING/CRITICAL)
+
+**Configuration** (config/development.toml):
+```toml
+[alerting]
+enabled = true
+interval_secs = 30                      # Evaluation frequency
+cooldown_secs = 300                     # 5 minutes between repeated alerts
+pool_saturation_threshold = 0.8         # 80% WARNING
+pool_critical_threshold = 0.95          # 95% CRITICAL
+batch_failure_threshold = 0.2           # 20% WARNING
+channel_backpressure_threshold = 80.0   # 80% WARNING
+reconnection_storm_threshold = 10       # >10 reconnects WARNING
+```
+
+**Test coverage**: 25/25 tests passing (see `alerting/tests.rs`)
+
 ## Configuration System
 
 ### Environment Variables

@@ -7,6 +7,7 @@ use tracing::{error, info, warn};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 // CLI-specific modules
+mod alerting;
 mod config;
 mod exchange;
 mod live_trading;
@@ -635,6 +636,9 @@ async fn init_application() -> Result<(), Box<dyn std::error::Error>> {
     });
     info!("📊 Metrics server started on http://0.0.0.0:9090/metrics");
 
+    // Initialize alerting system
+    init_alerting_system().await?;
+
     // Initialize Python strategy system (optional - graceful degradation)
     let config_path = "../config/development.toml";
     match trading_common::backtest::strategy::initialize_python_strategies(config_path) {
@@ -646,6 +650,72 @@ async fn init_application() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     info!("🔧 Application environment initialized");
+    Ok(())
+}
+
+/// Initialize alerting system with configured rules
+async fn init_alerting_system() -> Result<(), Box<dyn std::error::Error>> {
+    // Load configuration
+    let settings = Settings::new()?;
+
+    if !settings.alerting.enabled {
+        info!("⚠️ Alerting system disabled in configuration");
+        return Ok(());
+    }
+
+    use alerting::{AlertEvaluator, AlertRule, LogAlertHandler};
+    use std::time::Duration;
+
+    let handler = LogAlertHandler::new();
+    let mut evaluator = AlertEvaluator::new(handler);
+
+    // Configure cooldown
+    evaluator.set_cooldown(Duration::from_secs(settings.alerting.cooldown_secs));
+
+    // Add alert rules based on configuration
+    evaluator.add_rule(AlertRule::connection_pool_saturation(
+        settings.database.max_connections as i64,
+        settings.alerting.pool_saturation_threshold,
+    ));
+
+    evaluator.add_rule(AlertRule::connection_pool_critical(
+        settings.database.max_connections as i64,
+        settings.alerting.pool_critical_threshold,
+    ));
+
+    evaluator.add_rule(AlertRule::batch_failure_rate(
+        settings.alerting.batch_failure_threshold,
+    ));
+
+    evaluator.add_rule(AlertRule::websocket_disconnected());
+
+    evaluator.add_rule(AlertRule::websocket_reconnection_storm(
+        settings.alerting.reconnection_storm_threshold,
+    ));
+
+    evaluator.add_rule(AlertRule::channel_backpressure(
+        settings.alerting.channel_backpressure_threshold,
+    ));
+
+    // Start background monitoring
+    evaluator.start_monitoring(settings.alerting.interval_secs);
+
+    info!(
+        "🚨 Alerting system started (interval: {}s, cooldown: {}s)",
+        settings.alerting.interval_secs, settings.alerting.cooldown_secs
+    );
+    info!(
+        "  📋 Rules: pool saturation ({:.0}%), pool critical ({:.0}%), batch failures ({:.0}%)",
+        settings.alerting.pool_saturation_threshold * 100.0,
+        settings.alerting.pool_critical_threshold * 100.0,
+        settings.alerting.batch_failure_threshold * 100.0
+    );
+    info!(
+        "  📋 Rules: channel backpressure ({:.0}%), reconnection storm (>{} attempts)",
+        settings.alerting.channel_backpressure_threshold,
+        settings.alerting.reconnection_storm_threshold
+    );
+
     Ok(())
 }
 

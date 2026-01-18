@@ -124,6 +124,74 @@ fn default_reconnect_window_secs() -> u64 {
     60 // Per minute
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct AlertingConfig {
+    /// Enable alerting system
+    #[serde(default = "default_alerting_enabled")]
+    pub enabled: bool,
+    /// Evaluation interval in seconds
+    #[serde(default = "default_alert_interval_secs")]
+    pub interval_secs: u64,
+    /// Cooldown period between repeated alerts in seconds
+    #[serde(default = "default_alert_cooldown_secs")]
+    pub cooldown_secs: u64,
+    /// Database connection pool saturation threshold (0.0-1.0)
+    #[serde(default = "default_pool_saturation_threshold")]
+    pub pool_saturation_threshold: f64,
+    /// Database connection pool critical threshold (0.0-1.0)
+    #[serde(default = "default_pool_critical_threshold")]
+    pub pool_critical_threshold: f64,
+    /// Batch failure rate threshold (0.0-1.0)
+    #[serde(default = "default_batch_failure_threshold")]
+    pub batch_failure_threshold: f64,
+    /// Channel backpressure threshold (0.0-100.0)
+    #[serde(default = "default_channel_backpressure_threshold")]
+    pub channel_backpressure_threshold: f64,
+    /// WebSocket reconnection storm threshold (number of reconnects)
+    #[serde(default = "default_reconnection_storm_threshold")]
+    pub reconnection_storm_threshold: u64,
+}
+
+impl Default for AlertingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_alerting_enabled(),
+            interval_secs: default_alert_interval_secs(),
+            cooldown_secs: default_alert_cooldown_secs(),
+            pool_saturation_threshold: default_pool_saturation_threshold(),
+            pool_critical_threshold: default_pool_critical_threshold(),
+            batch_failure_threshold: default_batch_failure_threshold(),
+            channel_backpressure_threshold: default_channel_backpressure_threshold(),
+            reconnection_storm_threshold: default_reconnection_storm_threshold(),
+        }
+    }
+}
+
+fn default_alerting_enabled() -> bool {
+    true
+}
+fn default_alert_interval_secs() -> u64 {
+    30 // Check every 30 seconds
+}
+fn default_alert_cooldown_secs() -> u64 {
+    300 // 5 minutes
+}
+fn default_pool_saturation_threshold() -> f64 {
+    0.8 // 80%
+}
+fn default_pool_critical_threshold() -> f64 {
+    0.95 // 95%
+}
+fn default_batch_failure_threshold() -> f64 {
+    0.2 // 20%
+}
+fn default_channel_backpressure_threshold() -> f64 {
+    80.0 // 80%
+}
+fn default_reconnection_storm_threshold() -> u64 {
+    10 // More than 10 reconnects
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Settings {
     pub database: Database,
@@ -134,6 +202,8 @@ pub struct Settings {
     pub validation: Validation,
     #[serde(default)]
     pub reconnection_rate_limit: ReconnectionRateLimitConfig,
+    #[serde(default)]
+    pub alerting: AlertingConfig,
 }
 
 impl Settings {
