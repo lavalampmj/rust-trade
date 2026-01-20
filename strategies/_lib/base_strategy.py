@@ -19,7 +19,10 @@ reverse-indexed access to time series data:
 from abc import ABC, abstractmethod
 from collections import deque
 from decimal import Decimal
-from typing import Dict, Optional, Any, Generic, TypeVar, Iterator, List, Union
+from typing import Dict, Optional, Any, Generic, TypeVar, Iterator, List, Union, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .bars_context import BarsContext
 
 # Type variable for Series values
 T = TypeVar('T')
@@ -393,7 +396,7 @@ class BaseStrategy(ABC):
         pass
 
     @abstractmethod
-    def on_bar_data(self, bar_data: Dict[str, Any]) -> Dict[str, Any]:
+    def on_bar_data(self, bar_data: Dict[str, Any], bars: 'BarsContext') -> Dict[str, Any]:
         """
         Process bar data and generate trading signal.
 
@@ -421,16 +424,22 @@ class BaseStrategy(ABC):
                     - quantity (str): Tick quantity
                     - side (str): "Buy" or "Sell"
                     - trade_id (str): Trade identifier
+            bars: BarsContext with OHLCV series and helpers
+                - bars.close[0]: Current close price
+                - bars.close[1]: Previous close price
+                - bars.sma(20): 20-period SMA of close
+                - bars.highest_high(14): Highest high over 14 bars
+                - See BarsContext for full API
 
         Returns:
             Signal dictionary (use Signal.buy/sell/hold methods)
 
         Example:
-            >>> def on_bar_data(self, bar_data):
-            ...     close = Decimal(bar_data["close"])
-            ...     symbol = bar_data["symbol"]
-            ...     if self.should_buy(close):
-            ...         return Signal.buy(symbol, "100")
+            >>> def on_bar_data(self, bar_data, bars):
+            ...     # Use BarsContext for easy access to price series
+            ...     sma = bars.sma(20)
+            ...     if sma is not None and bars.close[0] > sma:
+            ...         return Signal.buy(bar_data["symbol"], "100")
             ...     return Signal.hold()
         """
         pass
@@ -501,3 +510,15 @@ class BaseStrategy(ABC):
         Default implementation does nothing.
         """
         pass
+
+    def max_bars_lookback(self) -> int:
+        """
+        Return maximum bars lookback for BarsContext.
+
+        Override to customize how much history BarsContext maintains.
+        Default is 256 bars.
+
+        Returns:
+            Maximum number of bars to keep
+        """
+        return 256

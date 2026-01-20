@@ -3,7 +3,7 @@ Example Tick Bar Strategy using N-Tick OHLC Bars
 
 This strategy demonstrates:
 - Working with N-tick bars (e.g., 100-tick bars)
-- Volume-weighted price analysis
+- Volume-weighted price analysis using BarsContext
 - Tick intensity monitoring
 - Position sizing based on bar characteristics
 
@@ -20,12 +20,13 @@ Key Concepts:
 - Bar duration varies based on market activity
 
 Uses the unified on_bar_data() interface with OnCloseBar mode and TickBased bars.
-Updated to use Series<T> abstraction for NinjaTrader-style access.
+Updated to use BarsContext for NinjaTrader-style access.
 """
 
 from typing import Optional, Dict, Any
 from decimal import Decimal
-from _lib.base_strategy import BaseStrategy, Signal, FloatSeries, Series
+from _lib.base_strategy import BaseStrategy, Signal
+from _lib.bars_context import BarsContext
 
 
 class TickBarStrategy(BaseStrategy):
@@ -38,7 +39,7 @@ class TickBarStrategy(BaseStrategy):
     - More bars during high activity, fewer during low activity
     - Better representation of actual market flow
 
-    Uses FloatSeries for volume tracking and Series for bar history.
+    Uses BarsContext for volume tracking and price series.
     """
 
     def __init__(self):
@@ -48,13 +49,8 @@ class TickBarStrategy(BaseStrategy):
         self.lookback_bars = 20  # Number of bars to analyze
 
         # Price action thresholds
-        self.momentum_threshold = 0.002  # 0.2% price move threshold
-        self.volume_multiplier = 1.5  # Volume must be 1.5x average
-
-        # Use FloatSeries for volume and momentum tracking
-        self.volumes = FloatSeries("volumes", max_lookback=self.lookback_bars)
-        self.momentums = FloatSeries("momentums", max_lookback=self.lookback_bars)
-        self.closes = FloatSeries("closes", max_lookback=self.lookback_bars)
+        self.momentum_threshold = Decimal("0.002")  # 0.2% price move threshold
+        self.volume_multiplier = Decimal("1.5")  # Volume must be 1.5x average
 
         # Position tracking
         self.has_position = False
@@ -91,18 +87,14 @@ class TickBarStrategy(BaseStrategy):
                 self.lookback_bars = int(params["lookback_bars"])
                 if self.lookback_bars < 2:
                     return "lookback_bars must be at least 2"
-                # Reinitialize series with new lookback
-                self.volumes = FloatSeries("volumes", max_lookback=self.lookback_bars)
-                self.momentums = FloatSeries("momentums", max_lookback=self.lookback_bars)
-                self.closes = FloatSeries("closes", max_lookback=self.lookback_bars)
 
             if "momentum_threshold" in params:
-                self.momentum_threshold = float(params["momentum_threshold"])
+                self.momentum_threshold = Decimal(params["momentum_threshold"])
                 if self.momentum_threshold <= 0:
                     return "momentum_threshold must be positive"
 
             if "volume_multiplier" in params:
-                self.volume_multiplier = float(params["volume_multiplier"])
+                self.volume_multiplier = Decimal(params["volume_multiplier"])
                 if self.volume_multiplier <= 0:
                     return "volume_multiplier must be positive"
 
@@ -113,69 +105,16 @@ class TickBarStrategy(BaseStrategy):
 
     def reset(self) -> None:
         """Reset strategy state for new backtest."""
-        self.volumes.reset()
-        self.momentums.reset()
-        self.closes.reset()
         self.has_position = False
         self.entry_price = None
         self.total_bars_processed = 0
         self.avg_bar_volume = None
 
-    def calculate_bar_momentum(self, bar_data: Dict[str, Any]) -> float:
-        """
-        Calculate momentum for a single bar.
-
-        Momentum = (close - open) / open
-
-        Args:
-            bar_data: Bar data dictionary
-
-        Returns:
-            Momentum as decimal (e.g., 0.002 = 0.2% upward movement)
-        """
-        open_price = float(bar_data["open"])
-        close_price = float(bar_data["close"])
-
-        if open_price == 0:
-            return 0.0
-
-        return (close_price - open_price) / open_price
-
-    def update_volume_stats(self, volume: float) -> None:
-        """
-        Update rolling average volume statistics.
-
-        Args:
-            volume: Current bar volume
-        """
-        if self.avg_bar_volume is None:
-            self.avg_bar_volume = volume
-        else:
-            # Exponential moving average with alpha=0.2
-            alpha = 0.2
-            self.avg_bar_volume = alpha * volume + (1 - alpha) * self.avg_bar_volume
-
-    def is_high_volume_bar(self, volume: float) -> bool:
-        """
-        Check if current bar has high volume.
-
-        Args:
-            volume: Current bar volume
-
-        Returns:
-            True if volume exceeds threshold
-        """
-        if self.avg_bar_volume is None or self.avg_bar_volume == 0:
-            return False
-
-        return volume >= (self.avg_bar_volume * self.volume_multiplier)
-
-    def on_bar_data(self, bar_data: Dict[str, Any]) -> Dict[str, Any]:
+    def on_bar_data(self, bar_data: Dict[str, Any], bars: BarsContext) -> Dict[str, Any]:
         """
         Process N-tick bar and generate trading signal.
 
-        This is where the magic happens! Each bar represents exactly N trades
-        (configured via tick_count parameter).
+        Uses BarsContext for price and volume series access.
 
         Args:
             bar_data: Dictionary with keys:
@@ -189,31 +128,43 @@ class TickBarStrategy(BaseStrategy):
                 - trade_count: Number of ticks (should be N, or less for last bar)
                 - is_bar_closed: Whether this bar is complete
                 - tick_count_in_bar: Number of ticks in this bar
+            bars: BarsContext with OHLCV series and helpers
 
         Returns:
             Signal dictionary
         """
         symbol = bar_data["symbol"]
-        volume = float(bar_data["volume"])
-        close_price = float(bar_data["close"])
 
         self.total_bars_processed += 1
 
-        # Update statistics
-        self.update_volume_stats(volume)
+        # Use BarsContext for current bar data
+        if bars.open.is_empty():
+            return Signal.hold()
 
-        # Calculate bar characteristics
-        momentum = self.calculate_bar_momentum(bar_data)
-        is_high_volume = self.is_high_volume_bar(volume)
+        open_price = bars.open[0]
+        close_price = bars.close[0]
+        volume = bars.volume[0]
 
-        # Push to series (NinjaTrader-style)
-        self.volumes.push(volume)
-        self.momentums.push(momentum)
-        self.closes.push(close_price)
+        # Calculate momentum
+        if open_price == 0:
+            return Signal.hold()
+
+        momentum = (close_price - open_price) / open_price
+
+        # Update average volume
+        if self.avg_bar_volume is None:
+            self.avg_bar_volume = volume
+        else:
+            # Exponential moving average with alpha=0.2
+            alpha = Decimal("0.2")
+            self.avg_bar_volume = alpha * volume + (1 - alpha) * self.avg_bar_volume
 
         # Need enough history before trading
-        if self.volumes.count() < self.lookback_bars:
+        if not bars.has_bars(self.lookback_bars):
             return Signal.hold()
+
+        # Check for high volume
+        is_high_volume = volume >= (self.avg_bar_volume * self.volume_multiplier)
 
         # Trading Logic:
         # Buy: Strong upward momentum + high volume + no position

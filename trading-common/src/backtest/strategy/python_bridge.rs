@@ -15,6 +15,8 @@ use std::str::FromStr;
 pub struct PythonStrategy {
     /// Python object instance (stored as PyObject to avoid GIL issues)
     py_instance: Arc<Mutex<PyObject>>,
+    /// Python BarsContext instance for OHLCV series
+    py_bars_context: Arc<Mutex<PyObject>>,
     /// Cached strategy name
     cached_name: String,
 
@@ -147,8 +149,24 @@ impl PythonStrategy {
                 .and_then(|n: Bound<'_, PyAny>| n.extract::<String>())
                 .map_err(|e| format!("Failed to get strategy name: {}", e))?;
 
+            // Get max_bars_lookback from strategy (default 256)
+            let max_lookback = match instance.call_method0("max_bars_lookback") {
+                Ok(result) => result.extract::<usize>().unwrap_or(256),
+                Err(_) => 256,
+            };
+
+            // Import and create Python BarsContext
+            let bars_module = py.import_bound("_lib.bars_context")
+                .map_err(|e| format!("Failed to import _lib.bars_context: {}", e))?;
+            let bars_class = bars_module.getattr("BarsContext")
+                .map_err(|e| format!("Failed to get BarsContext class: {}", e))?;
+
+            let py_bars = bars_class.call1(("", max_lookback))
+                .map_err(|e| format!("Failed to create BarsContext: {}", e))?;
+
             Ok(Self {
                 py_instance: Arc::new(Mutex::new(instance.into())),
+                py_bars_context: Arc::new(Mutex::new(py_bars.into())),
                 cached_name: name,
                 cpu_time_us: Arc::new(AtomicU64::new(0)),
                 call_count: Arc::new(AtomicU64::new(0)),
@@ -302,15 +320,17 @@ impl Strategy for PythonStrategy {
     }
 
     fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
-        // Note: Python strategies manage their own state and don't use BarsContext
-        // The _bars parameter is ignored; Python strategies should use the bar_data dict directly
+        // Note: Python strategies use their own Python BarsContext
+        // The Rust _bars parameter is ignored; we pass Python BarsContext instead
 
         // Start timing
         let start = std::time::Instant::now();
 
         let signal = Python::with_gil(|py| {
             let instance = self.py_instance.lock().unwrap();
+            let py_bars = self.py_bars_context.lock().unwrap();
             let py_instance = instance.bind(py);
+            let py_bars_bound = py_bars.bind(py);
 
             // Convert BarData to Python dict
             let bar_dict = match bar_data_to_pydict(py, bar_data) {
@@ -321,8 +341,14 @@ impl Strategy for PythonStrategy {
                 }
             };
 
-            // Call Python on_bar_data method
-            match py_instance.call_method1("on_bar_data", (bar_dict,)) {
+            // Update Python BarsContext BEFORE calling strategy
+            if let Err(e) = py_bars_bound.call_method1("on_bar_update", (&bar_dict,)) {
+                eprintln!("Failed to update Python BarsContext: {}", e);
+                return Signal::Hold;
+            }
+
+            // Call Python on_bar_data method with BOTH bar_data AND bars
+            match py_instance.call_method1("on_bar_data", (&bar_dict, py_bars_bound)) {
                 Ok(result) => {
                     match pydict_to_signal(&result) {
                         Ok(signal) => signal,
@@ -391,11 +417,18 @@ impl Strategy for PythonStrategy {
 
     fn reset(&mut self) {
         Python::with_gil(|py| {
+            // Reset strategy
             let instance = self.py_instance.lock().unwrap();
             let py_instance = instance.bind(py);
 
             if let Err(e) = py_instance.call_method0("reset") {
                 eprintln!("Python reset error: {}", e);
+            }
+
+            // Reset BarsContext
+            let py_bars = self.py_bars_context.lock().unwrap();
+            if let Err(e) = py_bars.bind(py).call_method0("reset") {
+                eprintln!("Python BarsContext reset error: {}", e);
             }
         });
     }

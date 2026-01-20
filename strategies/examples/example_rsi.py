@@ -4,7 +4,7 @@ Example RSI (Relative Strength Index) Strategy in Python
 This strategy demonstrates:
 - RSI calculation using price changes
 - Overbought/oversold threshold trading
-- State management with Series abstraction
+- State management with BarsContext custom series
 - Type hints for clarity
 
 Strategy Logic:
@@ -13,12 +13,13 @@ Strategy Logic:
 - Hold otherwise
 
 Uses the unified on_bar_data() interface with OnCloseBar mode.
-Updated to use Series<T> abstraction for NinjaTrader-style access.
+Updated to use BarsContext for price change tracking.
 """
 
 from typing import Optional, Dict, Any
 from decimal import Decimal
-from _lib.base_strategy import BaseStrategy, Signal, FloatSeries
+from _lib.base_strategy import BaseStrategy, Signal
+from _lib.bars_context import BarsContext
 
 
 class ExampleRsiStrategy(BaseStrategy):
@@ -28,22 +29,21 @@ class ExampleRsiStrategy(BaseStrategy):
     The RSI is calculated over a configurable period (default 14) using the
     average gains and losses.
 
-    Uses FloatSeries for price change tracking with reverse indexing.
+    Uses BarsContext custom series for price change tracking.
     """
 
     def __init__(self):
         """Initialize the RSI strategy with default parameters."""
         self.period = 14  # RSI period
-        self.oversold = 30.0  # Buy threshold
-        self.overbought = 70.0  # Sell threshold
-
-        # Use FloatSeries for price changes with reverse indexing
-        self.price_changes = FloatSeries("price_changes", max_lookback=self.period)
-        self.last_price = None
+        self.oversold = Decimal("30")  # Buy threshold
+        self.overbought = Decimal("70")  # Sell threshold
 
         # Track position state
         self.has_position = False
-        self.last_signal_type = None
+
+        # Series references (initialized on first call)
+        self._gains_series = None
+        self._losses_series = None
 
     def name(self) -> str:
         """Return the strategy name."""
@@ -66,27 +66,25 @@ class ExampleRsiStrategy(BaseStrategy):
                 if period < 2:
                     return "RSI period must be at least 2"
                 self.period = period
-                # Reinitialize series with new lookback
-                self.price_changes = FloatSeries("price_changes", max_lookback=self.period)
             except ValueError:
                 return "Invalid period parameter: must be an integer"
 
         if "oversold" in params:
             try:
-                oversold = float(params["oversold"])
-                if not (0 <= oversold <= 100):
+                oversold = Decimal(params["oversold"])
+                if not (Decimal(0) <= oversold <= Decimal(100)):
                     return "Oversold threshold must be between 0 and 100"
                 self.oversold = oversold
-            except ValueError:
+            except Exception:
                 return "Invalid oversold parameter: must be a number"
 
         if "overbought" in params:
             try:
-                overbought = float(params["overbought"])
-                if not (0 <= overbought <= 100):
+                overbought = Decimal(params["overbought"])
+                if not (Decimal(0) <= overbought <= Decimal(100)):
                     return "Overbought threshold must be between 0 and 100"
                 self.overbought = overbought
-            except ValueError:
+            except Exception:
                 return "Invalid overbought parameter: must be a number"
 
         if self.oversold >= self.overbought:
@@ -96,84 +94,71 @@ class ExampleRsiStrategy(BaseStrategy):
 
     def reset(self) -> None:
         """Reset strategy state."""
-        self.price_changes.reset()
-        self.last_price = None
         self.has_position = False
-        self.last_signal_type = None
+        self._gains_series = None
+        self._losses_series = None
 
-    def calculate_rsi(self) -> Optional[float]:
-        """
-        Calculate RSI from price changes using Series.
-
-        Returns:
-            RSI value (0-100) or None if not enough data
-        """
-        if self.price_changes.count() < self.period:
-            return None
-
-        gains = 0.0
-        losses = 0.0
-
-        # Use reverse indexing: [0] = most recent, [period-1] = oldest in window
-        for i in range(self.period):
-            change = self.price_changes[i]
-            if change > 0:
-                gains += change
-            else:
-                losses += abs(change)
-
-        avg_gain = gains / self.period
-        avg_loss = losses / self.period
-
-        if avg_loss == 0:
-            return 100.0  # No losses means maximum RSI
-
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-
-        return rsi
-
-    def on_bar_data(self, bar_data: Dict[str, Any]) -> Dict[str, Any]:
+    def on_bar_data(self, bar_data: Dict[str, Any], bars: BarsContext) -> Dict[str, Any]:
         """
         Process bar data and generate trading signal.
 
-        Uses close price for RSI calculation. Operates in OnCloseBar mode
-        so only processes completed bars.
+        Uses BarsContext for price change calculation and custom series for
+        tracking gains and losses.
 
         Args:
             bar_data: Bar data dictionary with OHLC and metadata
+            bars: BarsContext with OHLCV series and helpers
 
         Returns:
             Signal dictionary (from Signal.buy/sell/hold)
         """
         symbol = bar_data["symbol"]
-        close_price = float(bar_data["close"])
 
-        # Track price changes using close prices
-        if self.last_price is not None:
-            change = close_price - self.last_price
-            self.price_changes.push(change)
+        # Register custom series on first call
+        if not bars.has_series("gains"):
+            self._gains_series = bars.register_series("gains")
+            self._losses_series = bars.register_series("losses")
 
-        self.last_price = close_price
-
-        # Calculate RSI
-        rsi = self.calculate_rsi()
-
-        if rsi is None:
+        # Calculate price change using bars
+        change = bars.change()
+        if change is None:
+            bars.push_to_series("gains", Decimal(0))
+            bars.push_to_series("losses", Decimal(0))
             return Signal.hold()
 
-        # Generate signals based on RSI
+        # Track gains and losses
+        gain = change if change > 0 else Decimal(0)
+        loss = abs(change) if change < 0 else Decimal(0)
+        bars.push_to_series("gains", gain)
+        bars.push_to_series("losses", loss)
+
+        # Need enough data
+        if bars.count() < self.period:
+            return Signal.hold()
+
+        # Calculate RSI
+        gains_series = bars.get_series("gains")
+        losses_series = bars.get_series("losses")
+
+        avg_gain = gains_series.sma(self.period)
+        avg_loss = losses_series.sma(self.period)
+
+        if avg_gain is None or avg_loss is None or avg_loss == 0:
+            return Signal.hold()
+
+        rs = avg_gain / avg_loss
+        rsi = Decimal(100) - (Decimal(100) / (1 + rs))
+
+        # Trading logic
         # Buy when oversold and don't have position
         if rsi < self.oversold and not self.has_position:
             self.has_position = True
-            self.last_signal_type = "Buy"
             # Use 10% of capital for each trade
             return Signal.buy(symbol, "0.1")
 
         # Sell when overbought and have position
         if rsi > self.overbought and self.has_position:
             self.has_position = False
-            self.last_signal_type = "Sell"
             return Signal.sell(symbol, "0.1")
 
         return Signal.hold()

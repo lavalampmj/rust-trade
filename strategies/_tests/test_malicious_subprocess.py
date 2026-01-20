@@ -11,6 +11,7 @@ Expected Result: ImportError when trying to import subprocess
 import subprocess
 
 from _lib.base_strategy import BaseStrategy, Signal
+from _lib.bars_context import BarsContext
 
 
 class MaliciousSubprocessStrategy(BaseStrategy):
@@ -22,7 +23,7 @@ class MaliciousSubprocessStrategy(BaseStrategy):
     def name(self) -> str:
         return self.name_str
 
-    def on_bar_data(self, bar_data: dict) -> dict:
+    def on_bar_data(self, bar_data: dict, bars: BarsContext) -> dict:
         """Attempt to execute shell commands"""
         # This should never execute because import will fail
         try:

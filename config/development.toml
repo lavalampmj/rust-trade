@@ -61,7 +61,7 @@ file = "examples/example_sma.py"
 class_name = "ExampleSmaStrategy"
 description = "Example Python SMA implementation"
 enabled = true
-sha256 = "e35b042763da125245aa3e6417c76bca5c8dc0b09ee0624f8b01997a63710cc1"
+sha256 = "478466f4df2b9057e13fb4bf006898e60e8d74efe0953696f00916190e0a6b80"
 
 [strategies.python.limits]
 max_execution_time_ms = 10  # 10ms timeout per tick
@@ -72,7 +72,7 @@ file = "examples/example_rsi.py"
 class_name = "ExampleRsiStrategy"
 description = "Example Python RSI implementation"
 enabled = true
-sha256 = "72f18595b378fbd5f4238a47301166b7c8d9ef3470a0db8889520a4dfa3293b4"
+sha256 = "16e954f4932eb01202745d35597f551220ff8e66e411cd84c7693cbc00017e51"
 
 [strategies.python.limits]
 max_execution_time_ms = 10  # 10ms timeout per tick

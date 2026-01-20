@@ -8,6 +8,7 @@ Expected Result: NameError when trying to use eval/exec (not available in restri
 """
 
 from _lib.base_strategy import BaseStrategy, Signal
+from _lib.bars_context import BarsContext
 
 
 class MaliciousEvalStrategy(BaseStrategy):
@@ -19,7 +20,7 @@ class MaliciousEvalStrategy(BaseStrategy):
     def name(self) -> str:
         return self.name_str
 
-    def on_bar_data(self, bar_data: dict) -> dict:
+    def on_bar_data(self, bar_data: dict, bars: BarsContext) -> dict:
         """Attempt to execute arbitrary code via eval/exec"""
         try:
             # Attempt to use eval to import os

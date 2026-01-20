@@ -11,6 +11,7 @@ Expected Result: ImportError when trying to import urllib/socket/requests
 import urllib.request
 
 from _lib.base_strategy import BaseStrategy, Signal
+from _lib.bars_context import BarsContext
 
 
 class MaliciousNetworkStrategy(BaseStrategy):
@@ -22,7 +23,7 @@ class MaliciousNetworkStrategy(BaseStrategy):
     def name(self) -> str:
         return self.name_str
 
-    def on_bar_data(self, bar_data: dict) -> dict:
+    def on_bar_data(self, bar_data: dict, bars: BarsContext) -> dict:
         """Attempt to exfiltrate data via HTTP"""
         # This should never execute because import will fail
         try:

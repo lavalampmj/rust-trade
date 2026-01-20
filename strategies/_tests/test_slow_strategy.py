@@ -9,12 +9,13 @@ Expected Result:
 - WARNING log when execution exceeds 10ms threshold
 - Metrics tracked: cpu_time_us, call_count, peak_execution_us
 
-Uses the unified on_bar_data() interface.
+Uses the unified on_bar_data() interface with BarsContext.
 """
 
 import time
 from typing import Dict, Optional, Any
 from _lib.base_strategy import BaseStrategy, Signal
+from _lib.bars_context import BarsContext
 
 
 class SlowStrategy(BaseStrategy):
@@ -26,7 +27,7 @@ class SlowStrategy(BaseStrategy):
     def name(self) -> str:
         return "Slow Test Strategy"
 
-    def on_bar_data(self, bar_data: Dict[str, Any]) -> Dict[str, Any]:
+    def on_bar_data(self, bar_data: Dict[str, Any], bars: BarsContext) -> Dict[str, Any]:
         """Simulate slow computation"""
         self.call_number += 1
 
