@@ -4,7 +4,7 @@ Example RSI (Relative Strength Index) Strategy in Python
 This strategy demonstrates:
 - RSI calculation using price changes
 - Overbought/oversold threshold trading
-- State management with collections
+- State management with Series abstraction
 - Type hints for clarity
 
 Strategy Logic:
@@ -13,12 +13,12 @@ Strategy Logic:
 - Hold otherwise
 
 Uses the unified on_bar_data() interface with OnCloseBar mode.
+Updated to use Series<T> abstraction for NinjaTrader-style access.
 """
 
 from typing import Optional, Dict, Any
-from collections import deque
 from decimal import Decimal
-from base_strategy import BaseStrategy, Signal
+from base_strategy import BaseStrategy, Signal, FloatSeries
 
 
 class ExampleRsiStrategy(BaseStrategy):
@@ -27,6 +27,8 @@ class ExampleRsiStrategy(BaseStrategy):
 
     The RSI is calculated over a configurable period (default 14) using the
     average gains and losses.
+
+    Uses FloatSeries for price change tracking with reverse indexing.
     """
 
     def __init__(self):
@@ -35,8 +37,8 @@ class ExampleRsiStrategy(BaseStrategy):
         self.oversold = 30.0  # Buy threshold
         self.overbought = 70.0  # Sell threshold
 
-        # Track price changes for RSI calculation
-        self.price_changes = deque(maxlen=self.period)
+        # Use FloatSeries for price changes with reverse indexing
+        self.price_changes = FloatSeries("price_changes", max_lookback=self.period)
         self.last_price = None
 
         # Track position state
@@ -64,7 +66,8 @@ class ExampleRsiStrategy(BaseStrategy):
                 if period < 2:
                     return "RSI period must be at least 2"
                 self.period = period
-                self.price_changes = deque(maxlen=self.period)
+                # Reinitialize series with new lookback
+                self.price_changes = FloatSeries("price_changes", max_lookback=self.period)
             except ValueError:
                 return "Invalid period parameter: must be an integer"
 
@@ -93,34 +96,34 @@ class ExampleRsiStrategy(BaseStrategy):
 
     def reset(self) -> None:
         """Reset strategy state."""
-        self.price_changes.clear()
+        self.price_changes.reset()
         self.last_price = None
         self.has_position = False
         self.last_signal_type = None
 
     def calculate_rsi(self) -> Optional[float]:
         """
-        Calculate RSI from price changes.
+        Calculate RSI from price changes using Series.
 
         Returns:
             RSI value (0-100) or None if not enough data
         """
-        if len(self.price_changes) < self.period:
+        if self.price_changes.count() < self.period:
             return None
 
-        gains = []
-        losses = []
+        gains = 0.0
+        losses = 0.0
 
-        for change in self.price_changes:
+        # Use reverse indexing: [0] = most recent, [period-1] = oldest in window
+        for i in range(self.period):
+            change = self.price_changes[i]
             if change > 0:
-                gains.append(change)
-                losses.append(0)
+                gains += change
             else:
-                gains.append(0)
-                losses.append(abs(change))
+                losses += abs(change)
 
-        avg_gain = sum(gains) / self.period
-        avg_loss = sum(losses) / self.period
+        avg_gain = gains / self.period
+        avg_loss = losses / self.period
 
         if avg_loss == 0:
             return 100.0  # No losses means maximum RSI
@@ -149,7 +152,7 @@ class ExampleRsiStrategy(BaseStrategy):
         # Track price changes using close prices
         if self.last_price is not None:
             change = close_price - self.last_price
-            self.price_changes.append(change)
+            self.price_changes.push(change)
 
         self.last_price = close_price
 

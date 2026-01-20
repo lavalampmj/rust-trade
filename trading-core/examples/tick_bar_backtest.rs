@@ -18,6 +18,7 @@ use trading_common::backtest::{Portfolio, Signal};
 use trading_common::data::cache::TieredCache;
 use trading_common::data::repository::TickDataRepository;
 use trading_common::data::types::{BarData, BarMetadata, BarType, Timeframe};
+use trading_common::series::bars_context::BarsContext;
 
 #[tokio::main]
 async fn main() -> Result<(), String> {
@@ -174,6 +175,9 @@ async fn main() -> Result<(), String> {
     let mut portfolio = Portfolio::new(initial_capital);
     let mut trade_count = 0;
 
+    // Create BarsContext for the strategy
+    let mut bars_context = BarsContext::new(&symbol);
+
     for (i, bar) in tick_bars_100.iter().enumerate() {
         // Update portfolio with latest price
         portfolio.update_price(&bar.symbol, bar.close);
@@ -192,8 +196,11 @@ async fn main() -> Result<(), String> {
             },
         };
 
+        // Update BarsContext with new bar data
+        bars_context.on_bar_update(&bar_data);
+
         // Generate signal from strategy
-        let signal = strategy.on_bar_data(&bar_data);
+        let signal = strategy.on_bar_data(&bar_data, &mut bars_context);
 
         // Execute signal
         match signal {

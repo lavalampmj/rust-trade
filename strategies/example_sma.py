@@ -7,10 +7,12 @@ below (death cross).
 
 Uses the unified on_bar_data() interface with OnCloseBar mode,
 processing only completed bars for efficiency.
+
+Updated to use Series<T> abstraction for NinjaTrader-style access
+to historical price data.
 """
 
-from base_strategy import BaseStrategy, Signal
-from collections import deque
+from base_strategy import BaseStrategy, Signal, DecimalSeries
 from decimal import Decimal
 from typing import Dict, Any, Optional
 
@@ -21,13 +23,16 @@ class ExampleSmaStrategy(BaseStrategy):
 
     Generates buy signals on golden cross (short MA > long MA)
     and sell signals on death cross (short MA < long MA).
+
+    Uses DecimalSeries for price history with built-in SMA calculation.
     """
 
     def __init__(self):
         """Initialize the SMA strategy with default parameters."""
         self.short_period = 5
         self.long_period = 20
-        self.prices = deque()
+        # Use DecimalSeries for reverse-indexed access with SMA helper
+        self.close = DecimalSeries("close", max_lookback=self.long_period * 2)
         self.last_signal_type = None
 
     def name(self) -> str:
@@ -58,6 +63,9 @@ class ExampleSmaStrategy(BaseStrategy):
             if self.short_period < 1 or self.long_period < 1:
                 return "Periods must be positive integers"
 
+            # Reinitialize series with appropriate lookback
+            self.close = DecimalSeries("close", max_lookback=self.long_period * 2)
+
             return None
         except Exception as e:
             return str(e)
@@ -75,20 +83,14 @@ class ExampleSmaStrategy(BaseStrategy):
         Returns:
             Trading signal
         """
-        # Use close price for SMA calculation
+        # Push close price to series (NinjaTrader-style)
         price = Decimal(bar_data["close"])
         symbol = bar_data["symbol"]
+        self.close.push(price)
 
-        # Add price to history
-        self.prices.append(price)
-
-        # Keep reasonable history size
-        if len(self.prices) > self.long_period * 2:
-            self.prices.popleft()
-
-        # Calculate moving averages
-        short_sma = self._calculate_sma(self.short_period)
-        long_sma = self._calculate_sma(self.long_period)
+        # Use built-in SMA helpers from DecimalSeries
+        short_sma = self.close.sma(self.short_period)
+        long_sma = self.close.sma(self.long_period)
 
         # Need enough data for both SMAs
         if short_sma is None or long_sma is None:
@@ -106,25 +108,9 @@ class ExampleSmaStrategy(BaseStrategy):
 
         return Signal.hold()
 
-    def _calculate_sma(self, period: int) -> Optional[Decimal]:
-        """
-        Calculate simple moving average for given period.
-
-        Args:
-            period: Number of periods to average
-
-        Returns:
-            SMA value or None if insufficient data
-        """
-        if len(self.prices) < period:
-            return None
-
-        recent_prices = list(self.prices)[-period:]
-        return sum(recent_prices) / Decimal(period)
-
     def reset(self):
         """Reset strategy state for new backtest."""
-        self.prices.clear()
+        self.close.reset()
         self.last_signal_type = None
 
     def bar_data_mode(self) -> str:

@@ -20,12 +20,12 @@ Key Concepts:
 - Bar duration varies based on market activity
 
 Uses the unified on_bar_data() interface with OnCloseBar mode and TickBased bars.
+Updated to use Series<T> abstraction for NinjaTrader-style access.
 """
 
 from typing import Optional, Dict, Any
-from collections import deque
 from decimal import Decimal
-from base_strategy import BaseStrategy, Signal
+from base_strategy import BaseStrategy, Signal, FloatSeries, Series
 
 
 class TickBarStrategy(BaseStrategy):
@@ -37,6 +37,8 @@ class TickBarStrategy(BaseStrategy):
     - Consistent statistical properties across different market conditions
     - More bars during high activity, fewer during low activity
     - Better representation of actual market flow
+
+    Uses FloatSeries for volume tracking and Series for bar history.
     """
 
     def __init__(self):
@@ -49,8 +51,10 @@ class TickBarStrategy(BaseStrategy):
         self.momentum_threshold = 0.002  # 0.2% price move threshold
         self.volume_multiplier = 1.5  # Volume must be 1.5x average
 
-        # Bar history for analysis
-        self.bar_history = deque(maxlen=self.lookback_bars)
+        # Use FloatSeries for volume and momentum tracking
+        self.volumes = FloatSeries("volumes", max_lookback=self.lookback_bars)
+        self.momentums = FloatSeries("momentums", max_lookback=self.lookback_bars)
+        self.closes = FloatSeries("closes", max_lookback=self.lookback_bars)
 
         # Position tracking
         self.has_position = False
@@ -87,7 +91,10 @@ class TickBarStrategy(BaseStrategy):
                 self.lookback_bars = int(params["lookback_bars"])
                 if self.lookback_bars < 2:
                     return "lookback_bars must be at least 2"
-                self.bar_history = deque(maxlen=self.lookback_bars)
+                # Reinitialize series with new lookback
+                self.volumes = FloatSeries("volumes", max_lookback=self.lookback_bars)
+                self.momentums = FloatSeries("momentums", max_lookback=self.lookback_bars)
+                self.closes = FloatSeries("closes", max_lookback=self.lookback_bars)
 
             if "momentum_threshold" in params:
                 self.momentum_threshold = float(params["momentum_threshold"])
@@ -106,7 +113,9 @@ class TickBarStrategy(BaseStrategy):
 
     def reset(self) -> None:
         """Reset strategy state for new backtest."""
-        self.bar_history.clear()
+        self.volumes.reset()
+        self.momentums.reset()
+        self.closes.reset()
         self.has_position = False
         self.entry_price = None
         self.total_bars_processed = 0
@@ -185,8 +194,8 @@ class TickBarStrategy(BaseStrategy):
             Signal dictionary
         """
         symbol = bar_data["symbol"]
-        trade_count = bar_data["trade_count"]
         volume = float(bar_data["volume"])
+        close_price = float(bar_data["close"])
 
         self.total_bars_processed += 1
 
@@ -197,18 +206,13 @@ class TickBarStrategy(BaseStrategy):
         momentum = self.calculate_bar_momentum(bar_data)
         is_high_volume = self.is_high_volume_bar(volume)
 
-        # Store bar in history for future analysis
-        self.bar_history.append({
-            "momentum": momentum,
-            "volume": volume,
-            "high": float(bar_data["high"]),
-            "low": float(bar_data["low"]),
-            "close": float(bar_data["close"]),
-            "trade_count": trade_count,
-        })
+        # Push to series (NinjaTrader-style)
+        self.volumes.push(volume)
+        self.momentums.push(momentum)
+        self.closes.push(close_price)
 
         # Need enough history before trading
-        if len(self.bar_history) < self.lookback_bars:
+        if self.volumes.count() < self.lookback_bars:
             return Signal.hold()
 
         # Trading Logic:
@@ -218,7 +222,7 @@ class TickBarStrategy(BaseStrategy):
             is_high_volume):
 
             self.has_position = True
-            self.entry_price = float(bar_data["close"])
+            self.entry_price = close_price
 
             # Position size: 10% of capital
             return Signal.buy(symbol, "0.1")

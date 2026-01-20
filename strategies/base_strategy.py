@@ -8,10 +8,313 @@ The unified interface uses on_bar_data() with three operational modes:
 - OnEachTick: Called for every tick with accumulated OHLC state
 - OnPriceMove: Called only when price changes
 - OnCloseBar: Called only when bar closes (most efficient for OHLC strategies)
+
+This module also provides Series<T> abstraction for NinjaTrader-style
+reverse-indexed access to time series data:
+- series[0] = most recent value
+- series[1] = previous value
+- series.sma(period) = simple moving average
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, Any
+from collections import deque
+from decimal import Decimal
+from typing import Dict, Optional, Any, Generic, TypeVar, Iterator, List, Union
+
+# Type variable for Series values
+T = TypeVar('T')
+
+
+class Series(Generic[T]):
+    """
+    Reverse-indexed time series data structure.
+
+    Provides NinjaTrader-style access where:
+    - series[0] returns the most recent value
+    - series[1] returns the previous value
+    - series[n] returns the value n bars ago
+
+    Example:
+        >>> series = Series("close")
+        >>> series.push(Decimal("100"))
+        >>> series.push(Decimal("101"))
+        >>> series.push(Decimal("102"))
+        >>> series[0]  # Most recent: 102
+        >>> series[1]  # Previous: 101
+        >>> series[2]  # Two bars ago: 100
+    """
+
+    def __init__(self, name: str, max_lookback: int = 256):
+        """
+        Create a new series.
+
+        Args:
+            name: Series name for identification
+            max_lookback: Maximum number of values to keep (FIFO eviction).
+                         Use 0 for infinite lookback.
+        """
+        self._name = name
+        self._max_lookback = max_lookback
+        self._data: deque = deque(maxlen=max_lookback if max_lookback > 0 else None)
+        self._current_bar_index = 0
+
+    @property
+    def name(self) -> str:
+        """Get series name."""
+        return self._name
+
+    def push(self, value: T) -> None:
+        """
+        Push a new value to the series.
+
+        This should be called once per bar to maintain alignment.
+        Old values are automatically evicted based on max_lookback.
+
+        Args:
+            value: Value to add
+        """
+        self._data.append(value)
+        self._current_bar_index += 1
+
+    def get(self, bars_ago: int) -> Optional[T]:
+        """
+        Get value at bars_ago index (0 = most recent).
+
+        Args:
+            bars_ago: Number of bars back (0 = current, 1 = previous, etc.)
+
+        Returns:
+            Value or None if bars_ago exceeds available data
+        """
+        if not self._data or bars_ago < 0:
+            return None
+
+        # Convert reverse index to forward index
+        forward_index = len(self._data) - 1 - bars_ago
+        if forward_index < 0:
+            return None
+
+        return self._data[forward_index]
+
+    def __getitem__(self, bars_ago: int) -> T:
+        """
+        Get value using series[n] syntax.
+
+        Raises IndexError if bars_ago exceeds available data.
+
+        Args:
+            bars_ago: Number of bars back
+
+        Returns:
+            Value at bars_ago
+        """
+        value = self.get(bars_ago)
+        if value is None:
+            raise IndexError(
+                f"Series '{self._name}' index out of bounds: bars_ago={bars_ago} "
+                f"but only {len(self._data)} bars available"
+            )
+        return value
+
+    def has_data(self, bars_ago: int) -> bool:
+        """Check if data is available at bars_ago index."""
+        return self.get(bars_ago) is not None
+
+    def count(self) -> int:
+        """Get the number of available data points."""
+        return len(self._data)
+
+    def is_empty(self) -> bool:
+        """Check if series is empty."""
+        return len(self._data) == 0
+
+    def current_bar(self) -> int:
+        """Get the current bar index."""
+        return self._current_bar_index
+
+    def reset(self) -> None:
+        """Reset the series, clearing all data."""
+        self._data.clear()
+        self._current_bar_index = 0
+
+    def current(self) -> Optional[T]:
+        """Get most recent value (bars_ago = 0)."""
+        return self.get(0)
+
+    def previous(self) -> Optional[T]:
+        """Get previous value (bars_ago = 1)."""
+        return self.get(1)
+
+    def take(self, n: int) -> List[T]:
+        """
+        Take the N most recent values (newest first).
+
+        Args:
+            n: Number of values to take
+
+        Returns:
+            List of values from newest to oldest
+        """
+        result = []
+        for i in range(min(n, len(self._data))):
+            val = self.get(i)
+            if val is not None:
+                result.append(val)
+        return result
+
+    def __iter__(self) -> Iterator[T]:
+        """Iterate over values from oldest to newest."""
+        return iter(self._data)
+
+    def iter_reverse(self) -> Iterator[T]:
+        """Iterate over values from newest to oldest."""
+        return reversed(self._data)
+
+    def __len__(self) -> int:
+        """Return number of values in series."""
+        return len(self._data)
+
+
+class DecimalSeries(Series[Decimal]):
+    """
+    Series specialized for Decimal values with indicator helpers.
+
+    Provides common trading calculations like SMA, highest, lowest.
+    """
+
+    def sma(self, period: int) -> Optional[Decimal]:
+        """
+        Calculate Simple Moving Average over last N values.
+
+        Args:
+            period: Number of values to average
+
+        Returns:
+            SMA value or None if insufficient data
+        """
+        if self.count() < period or period <= 0:
+            return None
+
+        total = sum(self.get(i) for i in range(period))
+        return total / Decimal(period)
+
+    def highest(self, period: int) -> Optional[Decimal]:
+        """
+        Get highest value over last N bars.
+
+        Args:
+            period: Number of bars to check
+
+        Returns:
+            Highest value or None if insufficient data
+        """
+        if self.count() < period or period <= 0:
+            return None
+
+        values = [self.get(i) for i in range(period)]
+        return max(values)
+
+    def lowest(self, period: int) -> Optional[Decimal]:
+        """
+        Get lowest value over last N bars.
+
+        Args:
+            period: Number of bars to check
+
+        Returns:
+            Lowest value or None if insufficient data
+        """
+        if self.count() < period or period <= 0:
+            return None
+
+        values = [self.get(i) for i in range(period)]
+        return min(values)
+
+    def sum(self, period: int) -> Optional[Decimal]:
+        """
+        Calculate sum of last N values.
+
+        Args:
+            period: Number of values to sum
+
+        Returns:
+            Sum or None if insufficient data
+        """
+        if self.count() < period or period <= 0:
+            return None
+
+        return sum(self.get(i) for i in range(period))
+
+
+class FloatSeries(Series[float]):
+    """
+    Series specialized for float values with indicator helpers.
+
+    Provides common trading calculations like SMA, highest, lowest.
+    """
+
+    def sma(self, period: int) -> Optional[float]:
+        """
+        Calculate Simple Moving Average over last N values.
+
+        Args:
+            period: Number of values to average
+
+        Returns:
+            SMA value or None if insufficient data
+        """
+        if self.count() < period or period <= 0:
+            return None
+
+        total = sum(self.get(i) for i in range(period))
+        return total / period
+
+    def highest(self, period: int) -> Optional[float]:
+        """
+        Get highest value over last N bars.
+
+        Args:
+            period: Number of bars to check
+
+        Returns:
+            Highest value or None if insufficient data
+        """
+        if self.count() < period or period <= 0:
+            return None
+
+        values = [self.get(i) for i in range(period)]
+        return max(values)
+
+    def lowest(self, period: int) -> Optional[float]:
+        """
+        Get lowest value over last N bars.
+
+        Args:
+            period: Number of bars to check
+
+        Returns:
+            Lowest value or None if insufficient data
+        """
+        if self.count() < period or period <= 0:
+            return None
+
+        values = [self.get(i) for i in range(period)]
+        return min(values)
+
+    def sum(self, period: int) -> Optional[float]:
+        """
+        Calculate sum of last N values.
+
+        Args:
+            period: Number of values to sum
+
+        Returns:
+            Sum or None if insufficient data
+        """
+        if self.count() < period or period <= 0:
+            return None
+
+        return sum(self.get(i) for i in range(period))
 
 
 class Signal:
