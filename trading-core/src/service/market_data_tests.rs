@@ -21,7 +21,6 @@ use std::str::FromStr;
 
 struct MockExchange {
     ticks: Vec<TickData>,
-    should_fail: bool,
     delay_ms: u64,
 }
 
@@ -29,14 +28,8 @@ impl MockExchange {
     fn new(ticks: Vec<TickData>) -> Self {
         Self {
             ticks,
-            should_fail: false,
             delay_ms: 0,
         }
-    }
-
-    fn with_failure(mut self) -> Self {
-        self.should_fail = true;
-        self
     }
 
     fn with_delay(mut self, delay_ms: u64) -> Self {
@@ -53,10 +46,6 @@ impl Exchange for MockExchange {
         callback: Box<dyn Fn(TickData) + Send + Sync>,
         mut shutdown_rx: broadcast::Receiver<()>,
     ) -> Result<(), ExchangeError> {
-        if self.should_fail {
-            return Err(ExchangeError::NetworkError("Mock failure".to_string()));
-        }
-
         // Send all ticks
         for tick in &self.ticks {
             // Check for shutdown

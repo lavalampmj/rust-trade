@@ -6,15 +6,13 @@ use std::fmt;
 /// Severity levels for alerts
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AlertSeverity {
-    Info = 1,
-    Warning = 2,
-    Critical = 3,
+    Warning = 1,
+    Critical = 2,
 }
 
 impl fmt::Display for AlertSeverity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AlertSeverity::Info => write!(f, "INFO"),
             AlertSeverity::Warning => write!(f, "WARNING"),
             AlertSeverity::Critical => write!(f, "CRITICAL"),
         }
@@ -246,7 +244,6 @@ mod tests {
 
     #[test]
     fn test_alert_severity_display() {
-        assert_eq!(AlertSeverity::Info.to_string(), "INFO");
         assert_eq!(AlertSeverity::Warning.to_string(), "WARNING");
         assert_eq!(AlertSeverity::Critical.to_string(), "CRITICAL");
     }
@@ -254,8 +251,6 @@ mod tests {
     #[test]
     fn test_alert_severity_ordering() {
         assert!(AlertSeverity::Critical > AlertSeverity::Warning);
-        assert!(AlertSeverity::Warning > AlertSeverity::Info);
-        assert!(AlertSeverity::Info < AlertSeverity::Warning);
     }
 
     #[test]

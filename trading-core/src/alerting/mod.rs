@@ -4,7 +4,7 @@ mod rules;
 mod evaluator;
 mod handler;
 
-pub use rules::{AlertRule, AlertCondition, AlertSeverity};
+pub use rules::{AlertRule, AlertSeverity};
 pub use evaluator::AlertEvaluator;
 pub use handler::{AlertHandler, LogAlertHandler, Alert};
 

@@ -1,7 +1,6 @@
 // alerting/handler.rs - Alert handler implementations
 
 use super::AlertSeverity;
-use std::time::SystemTime;
 
 /// An alert that has been triggered
 #[derive(Debug, Clone)]
@@ -9,7 +8,6 @@ pub struct Alert {
     pub severity: AlertSeverity,
     pub metric_name: String,
     pub message: String,
-    pub timestamp: SystemTime,
 }
 
 impl Alert {
@@ -19,7 +17,6 @@ impl Alert {
             severity,
             metric_name,
             message,
-            timestamp: SystemTime::now(),
         }
     }
 }
@@ -49,13 +46,6 @@ impl Default for LogAlertHandler {
 impl AlertHandler for LogAlertHandler {
     fn handle(&self, alert: Alert) {
         match alert.severity {
-            AlertSeverity::Info => {
-                tracing::info!(
-                    metric = %alert.metric_name,
-                    message = %alert.message,
-                    "[ALERT:INFO]"
-                );
-            }
             AlertSeverity::Warning => {
                 tracing::warn!(
                     metric = %alert.metric_name,
@@ -74,44 +64,36 @@ impl AlertHandler for LogAlertHandler {
     }
 }
 
-/// Composite handler that sends alerts to multiple handlers
-pub struct MultiAlertHandler {
-    handlers: Vec<Box<dyn AlertHandler>>,
-}
-
-impl MultiAlertHandler {
-    /// Create a new multi-handler
-    pub fn new() -> Self {
-        Self {
-            handlers: Vec::new(),
-        }
-    }
-
-    /// Add a handler to the chain
-    pub fn add_handler<H: AlertHandler + 'static>(mut self, handler: H) -> Self {
-        self.handlers.push(Box::new(handler));
-        self
-    }
-}
-
-impl Default for MultiAlertHandler {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl AlertHandler for MultiAlertHandler {
-    fn handle(&self, alert: Alert) {
-        for handler in &self.handlers {
-            handler.handle(alert.clone());
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    /// Composite handler that sends alerts to multiple handlers (test-only)
+    pub struct MultiAlertHandler {
+        handlers: Vec<Box<dyn AlertHandler>>,
+    }
+
+    impl MultiAlertHandler {
+        pub fn new() -> Self {
+            Self {
+                handlers: Vec::new(),
+            }
+        }
+
+        pub fn add_handler<H: AlertHandler + 'static>(mut self, handler: H) -> Self {
+            self.handlers.push(Box::new(handler));
+            self
+        }
+    }
+
+    impl AlertHandler for MultiAlertHandler {
+        fn handle(&self, alert: Alert) {
+            for handler in &self.handlers {
+                handler.handle(alert.clone());
+            }
+        }
+    }
 
     #[derive(Clone)]
     struct CountingHandler {
@@ -160,7 +142,7 @@ mod tests {
             .add_handler(handler2);
 
         let alert = Alert::new(
-            AlertSeverity::Info,
+            AlertSeverity::Warning,
             "test".to_string(),
             "Test".to_string(),
         );

@@ -175,16 +175,6 @@ impl PythonStrategy {
         })
     }
 
-    /// Get total CPU time spent in microseconds
-    pub fn get_cpu_time_us(&self) -> u64 {
-        self.cpu_time_us.load(Ordering::Relaxed)
-    }
-
-    /// Get total number of calls
-    pub fn get_call_count(&self) -> u64 {
-        self.call_count.load(Ordering::Relaxed)
-    }
-
     /// Get peak execution time in microseconds
     pub fn get_peak_execution_us(&self) -> u64 {
         self.peak_execution_us.load(Ordering::Relaxed)
@@ -200,8 +190,22 @@ impl PythonStrategy {
             0
         }
     }
+}
 
-    /// Reset resource tracking metrics
+/// Test-only methods for inspecting internal metrics
+#[cfg(test)]
+impl PythonStrategy {
+    /// Get total CPU time spent in microseconds (test only)
+    pub fn get_cpu_time_us(&self) -> u64 {
+        self.cpu_time_us.load(Ordering::Relaxed)
+    }
+
+    /// Get total number of calls (test only)
+    pub fn get_call_count(&self) -> u64 {
+        self.call_count.load(Ordering::Relaxed)
+    }
+
+    /// Reset resource tracking metrics (test only)
     pub fn reset_metrics(&self) {
         self.cpu_time_us.store(0, Ordering::Relaxed);
         self.call_count.store(0, Ordering::Relaxed);
@@ -282,20 +286,6 @@ fn pydict_to_signal(obj: &Bound<'_, PyAny>) -> PyResult<Signal> {
         }
         "Hold" => Ok(Signal::Hold),
         _ => Err(pyo3::exceptions::PyValueError::new_err(format!("Unknown signal type: {}", signal_type))),
-    }
-}
-
-/// Convert Timeframe enum to string
-fn timeframe_to_string(tf: &Timeframe) -> &'static str {
-    match tf {
-        Timeframe::OneMinute => "1m",
-        Timeframe::FiveMinutes => "5m",
-        Timeframe::FifteenMinutes => "15m",
-        Timeframe::ThirtyMinutes => "30m",
-        Timeframe::OneHour => "1h",
-        Timeframe::FourHours => "4h",
-        Timeframe::OneDay => "1d",
-        Timeframe::OneWeek => "1w",
     }
 }
 

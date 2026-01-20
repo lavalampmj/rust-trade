@@ -68,7 +68,7 @@ fn test_rust_sma_strategy_backtest() {
     let mut engine = BacktestEngine::new(strategy_box, config).expect("Failed to create backtest engine");
     let result = engine.run_unified(BacktestData::Ticks(ticks));
 
-    assert!(result.total_trades >= 0, "Backtest should complete successfully");
+    // Backtest completed successfully (total_trades is u64, always >= 0)
     println!("Rust SMA strategy executed {} trades", result.total_trades);
 }
 
@@ -96,7 +96,7 @@ fn test_python_sma_strategy_backtest() {
     let mut engine = BacktestEngine::new(strategy_box, config).expect("Failed to create backtest engine");
     let result = engine.run_unified(BacktestData::Ticks(ticks));
 
-    assert!(result.total_trades >= 0, "Backtest should complete successfully");
+    // Backtest completed successfully (total_trades is u64, always >= 0)
     println!("Python SMA strategy executed {} trades", result.total_trades);
 }
 

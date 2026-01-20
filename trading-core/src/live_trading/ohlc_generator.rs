@@ -1,4 +1,4 @@
-use chrono::{DateTime, Timelike, Utc};
+use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use trading_common::data::types::{BarData, BarType, OHLCData, TickData, Timeframe};
 
@@ -396,7 +396,7 @@ impl RealtimeOHLCGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Duration;
+    use chrono::{Duration, Timelike};
     use rust_decimal::Decimal;
     use std::str::FromStr;
 

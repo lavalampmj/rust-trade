@@ -96,7 +96,7 @@ impl<H: AlertHandler> AlertEvaluator<H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alerting::{AlertSeverity, LogAlertHandler};
+    use crate::alerting::LogAlertHandler;
     use crate::metrics::*;
 
     #[test]

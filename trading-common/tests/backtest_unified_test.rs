@@ -131,7 +131,8 @@ fn test_backtest_data_enum_ticks() {
     let result = engine.run_unified(BacktestData::Ticks(ticks));
 
     assert_eq!(result.initial_capital, Decimal::from(10000));
-    assert!(result.total_trades >= 0);
+    // total_trades is u64, so this assertion is always true - just verify backtest completed
+    let _ = result.total_trades;
 }
 
 /// Strategy that uses OnEachTick mode

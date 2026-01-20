@@ -21,10 +21,6 @@ impl MockAlertHandler {
     fn get_alerts(&self) -> Vec<Alert> {
         self.alerts.lock().unwrap().clone()
     }
-
-    fn clear_alerts(&self) {
-        self.alerts.lock().unwrap().clear();
-    }
 }
 
 impl AlertHandler for MockAlertHandler {
@@ -241,12 +237,11 @@ fn test_log_alert_handler_formats_correctly() {
     // Then: Log should contain all alert details
 
     let handler = LogAlertHandler::new();
-    let alert = Alert {
-        severity: AlertSeverity::Critical,
-        metric_name: "test_metric".to_string(),
-        message: "Test alert message".to_string(),
-        timestamp: std::time::SystemTime::now(),
-    };
+    let alert = Alert::new(
+        AlertSeverity::Critical,
+        "test_metric".to_string(),
+        "Test alert message".to_string(),
+    );
 
     // This should not panic
     handler.handle(alert);
@@ -255,8 +250,7 @@ fn test_log_alert_handler_formats_correctly() {
 #[test]
 fn test_alert_severity_ordering() {
     // Given: Different alert severities
-    // Then: Critical > Warning > Info
+    // Then: Critical > Warning
 
     assert!(AlertSeverity::Critical > AlertSeverity::Warning);
-    assert!(AlertSeverity::Warning > AlertSeverity::Info);
 }

@@ -1,5 +1,5 @@
 use crate::data::types::{BarData, BarDataMode, BarType, OHLCData, TickData, Timeframe};
-use chrono::{DateTime, Timelike, Utc};
+use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 
 /// Historical OHLC bar generator for backtesting
@@ -47,7 +47,7 @@ impl HistoricalOHLCGenerator {
         let mut result = Vec::new();
         let mut current_window_start: Option<DateTime<Utc>> = None;
         let mut window_ticks: Vec<TickData> = Vec::new();
-        let mut last_price: Option<Decimal> = None;
+        let mut last_price: Option<Decimal>;
 
         for tick in ticks {
             let tick_window = timeframe.align_timestamp(tick.timestamp);
@@ -320,7 +320,7 @@ impl HistoricalOHLCGenerator {
 mod tests {
     use super::*;
     use crate::data::types::TradeSide;
-    use chrono::Duration;
+    use chrono::{Duration, Timelike};
     use rust_decimal::Decimal;
     use std::str::FromStr;
 

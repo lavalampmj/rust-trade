@@ -86,10 +86,9 @@ impl ReconnectionRateLimiter {
                 Quota::per_hour(NonZeroU32::new(config.max_attempts).expect("max_attempts must be > 0"))
             }
             ReconnectionWindow::Custom(duration) => {
-                Quota::new(
-                    NonZeroU32::new(config.max_attempts).expect("max_attempts must be > 0"),
-                    duration,
-                ).expect("Invalid quota configuration")
+                Quota::with_period(duration)
+                    .expect("Invalid quota period")
+                    .allow_burst(NonZeroU32::new(config.max_attempts).expect("max_attempts must be > 0"))
             }
         };
 
@@ -116,8 +115,12 @@ impl ReconnectionRateLimiter {
     pub fn max_attempts(&self) -> u32 {
         self.config.max_attempts
     }
+}
 
-    /// Get the time window configured
+/// Test-only methods
+#[cfg(test)]
+impl ReconnectionRateLimiter {
+    /// Get the time window configured (test only)
     pub fn window(&self) -> ReconnectionWindow {
         self.config.window
     }
