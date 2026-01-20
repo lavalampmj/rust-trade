@@ -324,7 +324,7 @@ async fn run_backtest_interactive(
     repository: TickDataRepository,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use backtest::{
-        engine::{BacktestConfig, BacktestEngine},
+        engine::{BacktestConfig, BacktestData, BacktestEngine},
         strategy::{create_strategy, list_strategies},
     };
     use rust_decimal::Decimal;
@@ -490,83 +490,7 @@ async fn run_backtest_interactive(
             .unwrap_or(Decimal::from_str("0.001").unwrap())
     };
 
-    // Check if strategy supports OHLC
-    let temp_strategy = create_strategy(&selected_strategy.id)?;
-    if temp_strategy.supports_ohlc() {
-        if let Some(timeframe) = temp_strategy.preferred_timeframe() {
-            println!(
-                "\n🔄 Strategy supports OHLC, using {} timeframe for better performance",
-                timeframe.as_str()
-            );
-
-            // Estimate candle count needed (roughly data_count / 50, minimum 100)
-            let candle_count = (data_count / 50).max(100) as u32;
-
-            println!("🔍 Loading {} OHLC candles for {}...", candle_count, symbol);
-
-            match repository
-                .generate_recent_ohlc_for_backtest(&symbol, timeframe, candle_count)
-                .await
-            {
-                Ok(ohlc_data) if !ohlc_data.is_empty() => {
-                    println!("✅ Loaded {} OHLC candles", ohlc_data.len());
-                    println!(
-                        "📅 Data range: {} to {}",
-                        ohlc_data
-                            .first()
-                            .unwrap()
-                            .timestamp
-                            .format("%Y-%m-%d %H:%M:%S"),
-                        ohlc_data
-                            .last()
-                            .unwrap()
-                            .timestamp
-                            .format("%Y-%m-%d %H:%M:%S")
-                    );
-
-                    let config =
-                        BacktestConfig::new(initial_capital).with_commission_rate(commission_rate);
-
-                    let strategy = create_strategy(&selected_strategy.id)?;
-
-                    println!("\n{}", "=".repeat(60));
-                    let mut engine = BacktestEngine::new(strategy, config)?;
-                    let result = engine.run_with_ohlc(ohlc_data);
-
-                    // Show results
-                    println!("\n");
-                    result.print_summary();
-
-                    // Ask whether to display detailed transaction analysis
-                    print!("\nShow detailed trade analysis? (y/N): ");
-                    io::stdout().flush()?;
-
-                    let mut input = String::new();
-                    io::stdin().read_line(&mut input)?;
-                    if input.trim().to_lowercase() == "y" || input.trim().to_lowercase() == "yes" {
-                        result.print_trade_analysis();
-                    }
-
-                    println!("\n🎉 Backtest completed successfully!");
-                    return Ok(());
-                }
-                Ok(_) => {
-                    println!(
-                        "⚠️ No OHLC data available for timeframe {}, falling back to tick data",
-                        timeframe.as_str()
-                    );
-                }
-                Err(e) => {
-                    println!(
-                        "⚠️ OHLC generation failed: {}, falling back to tick data",
-                        e
-                    );
-                }
-            }
-        }
-    }
-
-    // Fallback to tick data (original logic)
+    // Load tick data for backtest
     println!(
         "\n🔍 Loading historical tick data: {} latest {} records...",
         symbol, data_count
@@ -594,7 +518,7 @@ async fn run_backtest_interactive(
 
     println!("\n{}", "=".repeat(60));
     let mut engine = BacktestEngine::new(strategy, config)?;
-    let result = engine.run(data);
+    let result = engine.run_unified(BacktestData::Ticks(data));
 
     // Show results
     println!("\n");

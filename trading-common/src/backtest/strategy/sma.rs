@@ -1,5 +1,5 @@
 use super::base::{Signal, Strategy};
-use crate::data::types::{BarData, BarDataMode, BarType, OHLCData, TickData, Timeframe};
+use crate::data::types::{BarData, BarDataMode, BarType, Timeframe};
 use rust_decimal::Decimal;
 use std::collections::{HashMap, VecDeque};
 
@@ -103,83 +103,5 @@ impl Strategy for SmaStrategy {
 
     fn preferred_bar_type(&self) -> BarType {
         BarType::TimeBased(Timeframe::OneMinute)
-    }
-
-    #[allow(deprecated)]
-    fn on_tick(&mut self, tick: &TickData) -> Signal {
-        self.prices.push_back(tick.price);
-
-        // Keep reasonable history length
-        if self.prices.len() > self.long_period * 2 {
-            self.prices.pop_front();
-        }
-
-        if let (Some(short_sma), Some(long_sma)) = (
-            self.calculate_sma(self.short_period),
-            self.calculate_sma(self.long_period),
-        ) {
-            // Golden cross: short MA crosses above long MA
-            if short_sma > long_sma && !matches!(self.last_signal, Some(Signal::Buy { .. })) {
-                let signal = Signal::Buy {
-                    symbol: tick.symbol.clone(),
-                    quantity: Decimal::from(100),
-                };
-                self.last_signal = Some(signal.clone());
-                return signal;
-            }
-            // Death cross: short MA crosses below long MA
-            else if short_sma < long_sma && matches!(self.last_signal, Some(Signal::Buy { .. })) {
-                let signal = Signal::Sell {
-                    symbol: tick.symbol.clone(),
-                    quantity: Decimal::from(100),
-                };
-                self.last_signal = Some(signal.clone());
-                return signal;
-            }
-        }
-
-        Signal::Hold
-    }
-
-    #[allow(deprecated)]
-    fn on_ohlc(&mut self, ohlc: &OHLCData) -> Signal {
-        self.prices.push_back(ohlc.close);
-
-        if self.prices.len() > self.long_period * 2 {
-            self.prices.pop_front();
-        }
-
-        if let (Some(short_sma), Some(long_sma)) = (
-            self.calculate_sma(self.short_period),
-            self.calculate_sma(self.long_period),
-        ) {
-            if short_sma > long_sma && !matches!(self.last_signal, Some(Signal::Buy { .. })) {
-                let signal = Signal::Buy {
-                    symbol: ohlc.symbol.clone(),
-                    quantity: Decimal::from(100),
-                };
-                self.last_signal = Some(signal.clone());
-                return signal;
-            } else if short_sma < long_sma && matches!(self.last_signal, Some(Signal::Buy { .. })) {
-                let signal = Signal::Sell {
-                    symbol: ohlc.symbol.clone(),
-                    quantity: Decimal::from(100),
-                };
-                self.last_signal = Some(signal.clone());
-                return signal;
-            }
-        }
-
-        Signal::Hold
-    }
-
-    #[allow(deprecated)]
-    fn supports_ohlc(&self) -> bool {
-        false
-    }
-
-    #[allow(deprecated)]
-    fn preferred_timeframe(&self) -> Option<Timeframe> {
-        Some(Timeframe::OneMinute)
     }
 }

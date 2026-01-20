@@ -1,4 +1,4 @@
-use crate::data::types::{BarData, BarDataMode, BarType, OHLCData, TickData, Timeframe};
+use crate::data::types::{BarData, BarDataMode, BarType, Timeframe};
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 
@@ -11,10 +11,6 @@ pub enum Signal {
 
 pub trait Strategy: Send + Sync {
     fn name(&self) -> &str;
-
-    // ============================================================
-    // NEW UNIFIED INTERFACE
-    // ============================================================
 
     /// Unified bar data processing method
     ///
@@ -48,47 +44,5 @@ pub trait Strategy: Send + Sync {
     /// Returns the type of bars this strategy wants to process
     fn preferred_bar_type(&self) -> BarType {
         BarType::TimeBased(Timeframe::OneMinute) // Default
-    }
-
-    // ============================================================
-    // DEPRECATED METHODS (for backward compatibility)
-    // ============================================================
-
-    /// DEPRECATED: Use on_bar_data() instead
-    ///
-    /// This method is kept for backward compatibility.
-    /// Default implementation wraps the tick into BarData and calls on_bar_data()
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use on_bar_data() instead for unified interface"
-    )]
-    fn on_tick(&mut self, tick: &TickData) -> Signal {
-        let bar_data = BarData::from_single_tick(tick);
-        self.on_bar_data(&bar_data)
-    }
-
-    /// DEPRECATED: Use on_bar_data() instead
-    ///
-    /// This method is kept for backward compatibility.
-    /// Default implementation wraps the OHLC into BarData and calls on_bar_data()
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use on_bar_data() instead for unified interface"
-    )]
-    fn on_ohlc(&mut self, ohlc: &OHLCData) -> Signal {
-        let bar_data = BarData::from_ohlc(ohlc);
-        self.on_bar_data(&bar_data)
-    }
-
-    /// DEPRECATED: Use preferred_bar_type() instead
-    #[deprecated(since = "0.2.0", note = "Use preferred_bar_type() instead")]
-    fn supports_ohlc(&self) -> bool {
-        false
-    }
-
-    /// DEPRECATED: Use preferred_bar_type() instead
-    #[deprecated(since = "0.2.0", note = "Use preferred_bar_type() instead")]
-    fn preferred_timeframe(&self) -> Option<Timeframe> {
-        None
     }
 }

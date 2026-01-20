@@ -3,7 +3,7 @@ use crate::types::*;
 use tauri::State;
 use trading_common::{
     backtest::{
-        engine::{BacktestEngine, BacktestConfig, BacktestResult},
+        engine::{BacktestConfig, BacktestData, BacktestEngine, BacktestResult},
         strategy::create_strategy,
     },
     data::types::TradeSide,
@@ -133,53 +133,7 @@ pub async fn run_backtest(
         config = config.with_param(&key, &value);
     }
 
-    info!("Creating strategy: {}", request.strategy_id);
-    let temp_strategy = create_strategy(&request.strategy_id)
-        .map_err(|e| {
-            error!("Failed to create strategy: {}", e);
-            e
-        })?;
-
-    let mut data_source = "tick".to_string();
-
-    // Check if strategy supports OHLC
-    if temp_strategy.supports_ohlc() {
-        if let Some(timeframe) = temp_strategy.preferred_timeframe() {
-            info!("Strategy supports OHLC, attempting {} timeframe", timeframe.as_str());
-            
-            // Estimate candle count (roughly data_count / 50, minimum 100)
-            let candle_count = (request.data_count / 50).max(100) as u32;
-            
-            match state.repository.generate_recent_ohlc_for_backtest(
-                &request.symbol, 
-                timeframe, 
-                candle_count
-            ).await {
-                Ok(ohlc_data) if !ohlc_data.is_empty() => {
-                    info!("Generated {} OHLC candles, running OHLC backtest", ohlc_data.len());
-                    data_source = format!("OHLC-{}", timeframe.as_str());
-                    
-                    let strategy = create_strategy(&request.strategy_id)?;
-                    let mut engine = BacktestEngine::new(strategy, config)
-                        .map_err(|e| {
-                            error!("Failed to create backtest engine: {}", e);
-                            e
-                        })?;
-
-                    let result = engine.run_with_ohlc(ohlc_data);
-                    return Ok(create_backtest_response(result, data_source));
-                },
-                Ok(_) => {
-                    info!("No OHLC data available, falling back to tick data");
-                },
-                Err(e) => {
-                    info!("OHLC generation failed: {}, falling back to tick data", e);
-                }
-            }
-        }
-    }
-
-    // Fallback to tick data
+    // Load tick data for backtest
     info!("Loading tick data for backtest");
     let data = state.repository
         .get_recent_ticks_for_backtest(&request.symbol, request.data_count)
@@ -193,16 +147,19 @@ pub async fn run_backtest(
         return Err("No historical data available for the specified symbol".to_string());
     }
 
-    info!("Loaded {} tick data points, running tick backtest", data.len());
+    info!("Loaded {} tick data points, running unified backtest", data.len());
 
     let strategy = create_strategy(&request.strategy_id)?;
+    let bar_type = strategy.preferred_bar_type();
+    let data_source = format!("tick-{}", bar_type.as_str());
+
     let mut engine = BacktestEngine::new(strategy, config)
         .map_err(|e| {
             error!("Failed to create backtest engine: {}", e);
             e
         })?;
 
-    let result = engine.run(data);
+    let result = engine.run_unified(BacktestData::Ticks(data));
     Ok(create_backtest_response(result, data_source))
 }
 
@@ -245,20 +202,25 @@ fn create_backtest_response(result: BacktestResult, data_source: String) -> Back
 #[tauri::command]
 pub async fn get_strategy_capabilities() -> Result<Vec<StrategyCapability>, String> {
     info!("Getting strategy capabilities");
-    
+
     let strategies = trading_common::backtest::strategy::list_strategies();
     let mut capabilities = Vec::new();
-    
+
     for strategy_info in strategies {
         // Create temporary strategy instance to check capabilities
         match trading_common::backtest::strategy::create_strategy(&strategy_info.id) {
             Ok(strategy) => {
+                let mode = match strategy.bar_data_mode() {
+                    trading_common::data::types::BarDataMode::OnEachTick => "OnEachTick",
+                    trading_common::data::types::BarDataMode::OnPriceMove => "OnPriceMove",
+                    trading_common::data::types::BarDataMode::OnCloseBar => "OnCloseBar",
+                };
                 capabilities.push(StrategyCapability {
                     id: strategy_info.id,
                     name: strategy_info.name,
                     description: strategy_info.description,
-                    supports_ohlc: strategy.supports_ohlc(),
-                    preferred_timeframe: strategy.preferred_timeframe().map(|tf| tf.as_str().to_string()),
+                    bar_data_mode: mode.to_string(),
+                    preferred_bar_type: strategy.preferred_bar_type().as_str().to_string(),
                 });
             }
             Err(e) => {
@@ -267,13 +229,13 @@ pub async fn get_strategy_capabilities() -> Result<Vec<StrategyCapability>, Stri
                     id: strategy_info.id,
                     name: strategy_info.name,
                     description: strategy_info.description,
-                    supports_ohlc: false,
-                    preferred_timeframe: None,
+                    bar_data_mode: "OnEachTick".to_string(),
+                    preferred_bar_type: "TimeBased(1m)".to_string(),
                 });
             }
         }
     }
-    
+
     info!("Retrieved capabilities for {} strategies", capabilities.len());
     Ok(capabilities)
 }

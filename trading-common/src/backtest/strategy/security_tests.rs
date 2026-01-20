@@ -6,7 +6,7 @@ mod tests {
     use crate::backtest::strategy::python_loader::{calculate_file_hash, PythonStrategyRegistry, StrategyConfig};
     use crate::backtest::strategy::python_bridge::PythonStrategy;
     use crate::backtest::strategy::base::Strategy;
-    use crate::data::types::{TickData, TradeSide};
+    use crate::data::types::{BarData, BarMetadata, BarType, OHLCData, Timeframe};
     use std::path::PathBuf;
     use chrono::Utc;
     use rust_decimal::Decimal;
@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn test_resource_tracking_after_execution() {
-        // Test that resource tracking updates after on_tick
+        // Test that resource tracking updates after on_bar_data
         let path = PathBuf::from("../strategies/example_sma.py");
         if !path.exists() {
             println!("Skipping test - file not found");
@@ -236,19 +236,32 @@ mod tests {
 
         let mut strategy = result.unwrap();
 
-        // Create a test tick
-        let tick = TickData {
-            timestamp: Utc::now(),
-            symbol: "BTCUSDT".to_string(),
-            price: Decimal::new(50000, 0),
-            quantity: Decimal::new(1, 0),
-            side: TradeSide::Buy,
-            trade_id: "test123".to_string(),
-            is_buyer_maker: false,
+        // Create test bar data
+        let bar_data = BarData {
+            current_tick: None,
+            ohlc_bar: OHLCData {
+                timestamp: Utc::now(),
+                symbol: "BTCUSDT".to_string(),
+                timeframe: Timeframe::OneMinute,
+                open: Decimal::new(50000, 0),
+                high: Decimal::new(50100, 0),
+                low: Decimal::new(49900, 0),
+                close: Decimal::new(50050, 0),
+                volume: Decimal::new(100, 0),
+                trade_count: 10,
+            },
+            metadata: BarMetadata {
+                bar_type: BarType::TimeBased(Timeframe::OneMinute),
+                is_first_tick_of_bar: false,
+                is_bar_closed: true,
+                tick_count_in_bar: 10,
+                is_synthetic: false,
+                generation_timestamp: Utc::now(),
+            },
         };
 
-        // Call on_tick
-        let _ = strategy.on_tick(&tick);
+        // Call on_bar_data
+        let _ = strategy.on_bar_data(&bar_data);
 
         // Resources should have been tracked
         assert!(strategy.get_cpu_time_us() > 0, "CPU time should be tracked");
@@ -285,19 +298,32 @@ mod tests {
 
         let mut strategy = result.unwrap();
 
-        let tick = TickData {
-            timestamp: Utc::now(),
-            symbol: "BTCUSDT".to_string(),
-            price: Decimal::new(50000, 0),
-            quantity: Decimal::new(1, 0),
-            side: TradeSide::Buy,
-            trade_id: "test123".to_string(),
-            is_buyer_maker: false,
+        let bar_data = BarData {
+            current_tick: None,
+            ohlc_bar: OHLCData {
+                timestamp: Utc::now(),
+                symbol: "BTCUSDT".to_string(),
+                timeframe: Timeframe::OneMinute,
+                open: Decimal::new(50000, 0),
+                high: Decimal::new(50100, 0),
+                low: Decimal::new(49900, 0),
+                close: Decimal::new(50050, 0),
+                volume: Decimal::new(100, 0),
+                trade_count: 10,
+            },
+            metadata: BarMetadata {
+                bar_type: BarType::TimeBased(Timeframe::OneMinute),
+                is_first_tick_of_bar: false,
+                is_bar_closed: true,
+                tick_count_in_bar: 10,
+                is_synthetic: false,
+                generation_timestamp: Utc::now(),
+            },
         };
 
         // Call multiple times
         for _ in 0..5 {
-            let _ = strategy.on_tick(&tick);
+            let _ = strategy.on_bar_data(&bar_data);
         }
 
         // Check metrics
@@ -332,18 +358,31 @@ mod tests {
 
         let mut strategy = result.unwrap();
 
-        let tick = TickData {
-            timestamp: Utc::now(),
-            symbol: "BTCUSDT".to_string(),
-            price: Decimal::new(50000, 0),
-            quantity: Decimal::new(1, 0),
-            side: TradeSide::Buy,
-            trade_id: "test123".to_string(),
-            is_buyer_maker: false,
+        let bar_data = BarData {
+            current_tick: None,
+            ohlc_bar: OHLCData {
+                timestamp: Utc::now(),
+                symbol: "BTCUSDT".to_string(),
+                timeframe: Timeframe::OneMinute,
+                open: Decimal::new(50000, 0),
+                high: Decimal::new(50100, 0),
+                low: Decimal::new(49900, 0),
+                close: Decimal::new(50050, 0),
+                volume: Decimal::new(100, 0),
+                trade_count: 10,
+            },
+            metadata: BarMetadata {
+                bar_type: BarType::TimeBased(Timeframe::OneMinute),
+                is_first_tick_of_bar: false,
+                is_bar_closed: true,
+                tick_count_in_bar: 10,
+                is_synthetic: false,
+                generation_timestamp: Utc::now(),
+            },
         };
 
         // Execute and track
-        let _ = strategy.on_tick(&tick);
+        let _ = strategy.on_bar_data(&bar_data);
         assert!(strategy.get_call_count() > 0, "Should have calls");
 
         // Reset

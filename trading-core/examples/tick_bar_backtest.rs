@@ -17,7 +17,7 @@ use std::str::FromStr;
 use trading_common::backtest::{Portfolio, Signal};
 use trading_common::data::cache::TieredCache;
 use trading_common::data::repository::TickDataRepository;
-use trading_common::data::types::Timeframe;
+use trading_common::data::types::{BarData, BarMetadata, BarType, Timeframe};
 
 #[tokio::main]
 async fn main() -> Result<(), String> {
@@ -178,8 +178,22 @@ async fn main() -> Result<(), String> {
         // Update portfolio with latest price
         portfolio.update_price(&bar.symbol, bar.close);
 
+        // Create BarData for strategy
+        let bar_data = BarData {
+            current_tick: None,
+            ohlc_bar: bar.clone(),
+            metadata: BarMetadata {
+                bar_type: BarType::TickBased(100),
+                is_first_tick_of_bar: false,
+                is_bar_closed: true,
+                tick_count_in_bar: bar.trade_count as u64,
+                is_synthetic: false,
+                generation_timestamp: Utc::now(),
+            },
+        };
+
         // Generate signal from strategy
-        let signal = strategy.on_ohlc(bar);
+        let signal = strategy.on_bar_data(&bar_data);
 
         // Execute signal
         match signal {

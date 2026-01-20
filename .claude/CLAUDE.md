@@ -221,11 +221,6 @@ pub trait Strategy {
 - Both generators produce identical `BarData` events given same input ticks
 - Synthetic bars ensure continuity: if no ticks during a period, bar generated with O=H=L=C=last_price
 
-**Migration from Legacy Interface**:
-- Old: `on_tick()` and `on_ohlc()` methods (deprecated)
-- New: Single `on_bar_data()` method with mode selection
-- Backward compatibility maintained via default implementations
-
 #### 6. Paper Trading (trading-core/src/live_trading/paper_trading.rs)
 
 Real-time strategy validation against live data.
@@ -381,12 +376,13 @@ User selects backtest config
 
 1. Load historical tick data for symbol from database
 2. Initialize BacktestEngine with strategy and parameters
-3. Sequentially process each tick:
+3. Generate BarData events based on strategy's bar_data_mode() and preferred_bar_type()
+4. Sequentially process each bar event:
    - Update portfolio prices
-   - Call strategy.on_tick() → Signal
+   - Call strategy.on_bar_data(bar_data) → Signal
    - Execute signal (buy/sell)
-4. Calculate metrics (Sharpe, drawdown, win rate)
-5. Return results to UI or CLI
+5. Calculate metrics (Sharpe, drawdown, win rate)
+6. Return results to UI or CLI
 ```
 
 ## Critical Implementation Details
@@ -450,8 +446,24 @@ shutdown_tx.send(()).ok();
    ```rust
    impl Strategy for YourStrategy {
        fn name(&self) -> &str { "Your Strategy" }
-       fn on_tick(&mut self, tick: &TickData) -> Signal { ... }
-       fn reset(&mut self) { ... }
+
+       fn on_bar_data(&mut self, bar_data: &BarData) -> Signal {
+           // Access bar_data.ohlc_bar for OHLC data
+           // Access bar_data.current_tick for current tick (if in OnEachTick mode)
+           // Access bar_data.metadata for bar state info
+           Signal::Hold
+       }
+
+       fn bar_data_mode(&self) -> BarDataMode {
+           BarDataMode::OnCloseBar  // or OnEachTick, OnPriceMove
+       }
+
+       fn preferred_bar_type(&self) -> BarType {
+           BarType::TimeBased(Timeframe::OneMinute)
+       }
+
+       fn initialize(&mut self, params: HashMap<String, String>) -> Result<(), String> { Ok(()) }
+       fn reset(&mut self) { }
    }
    ```
 3. Register in `trading-common/src/backtest/strategy/mod.rs`

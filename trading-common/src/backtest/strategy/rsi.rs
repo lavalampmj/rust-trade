@@ -1,5 +1,5 @@
 use super::base::{Signal, Strategy};
-use crate::data::types::{BarData, BarDataMode, BarType, OHLCData, TickData, Timeframe};
+use crate::data::types::{BarData, BarDataMode, BarType, Timeframe};
 use rust_decimal::Decimal;
 use std::collections::{HashMap, VecDeque};
 
@@ -136,111 +136,5 @@ impl Strategy for RsiStrategy {
 
     fn preferred_bar_type(&self) -> BarType {
         BarType::TimeBased(Timeframe::OneDay)
-    }
-
-    #[allow(deprecated)]
-    fn on_tick(&mut self, tick: &TickData) -> Signal {
-        if let Some(last_price) = self.prices.back() {
-            let change = tick.price - last_price;
-
-            if change > Decimal::ZERO {
-                self.gains.push_back(change);
-                self.losses.push_back(Decimal::ZERO);
-            } else {
-                self.gains.push_back(Decimal::ZERO);
-                self.losses.push_back(-change);
-            }
-
-            // Keep fixed length
-            if self.gains.len() > self.period {
-                self.gains.pop_front();
-                self.losses.pop_front();
-            }
-        }
-
-        self.prices.push_back(tick.price);
-        if self.prices.len() > self.period + 1 {
-            self.prices.pop_front();
-        }
-
-        if let Some(rsi) = self.calculate_rsi() {
-            // Buy signal when RSI is oversold and we don't have a buy position
-            if rsi < self.oversold && !matches!(self.last_signal, Some(Signal::Buy { .. })) {
-                let signal = Signal::Buy {
-                    symbol: tick.symbol.clone(),
-                    quantity: Decimal::from(100),
-                };
-                self.last_signal = Some(signal.clone());
-                return signal;
-            }
-            // Sell signal when RSI is overbought and we have a buy position
-            else if rsi > self.overbought && matches!(self.last_signal, Some(Signal::Buy { .. }))
-            {
-                let signal = Signal::Sell {
-                    symbol: tick.symbol.clone(),
-                    quantity: Decimal::from(100),
-                };
-                self.last_signal = Some(signal.clone());
-                return signal;
-            }
-        }
-
-        Signal::Hold
-    }
-
-    #[allow(deprecated)]
-    fn on_ohlc(&mut self, ohlc: &OHLCData) -> Signal {
-        if let Some(last_price) = self.prices.back() {
-            let change = ohlc.close - last_price;
-
-            if change > Decimal::ZERO {
-                self.gains.push_back(change);
-                self.losses.push_back(Decimal::ZERO);
-            } else {
-                self.gains.push_back(Decimal::ZERO);
-                self.losses.push_back(-change);
-            }
-
-            if self.gains.len() > self.period {
-                self.gains.pop_front();
-                self.losses.pop_front();
-            }
-        }
-
-        self.prices.push_back(ohlc.close);
-        if self.prices.len() > self.period + 1 {
-            self.prices.pop_front();
-        }
-
-        if let Some(rsi) = self.calculate_rsi() {
-            if rsi < self.oversold && !matches!(self.last_signal, Some(Signal::Buy { .. })) {
-                let signal = Signal::Buy {
-                    symbol: ohlc.symbol.clone(),
-                    quantity: Decimal::from(100),
-                };
-                self.last_signal = Some(signal.clone());
-                return signal;
-            } else if rsi > self.overbought && matches!(self.last_signal, Some(Signal::Buy { .. }))
-            {
-                let signal = Signal::Sell {
-                    symbol: ohlc.symbol.clone(),
-                    quantity: Decimal::from(100),
-                };
-                self.last_signal = Some(signal.clone());
-                return signal;
-            }
-        }
-
-        Signal::Hold
-    }
-
-    #[allow(deprecated)]
-    fn supports_ohlc(&self) -> bool {
-        true
-    }
-
-    #[allow(deprecated)]
-    fn preferred_timeframe(&self) -> Option<Timeframe> {
-        Some(Timeframe::OneDay)
     }
 }

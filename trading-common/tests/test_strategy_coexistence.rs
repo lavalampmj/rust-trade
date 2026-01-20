@@ -1,6 +1,6 @@
 /// Test that Rust and Python strategies can coexist and both work correctly
 use trading_common::backtest::strategy;
-use trading_common::backtest::engine::{BacktestEngine, BacktestConfig};
+use trading_common::backtest::engine::{BacktestConfig, BacktestData, BacktestEngine};
 use trading_common::data::types::{TickData, TradeSide};
 use chrono::Utc;
 use rust_decimal::Decimal;
@@ -66,7 +66,7 @@ fn test_rust_sma_strategy_backtest() {
     let config = BacktestConfig::new(Decimal::from_str("10000.0").unwrap());
 
     let mut engine = BacktestEngine::new(strategy_box, config).expect("Failed to create backtest engine");
-    let result = engine.run(ticks);
+    let result = engine.run_unified(BacktestData::Ticks(ticks));
 
     assert!(result.total_trades >= 0, "Backtest should complete successfully");
     println!("Rust SMA strategy executed {} trades", result.total_trades);
@@ -94,7 +94,7 @@ fn test_python_sma_strategy_backtest() {
     let config = BacktestConfig::new(Decimal::from_str("10000.0").unwrap());
 
     let mut engine = BacktestEngine::new(strategy_box, config).expect("Failed to create backtest engine");
-    let result = engine.run(ticks);
+    let result = engine.run_unified(BacktestData::Ticks(ticks));
 
     assert!(result.total_trades >= 0, "Backtest should complete successfully");
     println!("Python SMA strategy executed {} trades", result.total_trades);

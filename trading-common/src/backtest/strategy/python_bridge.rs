@@ -3,7 +3,8 @@ use pyo3::types::{PyDict, PyTuple};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
-use crate::data::types::{BarData, TickData, OHLCData, Timeframe, TradeSide};
+use crate::data::types::{BarData, BarDataMode, BarType, Timeframe, TradeSide};
+// OHLCData included via BarData.ohlc_bar
 use super::base::{Strategy, Signal};
 use rust_decimal::Decimal;
 use std::str::FromStr;
@@ -14,15 +15,11 @@ pub struct PythonStrategy {
     py_instance: Arc<Mutex<PyObject>>,
     /// Cached strategy name
     cached_name: String,
-    /// Whether strategy supports OHLC
-    supports_ohlc_cached: bool,
-    /// Preferred timeframe (cached)
-    preferred_timeframe_cached: Option<Timeframe>,
 
     // Resource tracking (thread-safe)
     /// Total CPU time spent in microseconds
     cpu_time_us: Arc<AtomicU64>,
-    /// Total number of on_tick/on_ohlc calls
+    /// Total number of on_bar_data calls
     call_count: Arc<AtomicU64>,
     /// Peak execution time in microseconds
     peak_execution_us: Arc<AtomicU64>,
@@ -32,8 +29,6 @@ impl std::fmt::Debug for PythonStrategy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PythonStrategy")
             .field("cached_name", &self.cached_name)
-            .field("supports_ohlc_cached", &self.supports_ohlc_cached)
-            .field("preferred_timeframe_cached", &self.preferred_timeframe_cached)
             .field("cpu_time_us", &self.cpu_time_us.load(Ordering::Relaxed))
             .field("call_count", &self.call_count.load(Ordering::Relaxed))
             .field("peak_execution_us", &self.peak_execution_us.load(Ordering::Relaxed))
@@ -131,21 +126,9 @@ impl PythonStrategy {
                 .and_then(|n: Bound<'_, PyAny>| n.extract::<String>())
                 .map_err(|e| format!("Failed to get strategy name: {}", e))?;
 
-            let supports_ohlc = instance.call_method0("supports_ohlc")
-                .and_then(|b: Bound<'_, PyAny>| b.extract::<bool>())
-                .unwrap_or(false);
-
-            let preferred_timeframe = instance.call_method0("preferred_timeframe")
-                .and_then(|t: Bound<'_, PyAny>| t.extract::<Option<String>>())
-                .ok()
-                .flatten()
-                .and_then(|s: String| parse_timeframe(&s));
-
             Ok(Self {
                 py_instance: Arc::new(Mutex::new(instance.into())),
                 cached_name: name,
-                supports_ohlc_cached: supports_ohlc,
-                preferred_timeframe_cached: preferred_timeframe,
                 cpu_time_us: Arc::new(AtomicU64::new(0)),
                 call_count: Arc::new(AtomicU64::new(0)),
                 peak_execution_us: Arc::new(AtomicU64::new(0)),
@@ -187,36 +170,46 @@ impl PythonStrategy {
     }
 }
 
-/// Convert Rust TickData to Python dict
-fn tick_to_pydict<'a>(py: Python<'a>, tick: &TickData) -> PyResult<Bound<'a, PyDict>> {
+/// Convert Rust BarData to Python dict
+fn bar_data_to_pydict<'a>(py: Python<'a>, bar_data: &BarData) -> PyResult<Bound<'a, PyDict>> {
     let dict = PyDict::new_bound(py);
-    dict.set_item("timestamp", tick.timestamp.to_rfc3339())?;
-    dict.set_item("symbol", &tick.symbol)?;
-    dict.set_item("price", tick.price.to_string())?;
-    dict.set_item("quantity", tick.quantity.to_string())?;
-    dict.set_item("side", match tick.side {
-        TradeSide::Buy => "Buy",
-        TradeSide::Sell => "Sell",
-    })?;
-    dict.set_item("trade_id", &tick.trade_id)?;
-    dict.set_item("is_buyer_maker", tick.is_buyer_maker)?;
-    Ok(dict)
-}
 
-/// Convert Rust OHLCData to Python dict
-fn ohlc_to_pydict<'a>(py: Python<'a>, ohlc: &OHLCData) -> PyResult<Bound<'a, PyDict>> {
-    let dict = PyDict::new_bound(py);
+    // Add OHLC bar data
+    let ohlc = &bar_data.ohlc_bar;
     dict.set_item("timestamp", ohlc.timestamp.to_rfc3339())?;
     dict.set_item("symbol", &ohlc.symbol)?;
-    dict.set_item("timeframe", timeframe_to_string(&ohlc.timeframe))?;
     dict.set_item("open", ohlc.open.to_string())?;
     dict.set_item("high", ohlc.high.to_string())?;
     dict.set_item("low", ohlc.low.to_string())?;
     dict.set_item("close", ohlc.close.to_string())?;
     dict.set_item("volume", ohlc.volume.to_string())?;
     dict.set_item("trade_count", ohlc.trade_count)?;
+
+    // Add metadata
+    dict.set_item("is_first_tick_of_bar", bar_data.metadata.is_first_tick_of_bar)?;
+    dict.set_item("is_bar_closed", bar_data.metadata.is_bar_closed)?;
+    dict.set_item("is_synthetic", bar_data.metadata.is_synthetic)?;
+    dict.set_item("tick_count_in_bar", bar_data.metadata.tick_count_in_bar)?;
+
+    // Add current tick if present
+    if let Some(ref tick) = bar_data.current_tick {
+        let tick_dict = PyDict::new_bound(py);
+        tick_dict.set_item("timestamp", tick.timestamp.to_rfc3339())?;
+        tick_dict.set_item("price", tick.price.to_string())?;
+        tick_dict.set_item("quantity", tick.quantity.to_string())?;
+        tick_dict.set_item("side", match tick.side {
+            TradeSide::Buy => "Buy",
+            TradeSide::Sell => "Sell",
+        })?;
+        tick_dict.set_item("trade_id", &tick.trade_id)?;
+        dict.set_item("current_tick", tick_dict)?;
+    } else {
+        dict.set_item("current_tick", py.None())?;
+    }
+
     Ok(dict)
 }
+
 
 /// Convert Python dict to Rust Signal
 fn pydict_to_signal(obj: &Bound<'_, PyAny>) -> PyResult<Signal> {
@@ -288,17 +281,6 @@ impl Strategy for PythonStrategy {
     }
 
     fn on_bar_data(&mut self, bar_data: &BarData) -> Signal {
-        // For now, delegate to old methods for backward compatibility
-        // Python strategies can be updated to implement on_bar_data in the future
-        if let Some(ref tick) = bar_data.current_tick {
-            self.on_tick(tick)
-        } else {
-            self.on_ohlc(&bar_data.ohlc_bar)
-        }
-    }
-
-    #[allow(deprecated)]
-    fn on_tick(&mut self, tick: &TickData) -> Signal {
         // Start timing
         let start = std::time::Instant::now();
 
@@ -306,17 +288,17 @@ impl Strategy for PythonStrategy {
             let instance = self.py_instance.lock().unwrap();
             let py_instance = instance.bind(py);
 
-            // Convert tick to Python dict
-            let tick_dict = match tick_to_pydict(py, tick) {
+            // Convert BarData to Python dict
+            let bar_dict = match bar_data_to_pydict(py, bar_data) {
                 Ok(d) => d,
                 Err(e) => {
-                    eprintln!("Failed to convert tick to Python: {}", e);
+                    eprintln!("Failed to convert BarData to Python: {}", e);
                     return Signal::Hold;
                 }
             };
 
-            // Call Python method
-            match py_instance.call_method1("on_tick", (tick_dict,)) {
+            // Call Python on_bar_data method
+            match py_instance.call_method1("on_bar_data", (bar_dict,)) {
                 Ok(result) => {
                     match pydict_to_signal(&result) {
                         Ok(signal) => signal,
@@ -327,7 +309,7 @@ impl Strategy for PythonStrategy {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Python on_tick error: {}", e);
+                    eprintln!("Python on_bar_data error: {}", e);
                     Signal::Hold
                 }
             }
@@ -347,7 +329,7 @@ impl Strategy for PythonStrategy {
         // Warn if execution is slow (>10ms)
         if elapsed_us > 10_000 {
             tracing::warn!(
-                "Strategy {} on_tick took {}ms (peak: {}ms, avg: {}ms)",
+                "Strategy {} on_bar_data took {}ms (peak: {}ms, avg: {}ms)",
                 self.cached_name,
                 elapsed_us / 1000,
                 self.get_peak_execution_us() / 1000,
@@ -394,72 +376,73 @@ impl Strategy for PythonStrategy {
         });
     }
 
-    fn on_ohlc(&mut self, ohlc: &OHLCData) -> Signal {
-        // Start timing
-        let start = std::time::Instant::now();
-
-        let signal = Python::with_gil(|py| {
+    fn bar_data_mode(&self) -> BarDataMode {
+        Python::with_gil(|py| {
             let instance = self.py_instance.lock().unwrap();
             let py_instance = instance.bind(py);
 
-            let ohlc_dict = match ohlc_to_pydict(py, ohlc) {
-                Ok(d) => d,
-                Err(e) => {
-                    eprintln!("Failed to convert OHLC to Python: {}", e);
-                    return Signal::Hold;
-                }
-            };
-
-            match py_instance.call_method1("on_ohlc", (ohlc_dict,)) {
+            match py_instance.call_method0("bar_data_mode") {
                 Ok(result) => {
-                    match pydict_to_signal(&result) {
-                        Ok(signal) => signal,
-                        Err(e) => {
-                            eprintln!("Failed to convert Python signal: {}", e);
-                            Signal::Hold
+                    if let Ok(mode_str) = result.extract::<String>() {
+                        match mode_str.as_str() {
+                            "OnEachTick" => BarDataMode::OnEachTick,
+                            "OnPriceMove" => BarDataMode::OnPriceMove,
+                            "OnCloseBar" => BarDataMode::OnCloseBar,
+                            _ => BarDataMode::OnEachTick,
                         }
+                    } else {
+                        BarDataMode::OnEachTick
                     }
                 }
-                Err(e) => {
-                    eprintln!("Python on_ohlc error: {}", e);
-                    Signal::Hold
-                }
+                Err(_) => BarDataMode::OnEachTick,
             }
-        });
-
-        // Record execution time
-        let elapsed_us = start.elapsed().as_micros() as u64;
-        self.cpu_time_us.fetch_add(elapsed_us, Ordering::Relaxed);
-        self.call_count.fetch_add(1, Ordering::Relaxed);
-
-        // Update peak if necessary
-        let current_peak = self.peak_execution_us.load(Ordering::Relaxed);
-        if elapsed_us > current_peak {
-            self.peak_execution_us.store(elapsed_us, Ordering::Relaxed);
-        }
-
-        // Warn if execution is slow (>10ms)
-        if elapsed_us > 10_000 {
-            tracing::warn!(
-                "Strategy {} on_ohlc took {}ms (peak: {}ms, avg: {}ms)",
-                self.cached_name,
-                elapsed_us / 1000,
-                self.get_peak_execution_us() / 1000,
-                self.get_avg_execution_us() / 1000
-            );
-        }
-
-        signal
+        })
     }
 
-    #[allow(deprecated)]
-    fn supports_ohlc(&self) -> bool {
-        self.supports_ohlc_cached
-    }
+    fn preferred_bar_type(&self) -> BarType {
+        Python::with_gil(|py| {
+            let instance = self.py_instance.lock().unwrap();
+            let py_instance = instance.bind(py);
 
-    #[allow(deprecated)]
-    fn preferred_timeframe(&self) -> Option<Timeframe> {
-        self.preferred_timeframe_cached
+            match py_instance.call_method0("preferred_bar_type") {
+                Ok(result) => {
+                    if let Ok(bar_type_dict) = result.downcast::<PyDict>() {
+                        if let Ok(Some(type_str)) = bar_type_dict.get_item("type") {
+                            if let Ok(type_name) = type_str.extract::<String>() {
+                                match type_name.as_str() {
+                                    "TimeBased" => {
+                                        if let Ok(Some(tf)) = bar_type_dict.get_item("timeframe") {
+                                            if let Ok(tf_str) = tf.extract::<String>() {
+                                                if let Some(timeframe) = parse_timeframe(&tf_str) {
+                                                    return BarType::TimeBased(timeframe);
+                                                }
+                                            }
+                                        }
+                                        BarType::TimeBased(Timeframe::OneMinute)
+                                    }
+                                    "TickBased" => {
+                                        if let Ok(Some(count)) = bar_type_dict.get_item("tick_count") {
+                                            if let Ok(n) = count.extract::<u32>() {
+                                                return BarType::TickBased(n);
+                                            }
+                                        }
+                                        BarType::TickBased(100)
+                                    }
+                                    _ => BarType::TimeBased(Timeframe::OneMinute),
+                                }
+                            } else {
+                                BarType::TimeBased(Timeframe::OneMinute)
+                            }
+                        } else {
+                            BarType::TimeBased(Timeframe::OneMinute)
+                        }
+                    } else {
+                        BarType::TimeBased(Timeframe::OneMinute)
+                    }
+                }
+                Err(_) => BarType::TimeBased(Timeframe::OneMinute),
+            }
+        })
     }
 }
 

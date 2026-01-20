@@ -90,8 +90,8 @@ pub struct StrategyCapability {
     pub id: String,
     pub name: String,
     pub description: String,
-    pub supports_ohlc: bool,
-    pub preferred_timeframe: Option<String>,
+    pub bar_data_mode: String,
+    pub preferred_bar_type: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

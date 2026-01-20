@@ -420,19 +420,11 @@ impl Strategy for PythonStrategyWrapper {
     }
 
     fn on_bar_data(&mut self, bar_data: &crate::data::types::BarData) -> super::base::Signal {
-        unsafe {
-            let ptr = Arc::as_ptr(&self.inner) as *mut PythonStrategy;
-            (*ptr).on_bar_data(bar_data)
-        }
-    }
-
-    #[allow(deprecated)]
-    fn on_tick(&mut self, tick: &crate::data::types::TickData) -> super::base::Signal {
         // We need mutable access but only have Arc
         // PythonStrategy uses internal Mutex for state, so this is safe
         unsafe {
             let ptr = Arc::as_ptr(&self.inner) as *mut PythonStrategy;
-            (*ptr).on_tick(tick)
+            (*ptr).on_bar_data(bar_data)
         }
     }
 
@@ -450,21 +442,11 @@ impl Strategy for PythonStrategyWrapper {
         }
     }
 
-    #[allow(deprecated)]
-    fn on_ohlc(&mut self, ohlc: &crate::data::types::OHLCData) -> super::base::Signal {
-        unsafe {
-            let ptr = Arc::as_ptr(&self.inner) as *mut PythonStrategy;
-            (*ptr).on_ohlc(ohlc)
-        }
+    fn bar_data_mode(&self) -> crate::data::types::BarDataMode {
+        self.inner.bar_data_mode()
     }
 
-    #[allow(deprecated)]
-    fn supports_ohlc(&self) -> bool {
-        self.inner.supports_ohlc()
-    }
-
-    #[allow(deprecated)]
-    fn preferred_timeframe(&self) -> Option<crate::data::types::Timeframe> {
-        self.inner.preferred_timeframe()
+    fn preferred_bar_type(&self) -> crate::data::types::BarType {
+        self.inner.preferred_bar_type()
     }
 }
