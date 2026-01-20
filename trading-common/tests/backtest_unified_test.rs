@@ -5,6 +5,7 @@ use std::str::FromStr;
 use trading_common::backtest::strategy::{Signal, Strategy};
 use trading_common::backtest::{BacktestConfig, BacktestData, BacktestEngine};
 use trading_common::data::types::{BarData, BarDataMode, BarType, TickData, Timeframe, TradeSide};
+use trading_common::series::bars_context::BarsContext;
 
 /// Simple test strategy that buys on first bar and sells on last
 struct TestStrategy {
@@ -26,7 +27,7 @@ impl Strategy for TestStrategy {
         "Test Strategy"
     }
 
-    fn on_bar_data(&mut self, bar_data: &BarData) -> Signal {
+    fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
         self.bar_count += 1;
 
         if self.bar_count == 1 {
@@ -149,7 +150,7 @@ impl Strategy for TickModeStrategy {
         "Tick Mode Test Strategy"
     }
 
-    fn on_bar_data(&mut self, _bar_data: &BarData) -> Signal {
+    fn on_bar_data(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
         self.tick_count += 1;
         Signal::Hold
     }
@@ -206,7 +207,7 @@ impl Strategy for PriceMoveStrategy {
         "Price Move Strategy"
     }
 
-    fn on_bar_data(&mut self, _bar_data: &BarData) -> Signal {
+    fn on_bar_data(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
         self.event_count += 1;
         Signal::Hold
     }
@@ -256,7 +257,7 @@ fn test_tick_based_bars() {
             "Tick-Based Bar Strategy"
         }
 
-        fn on_bar_data(&mut self, _bar_data: &BarData) -> Signal {
+        fn on_bar_data(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
             self.bar_count += 1;
             Signal::Hold
         }

@@ -10,6 +10,7 @@ use super::PaperTradingProcessor;
 use trading_common::backtest::strategy::{Signal, Strategy};
 use trading_common::data::types::{BarData, TickData, TradeSide};
 use trading_common::data::{cache::TieredCache, repository::TickDataRepository};
+use trading_common::series::bars_context::BarsContext;
 
 use chrono::Utc;
 
@@ -80,7 +81,7 @@ impl Strategy for MockStrategy {
         &self.name
     }
 
-    fn on_bar_data(&mut self, bar_data: &BarData) -> Signal {
+    fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
         // Only advance signal on new ticks (not on bar close events or duplicate tick events)
         if let Some(ref tick) = bar_data.current_tick {
             // Check if this is a new tick

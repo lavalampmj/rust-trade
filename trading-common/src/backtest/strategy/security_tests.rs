@@ -7,6 +7,7 @@ mod tests {
     use crate::backtest::strategy::python_bridge::PythonStrategy;
     use crate::backtest::strategy::base::Strategy;
     use crate::data::types::{BarData, BarMetadata, BarType, OHLCData, Timeframe};
+    use crate::series::bars_context::BarsContext;
     use std::path::PathBuf;
     use chrono::Utc;
     use rust_decimal::Decimal;
@@ -260,8 +261,9 @@ mod tests {
             },
         };
 
-        // Call on_bar_data
-        let _ = strategy.on_bar_data(&bar_data);
+        // Call on_bar_data with BarsContext
+        let mut bars_context = BarsContext::new("BTCUSDT");
+        let _ = strategy.on_bar_data(&bar_data, &mut bars_context);
 
         // Resources should have been tracked
         assert!(strategy.get_cpu_time_us() > 0, "CPU time should be tracked");
@@ -322,8 +324,9 @@ mod tests {
         };
 
         // Call multiple times
+        let mut bars_context = BarsContext::new("BTCUSDT");
         for _ in 0..5 {
-            let _ = strategy.on_bar_data(&bar_data);
+            let _ = strategy.on_bar_data(&bar_data, &mut bars_context);
         }
 
         // Check metrics
@@ -382,7 +385,8 @@ mod tests {
         };
 
         // Execute and track
-        let _ = strategy.on_bar_data(&bar_data);
+        let mut bars_context = BarsContext::new("BTCUSDT");
+        let _ = strategy.on_bar_data(&bar_data, &mut bars_context);
         assert!(strategy.get_call_count() > 0, "Should have calls");
 
         // Reset

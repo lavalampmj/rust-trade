@@ -8,6 +8,8 @@ use parking_lot::RwLock as ParkingLotRwLock;
 use sha2::{Sha256, Digest};
 use super::python_bridge::PythonStrategy;
 use super::base::Strategy;
+use crate::series::bars_context::BarsContext;
+use crate::series::MaximumBarsLookBack;
 
 #[derive(Debug, Clone)]
 pub struct StrategyConfig {
@@ -419,12 +421,12 @@ impl Strategy for PythonStrategyWrapper {
         self.inner.name()
     }
 
-    fn on_bar_data(&mut self, bar_data: &crate::data::types::BarData) -> super::base::Signal {
+    fn on_bar_data(&mut self, bar_data: &crate::data::types::BarData, bars: &mut BarsContext) -> super::base::Signal {
         // We need mutable access but only have Arc
         // PythonStrategy uses internal Mutex for state, so this is safe
         unsafe {
             let ptr = Arc::as_ptr(&self.inner) as *mut PythonStrategy;
-            (*ptr).on_bar_data(bar_data)
+            (*ptr).on_bar_data(bar_data, bars)
         }
     }
 
@@ -448,5 +450,9 @@ impl Strategy for PythonStrategyWrapper {
 
     fn preferred_bar_type(&self) -> crate::data::types::BarType {
         self.inner.preferred_bar_type()
+    }
+
+    fn max_bars_lookback(&self) -> MaximumBarsLookBack {
+        self.inner.max_bars_lookback()
     }
 }

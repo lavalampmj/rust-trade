@@ -1,12 +1,13 @@
 use super::base::{Signal, Strategy};
 use crate::data::types::{BarData, BarDataMode, BarType, Timeframe};
+use crate::series::bars_context::BarsContext;
+use crate::series::MaximumBarsLookBack;
 use rust_decimal::Decimal;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 pub struct SmaStrategy {
     short_period: usize,
     long_period: usize,
-    prices: VecDeque<Decimal>,
     last_signal: Option<Signal>,
 }
 
@@ -15,17 +16,8 @@ impl SmaStrategy {
         Self {
             short_period: 5,
             long_period: 20,
-            prices: VecDeque::new(),
             last_signal: None,
         }
-    }
-
-    fn calculate_sma(&self, period: usize) -> Option<Decimal> {
-        if self.prices.len() < period {
-            return None;
-        }
-        let sum: Decimal = self.prices.iter().rev().take(period).sum();
-        Some(sum / Decimal::from(period))
     }
 }
 
@@ -34,35 +26,25 @@ impl Strategy for SmaStrategy {
         "Simple Moving Average"
     }
 
-    fn on_bar_data(&mut self, bar_data: &BarData) -> Signal {
-        // Use close price from OHLC bar
-        let current_price = bar_data.ohlc_bar.close;
-        let symbol = &bar_data.ohlc_bar.symbol;
+    fn on_bar_data(&mut self, _bar_data: &BarData, bars: &mut BarsContext) -> Signal {
+        // Use BarsContext's built-in SMA calculation
+        let short_sma = bars.sma(self.short_period);
+        let long_sma = bars.sma(self.long_period);
 
-        self.prices.push_back(current_price);
-
-        // Keep reasonable history length
-        if self.prices.len() > self.long_period * 2 {
-            self.prices.pop_front();
-        }
-
-        if let (Some(short_sma), Some(long_sma)) = (
-            self.calculate_sma(self.short_period),
-            self.calculate_sma(self.long_period),
-        ) {
+        if let (Some(short), Some(long)) = (short_sma, long_sma) {
             // Golden cross: short MA crosses above long MA
-            if short_sma > long_sma && !matches!(self.last_signal, Some(Signal::Buy { .. })) {
+            if short > long && !matches!(self.last_signal, Some(Signal::Buy { .. })) {
                 let signal = Signal::Buy {
-                    symbol: symbol.clone(),
+                    symbol: bars.symbol().to_string(),
                     quantity: Decimal::from(100),
                 };
                 self.last_signal = Some(signal.clone());
                 return signal;
             }
             // Death cross: short MA crosses below long MA
-            else if short_sma < long_sma && matches!(self.last_signal, Some(Signal::Buy { .. })) {
+            else if short < long && matches!(self.last_signal, Some(Signal::Buy { .. })) {
                 let signal = Signal::Sell {
-                    symbol: symbol.clone(),
+                    symbol: bars.symbol().to_string(),
                     quantity: Decimal::from(100),
                 };
                 self.last_signal = Some(signal.clone());
@@ -93,7 +75,6 @@ impl Strategy for SmaStrategy {
     }
 
     fn reset(&mut self) {
-        self.prices.clear();
         self.last_signal = None;
     }
 
@@ -103,5 +84,10 @@ impl Strategy for SmaStrategy {
 
     fn preferred_bar_type(&self) -> BarType {
         BarType::TimeBased(Timeframe::OneMinute)
+    }
+
+    fn max_bars_lookback(&self) -> MaximumBarsLookBack {
+        // Need at least long_period * 2 for smooth operation
+        MaximumBarsLookBack::Fixed(self.long_period * 2)
     }
 }

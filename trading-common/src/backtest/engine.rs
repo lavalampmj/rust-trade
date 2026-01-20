@@ -3,6 +3,7 @@ use crate::backtest::{
     strategy::Strategy,
 };
 use crate::data::types::{BarData, OHLCData, TickData};
+use crate::series::bars_context::BarsContext;
 // Note: OHLCData and TickData are still used via BacktestData enum
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
@@ -50,6 +51,7 @@ pub struct BacktestEngine {
     portfolio: Portfolio,
     strategy: Box<dyn Strategy>,
     config: BacktestConfig,
+    bars_context: BarsContext,
 }
 
 impl BacktestEngine {
@@ -58,6 +60,10 @@ impl BacktestEngine {
         strategy.reset();
         strategy.initialize(config.strategy_params.clone())?;
 
+        // Initialize BarsContext with strategy's max lookback setting
+        let max_lookback = strategy.max_bars_lookback();
+        let bars_context = BarsContext::with_lookback("", max_lookback);
+
         let portfolio =
             Portfolio::new(config.initial_capital).with_commission_rate(config.commission_rate);
 
@@ -65,6 +71,7 @@ impl BacktestEngine {
             portfolio,
             strategy,
             config,
+            bars_context,
         })
     }
 
@@ -113,18 +120,24 @@ impl BacktestEngine {
         println!("Generated {} bar events", bar_events.len());
         println!("{}", "=".repeat(60));
 
+        // Reset BarsContext for new run
+        self.bars_context.reset();
+
         // Process bar events
         let mut processed = 0;
         let total = bar_events.len();
         let mut last_progress = 0;
 
         for bar_data in bar_events {
-            // Update current price
+            // Update BarsContext BEFORE calling strategy
+            self.bars_context.on_bar_update(&bar_data);
+
+            // Update current price in portfolio
             self.portfolio
                 .update_price(&bar_data.ohlc_bar.symbol, bar_data.ohlc_bar.close);
 
-            // Execute strategy
-            let signal = self.strategy.on_bar_data(&bar_data);
+            // Execute strategy with BarsContext
+            let signal = self.strategy.on_bar_data(&bar_data, &mut self.bars_context);
 
             // Determine execution price (use current tick if available, otherwise close)
             let execution_price = bar_data

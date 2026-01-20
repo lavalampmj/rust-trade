@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use crate::data::types::{BarData, BarDataMode, BarType, Timeframe, TradeSide};
+use crate::series::bars_context::BarsContext;
+use crate::series::MaximumBarsLookBack;
 // OHLCData included via BarData.ohlc_bar
 use super::base::{Strategy, Signal};
 use rust_decimal::Decimal;
@@ -280,7 +282,10 @@ impl Strategy for PythonStrategy {
         &self.cached_name
     }
 
-    fn on_bar_data(&mut self, bar_data: &BarData) -> Signal {
+    fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
+        // Note: Python strategies manage their own state and don't use BarsContext
+        // The _bars parameter is ignored; Python strategies should use the bar_data dict directly
+
         // Start timing
         let start = std::time::Instant::now();
 
@@ -443,6 +448,12 @@ impl Strategy for PythonStrategy {
                 Err(_) => BarType::TimeBased(Timeframe::OneMinute),
             }
         })
+    }
+
+    fn max_bars_lookback(&self) -> MaximumBarsLookBack {
+        // Python strategies manage their own state
+        // Use default lookback for consistency
+        MaximumBarsLookBack::Fixed(256)
     }
 }
 

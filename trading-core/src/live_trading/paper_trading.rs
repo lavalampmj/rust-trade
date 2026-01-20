@@ -11,6 +11,7 @@ use trading_common::backtest::strategy::{Signal, Strategy};
 use trading_common::data::cache::TickDataCache;
 use trading_common::data::repository::TickDataRepository;
 use trading_common::data::types::{BarData, LiveStrategyLog, TickData};
+use trading_common::series::bars_context::BarsContext;
 
 pub struct PaperTradingProcessor {
     strategy: Box<dyn Strategy + Send>,
@@ -19,6 +20,9 @@ pub struct PaperTradingProcessor {
 
     // OHLC bar generator for unified strategy interface
     ohlc_generator: Option<RealtimeOHLCGenerator>,
+
+    // BarsContext for strategy access to historical series
+    bars_context: BarsContext,
 
     //Simple status tracking
     pub(crate) cash: Decimal,
@@ -36,14 +40,18 @@ impl PaperTradingProcessor {
         // Check if strategy uses unified interface (needs OHLC generator)
         let bar_data_mode = strategy.bar_data_mode();
         let bar_type = strategy.preferred_bar_type();
+        let max_lookback = strategy.max_bars_lookback();
 
         // Create OHLC generator if strategy uses OnCloseBar or OnPriceMove modes
         // For OnEachTick, we still need the generator to track OHLC state
         let ohlc_generator = {
             // Extract symbol from strategy - for now use a default, could be configured
             let symbol = "BTCUSDT".to_string(); // TODO: Make configurable
-            Some(RealtimeOHLCGenerator::new(symbol, bar_type))
+            Some(RealtimeOHLCGenerator::new(symbol.clone(), bar_type))
         };
+
+        // Initialize BarsContext with strategy's max lookback
+        let bars_context = BarsContext::with_lookback("BTCUSDT", max_lookback);
 
         println!("📊 Paper Trading initialized:");
         println!("   Strategy: {}", strategy.name());
@@ -62,6 +70,7 @@ impl PaperTradingProcessor {
             repository,
             initial_capital,
             ohlc_generator,
+            bars_context,
             cash: initial_capital,
             position: Decimal::ZERO,
             avg_cost: Decimal::ZERO,
@@ -103,8 +112,11 @@ impl PaperTradingProcessor {
         // 3. Process each bar event through strategy
         let mut last_signal_type = "HOLD".to_string();
         for bar_data in bar_events {
-            // Execute strategy with BarData
-            let signal = self.strategy.on_bar_data(&bar_data);
+            // Update BarsContext BEFORE calling strategy
+            self.bars_context.on_bar_update(&bar_data);
+
+            // Execute strategy with BarData and BarsContext
+            let signal = self.strategy.on_bar_data(&bar_data, &mut self.bars_context);
 
             // Execute trading signal
             let signal_type = self.execute_signal(&signal, tick)?;
@@ -185,8 +197,11 @@ impl PaperTradingProcessor {
 
         // Process bar events (after releasing the mutable borrow)
         for bar_data in bar_events {
-            // Execute strategy with bar
-            let signal = self.strategy.on_bar_data(&bar_data);
+            // Update BarsContext BEFORE calling strategy
+            self.bars_context.on_bar_update(&bar_data);
+
+            // Execute strategy with bar and BarsContext
+            let signal = self.strategy.on_bar_data(&bar_data, &mut self.bars_context);
 
             // Use bar's close price for execution
             let execution_price = bar_data.ohlc_bar.close;
