@@ -22,7 +22,7 @@ class MaliciousFilesystemStrategy(BaseStrategy):
     def name(self) -> str:
         return self.name_str
 
-    def on_tick(self, tick: dict) -> dict:
+    def on_bar_data(self, bar_data: dict) -> dict:
         """Attempt to read sensitive files"""
         # This should never execute because import will fail
         try:
@@ -39,3 +39,6 @@ class MaliciousFilesystemStrategy(BaseStrategy):
             pass
 
         return Signal.hold()
+
+    def initialize(self, params: dict) -> str:
+        return None

@@ -18,6 +18,8 @@ Key Concepts:
 - For 100-tick bars, trade_count should be 100 (except last bar)
 - Volume represents total traded volume in those 100 ticks
 - Bar duration varies based on market activity
+
+Uses the unified on_bar_data() interface with OnCloseBar mode and TickBased bars.
 """
 
 from typing import Optional, Dict, Any
@@ -97,16 +99,10 @@ class TickBarStrategy(BaseStrategy):
                 if self.volume_multiplier <= 0:
                     return "volume_multiplier must be positive"
 
-            print(f"TickBar Strategy initialized:")
-            print(f"  Expected ticks/bar: {self.expected_tick_count}")
-            print(f"  Lookback period: {self.lookback_bars} bars")
-            print(f"  Momentum threshold: {self.momentum_threshold*100:.2f}%")
-            print(f"  Volume multiplier: {self.volume_multiplier}x")
-
             return None
 
         except ValueError as e:
-            return f"Parameter error: {str(e)}"
+            return str(e)
 
     def reset(self) -> None:
         """Reset strategy state for new backtest."""
@@ -116,20 +112,20 @@ class TickBarStrategy(BaseStrategy):
         self.total_bars_processed = 0
         self.avg_bar_volume = None
 
-    def calculate_bar_momentum(self, bar: Dict[str, Any]) -> float:
+    def calculate_bar_momentum(self, bar_data: Dict[str, Any]) -> float:
         """
         Calculate momentum for a single bar.
 
         Momentum = (close - open) / open
 
         Args:
-            bar: OHLC bar dictionary
+            bar_data: Bar data dictionary
 
         Returns:
             Momentum as decimal (e.g., 0.002 = 0.2% upward movement)
         """
-        open_price = float(bar["open"])
-        close_price = float(bar["close"])
+        open_price = float(bar_data["open"])
+        close_price = float(bar_data["close"])
 
         if open_price == 0:
             return 0.0
@@ -165,19 +161,7 @@ class TickBarStrategy(BaseStrategy):
 
         return volume >= (self.avg_bar_volume * self.volume_multiplier)
 
-    def on_tick(self, tick: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Not used - this strategy only works with OHLC bars.
-
-        Args:
-            tick: Tick data dictionary
-
-        Returns:
-            Hold signal
-        """
-        return Signal.hold()
-
-    def on_ohlc(self, ohlc: Dict[str, Any]) -> Dict[str, Any]:
+    def on_bar_data(self, bar_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Process N-tick bar and generate trading signal.
 
@@ -185,30 +169,24 @@ class TickBarStrategy(BaseStrategy):
         (configured via tick_count parameter).
 
         Args:
-            ohlc: Dictionary with keys:
+            bar_data: Dictionary with keys:
                 - timestamp: Bar start time (first tick's timestamp)
                 - symbol: Trading pair
-                - timeframe: Placeholder (not meaningful for tick bars)
                 - open: First tick's price in this bar
                 - high: Highest price among N ticks
                 - low: Lowest price among N ticks
                 - close: Last tick's price in this bar
                 - volume: Total volume of N ticks
                 - trade_count: Number of ticks (should be N, or less for last bar)
+                - is_bar_closed: Whether this bar is complete
+                - tick_count_in_bar: Number of ticks in this bar
 
         Returns:
             Signal dictionary
         """
-        symbol = ohlc["symbol"]
-        trade_count = ohlc["trade_count"]
-        volume = float(ohlc["volume"])
-
-        # Verify we're getting tick bars (not time-based bars)
-        # For 100-tick bars, trade_count should consistently be 100
-        if self.total_bars_processed < 5:
-            print(f"Bar {self.total_bars_processed + 1}: "
-                  f"trade_count={trade_count}, "
-                  f"expected={self.expected_tick_count}")
+        symbol = bar_data["symbol"]
+        trade_count = bar_data["trade_count"]
+        volume = float(bar_data["volume"])
 
         self.total_bars_processed += 1
 
@@ -216,16 +194,16 @@ class TickBarStrategy(BaseStrategy):
         self.update_volume_stats(volume)
 
         # Calculate bar characteristics
-        momentum = self.calculate_bar_momentum(ohlc)
+        momentum = self.calculate_bar_momentum(bar_data)
         is_high_volume = self.is_high_volume_bar(volume)
 
         # Store bar in history for future analysis
         self.bar_history.append({
             "momentum": momentum,
             "volume": volume,
-            "high": float(ohlc["high"]),
-            "low": float(ohlc["low"]),
-            "close": float(ohlc["close"]),
+            "high": float(bar_data["high"]),
+            "low": float(bar_data["low"]),
+            "close": float(bar_data["close"]),
             "trade_count": trade_count,
         })
 
@@ -239,12 +217,8 @@ class TickBarStrategy(BaseStrategy):
             momentum > self.momentum_threshold and
             is_high_volume):
 
-            print(f"BUY Signal - Momentum: {momentum*100:.2f}%, "
-                  f"Volume: {volume:.2f} (avg: {self.avg_bar_volume:.2f}), "
-                  f"Ticks: {trade_count}")
-
             self.has_position = True
-            self.entry_price = float(ohlc["close"])
+            self.entry_price = float(bar_data["close"])
 
             # Position size: 10% of capital
             return Signal.buy(symbol, "0.1")
@@ -253,13 +227,6 @@ class TickBarStrategy(BaseStrategy):
         if (self.has_position and
             momentum < -self.momentum_threshold and
             is_high_volume):
-
-            profit_pct = ((float(ohlc["close"]) - self.entry_price) /
-                         self.entry_price * 100) if self.entry_price else 0
-
-            print(f"SELL Signal - Momentum: {momentum*100:.2f}%, "
-                  f"Volume: {volume:.2f}, "
-                  f"P&L: {profit_pct:.2f}%")
 
             self.has_position = False
             self.entry_price = None
@@ -271,12 +238,6 @@ class TickBarStrategy(BaseStrategy):
             momentum < 0 and
             abs(momentum) > self.momentum_threshold / 2):
 
-            profit_pct = ((float(ohlc["close"]) - self.entry_price) /
-                         self.entry_price * 100) if self.entry_price else 0
-
-            print(f"EXIT Signal - Momentum reversal: {momentum*100:.2f}%, "
-                  f"P&L: {profit_pct:.2f}%")
-
             self.has_position = False
             self.entry_price = None
 
@@ -284,18 +245,13 @@ class TickBarStrategy(BaseStrategy):
 
         return Signal.hold()
 
-    def supports_ohlc(self) -> bool:
-        """Indicate that this strategy ONLY supports OHLC data."""
-        return True
+    def bar_data_mode(self) -> str:
+        """Return OnCloseBar mode - process only completed bars."""
+        return "OnCloseBar"
 
-    def preferred_timeframe(self) -> Optional[str]:
-        """
-        Return preferred timeframe.
-
-        Note: For tick bars, this is not used. The bar type is configured
-        when you call repository.generate_n_tick_ohlc() from Rust.
-        """
-        return None
+    def preferred_bar_type(self) -> Dict[str, Any]:
+        """Prefer 100-tick bars for this strategy."""
+        return {"type": "TickBased", "tick_count": self.expected_tick_count}
 
 
 # Example usage in Rust:
@@ -329,9 +285,10 @@ params.insert("tick_count".to_string(), "100".to_string());
 params.insert("lookback_bars".to_string(), "20".to_string());
 strategy.initialize(params)?;
 
-// Feed tick bars to strategy
+// Feed tick bars to strategy using unified interface
 for bar in tick_bars {
-    let signal = strategy.on_ohlc(&bar);
+    let bar_data = BarData::from_ohlc(&bar);
+    let signal = strategy.on_bar_data(&bar_data);
     // Process signal...
 }
 ```

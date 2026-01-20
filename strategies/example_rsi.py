@@ -11,6 +11,8 @@ Strategy Logic:
 - Buy when RSI < 30 (oversold)
 - Sell when RSI > 70 (overbought)
 - Hold otherwise
+
+Uses the unified on_bar_data() interface with OnCloseBar mode.
 """
 
 from typing import Optional, Dict, Any
@@ -87,7 +89,6 @@ class ExampleRsiStrategy(BaseStrategy):
         if self.oversold >= self.overbought:
             return "Oversold threshold must be less than overbought threshold"
 
-        print(f"RSI Strategy initialized: period={self.period}, oversold={self.oversold}, overbought={self.overbought}")
         return None
 
     def reset(self) -> None:
@@ -129,80 +130,21 @@ class ExampleRsiStrategy(BaseStrategy):
 
         return rsi
 
-    def on_tick(self, tick: Dict[str, Any]) -> Dict[str, Any]:
+    def on_bar_data(self, bar_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Process a tick and generate trading signal.
+        Process bar data and generate trading signal.
+
+        Uses close price for RSI calculation. Operates in OnCloseBar mode
+        so only processes completed bars.
 
         Args:
-            tick: Dictionary with keys:
-                - timestamp: ISO 8601 string
-                - symbol: str
-                - price: str (Decimal as string)
-                - quantity: str (Decimal as string)
-                - side: "Buy" or "Sell"
-                - trade_id: str
-                - is_buyer_maker: bool
+            bar_data: Bar data dictionary with OHLC and metadata
 
         Returns:
             Signal dictionary (from Signal.buy/sell/hold)
         """
-        symbol = tick["symbol"]
-        price = float(tick["price"])
-
-        # Track price changes
-        if self.last_price is not None:
-            change = price - self.last_price
-            self.price_changes.append(change)
-
-        self.last_price = price
-
-        # Calculate RSI
-        rsi = self.calculate_rsi()
-
-        if rsi is None:
-            # Not enough data yet
-            return Signal.hold()
-
-        # Generate signals based on RSI
-        # Buy when oversold and don't have position
-        if rsi < self.oversold and not self.has_position:
-            self.has_position = True
-            self.last_signal_type = "Buy"
-            # Use 10% of capital for each trade (quantity will be calculated by engine)
-            return Signal.buy(symbol, "0.1")
-
-        # Sell when overbought and have position
-        if rsi > self.overbought and self.has_position:
-            self.has_position = False
-            self.last_signal_type = "Sell"
-            # Sell full position (quantity will be calculated by engine)
-            return Signal.sell(symbol, "0.1")
-
-        return Signal.hold()
-
-    def on_ohlc(self, ohlc: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Process OHLC data and generate trading signal.
-
-        This strategy can use OHLC data by using the close price as the tick price.
-
-        Args:
-            ohlc: Dictionary with keys:
-                - timestamp: ISO 8601 string
-                - symbol: str
-                - timeframe: str (e.g., "1m", "5m", "1h")
-                - open: str (Decimal as string)
-                - high: str (Decimal as string)
-                - low: str (Decimal as string)
-                - close: str (Decimal as string)
-                - volume: str (Decimal as string)
-                - trade_count: int
-
-        Returns:
-            Signal dictionary (from Signal.buy/sell/hold)
-        """
-        symbol = ohlc["symbol"]
-        close_price = float(ohlc["close"])
+        symbol = bar_data["symbol"]
+        close_price = float(bar_data["close"])
 
         # Track price changes using close prices
         if self.last_price is not None:
@@ -218,11 +160,14 @@ class ExampleRsiStrategy(BaseStrategy):
             return Signal.hold()
 
         # Generate signals based on RSI
+        # Buy when oversold and don't have position
         if rsi < self.oversold and not self.has_position:
             self.has_position = True
             self.last_signal_type = "Buy"
+            # Use 10% of capital for each trade
             return Signal.buy(symbol, "0.1")
 
+        # Sell when overbought and have position
         if rsi > self.overbought and self.has_position:
             self.has_position = False
             self.last_signal_type = "Sell"
@@ -230,10 +175,10 @@ class ExampleRsiStrategy(BaseStrategy):
 
         return Signal.hold()
 
-    def supports_ohlc(self) -> bool:
-        """Indicate that this strategy supports OHLC data."""
-        return True
+    def bar_data_mode(self) -> str:
+        """Return OnCloseBar mode - process only completed bars."""
+        return "OnCloseBar"
 
-    def preferred_timeframe(self) -> Optional[str]:
-        """Return preferred timeframe for OHLC data."""
-        return "1m"  # 1-minute candles work well for RSI
+    def preferred_bar_type(self) -> Dict[str, Any]:
+        """Prefer 1-minute time-based bars."""
+        return {"type": "TimeBased", "timeframe": "1m"}

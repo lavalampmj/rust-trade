@@ -83,8 +83,17 @@ pub fn create_strategy(strategy_id: &str) -> Result<Box<dyn Strategy>, String> {
     // Try Python registry first
     if let Some(registry) = PYTHON_REGISTRY.get() {
         let reg = registry.read();
-        if let Ok(strategy) = reg.get_strategy(strategy_id) {
-            return Ok(strategy);
+        match reg.get_strategy(strategy_id) {
+            Ok(strategy) => return Ok(strategy),
+            Err(e) => {
+                // Only fall through if strategy is not a Python strategy
+                if e.contains("not registered") || e == "Unknown strategy" {
+                    // Not a Python strategy, continue to Rust strategies
+                } else {
+                    // Python strategy exists but failed to load
+                    return Err(e);
+                }
+            }
         }
     }
 

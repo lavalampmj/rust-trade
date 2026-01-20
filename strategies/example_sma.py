@@ -4,6 +4,9 @@ Example Simple Moving Average (SMA) crossover strategy.
 This strategy buys when the short-term moving average crosses above
 the long-term moving average (golden cross) and sells when it crosses
 below (death cross).
+
+Uses the unified on_bar_data() interface with OnCloseBar mode,
+processing only completed bars for efficiency.
 """
 
 from base_strategy import BaseStrategy, Signal
@@ -55,23 +58,26 @@ class ExampleSmaStrategy(BaseStrategy):
             if self.short_period < 1 or self.long_period < 1:
                 return "Periods must be positive integers"
 
-            print(f"✓ SMA Strategy initialized: short={self.short_period}, long={self.long_period}")
             return None
         except Exception as e:
-            return f"Failed to initialize: {str(e)}"
+            return str(e)
 
-    def on_tick(self, tick: Dict[str, Any]) -> Dict[str, Any]:
+    def on_bar_data(self, bar_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Process tick data and generate trading signal.
+        Process bar data and generate trading signal.
+
+        Uses close price for SMA calculation. Operates in OnCloseBar mode
+        so only processes completed bars.
 
         Args:
-            tick: Tick data dictionary
+            bar_data: Bar data dictionary with OHLC and metadata
 
         Returns:
             Trading signal
         """
-        price = Decimal(tick["price"])
-        symbol = tick["symbol"]
+        # Use close price for SMA calculation
+        price = Decimal(bar_data["close"])
+        symbol = bar_data["symbol"]
 
         # Add price to history
         self.prices.append(price)
@@ -120,46 +126,11 @@ class ExampleSmaStrategy(BaseStrategy):
         """Reset strategy state for new backtest."""
         self.prices.clear()
         self.last_signal_type = None
-        print("✓ SMA Strategy reset")
 
-    def supports_ohlc(self) -> bool:
-        """This strategy supports OHLC data."""
-        return True
+    def bar_data_mode(self) -> str:
+        """Return OnCloseBar mode - process only completed bars."""
+        return "OnCloseBar"
 
-    def preferred_timeframe(self) -> Optional[str]:
-        """Prefer 1-minute candles for this strategy."""
-        return "1m"
-
-    def on_ohlc(self, ohlc: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Process OHLC data using close price.
-
-        Args:
-            ohlc: OHLC data dictionary
-
-        Returns:
-            Trading signal
-        """
-        # Use close price for SMA calculation
-        price = Decimal(ohlc["close"])
-        symbol = ohlc["symbol"]
-
-        self.prices.append(price)
-
-        if len(self.prices) > self.long_period * 2:
-            self.prices.popleft()
-
-        short_sma = self._calculate_sma(self.short_period)
-        long_sma = self._calculate_sma(self.long_period)
-
-        if short_sma is None or long_sma is None:
-            return Signal.hold()
-
-        if short_sma > long_sma and self.last_signal_type != "Buy":
-            self.last_signal_type = "Buy"
-            return Signal.buy(symbol, "100")
-        elif short_sma < long_sma and self.last_signal_type == "Buy":
-            self.last_signal_type = "Sell"
-            return Signal.sell(symbol, "100")
-
-        return Signal.hold()
+    def preferred_bar_type(self) -> Dict[str, Any]:
+        """Prefer 1-minute time-based bars."""
+        return {"type": "TimeBased", "timeframe": "1m"}

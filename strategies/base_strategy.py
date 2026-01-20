@@ -3,6 +3,11 @@ Base strategy interface for rust-trade Python strategies.
 
 All trading strategies must inherit from BaseStrategy and implement
 the required methods.
+
+The unified interface uses on_bar_data() with three operational modes:
+- OnEachTick: Called for every tick with accumulated OHLC state
+- OnPriceMove: Called only when price changes
+- OnCloseBar: Called only when bar closes (most efficient for OHLC strategies)
 """
 
 from abc import ABC, abstractmethod
@@ -65,13 +70,12 @@ class BaseStrategy(ABC):
 
     All strategies must implement:
     - name(): Return strategy name
-    - on_tick(tick_data): Process tick data and return signal
+    - on_bar_data(bar_data): Process bar data and return signal
     - initialize(params): Initialize with parameters
 
     Optional methods:
-    - on_ohlc(ohlc_data): Process OHLC data (if supported)
-    - supports_ohlc(): Return True if strategy supports OHLC
-    - preferred_timeframe(): Return preferred timeframe string
+    - bar_data_mode(): Return operational mode (OnEachTick/OnPriceMove/OnCloseBar)
+    - preferred_bar_type(): Return preferred bar type (TimeBased/TickBased)
     - reset(): Reset strategy state
     """
 
@@ -86,29 +90,44 @@ class BaseStrategy(ABC):
         pass
 
     @abstractmethod
-    def on_tick(self, tick: Dict[str, Any]) -> Dict[str, Any]:
+    def on_bar_data(self, bar_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Process tick data and generate trading signal.
+        Process bar data and generate trading signal.
 
-        This method is called for each new tick in the market data.
+        This is the unified entry point for all strategy processing.
+        The bar_data structure contains OHLC data and optionally tick data
+        depending on the bar_data_mode().
 
         Args:
-            tick: Dictionary with keys:
-                - timestamp (str): ISO 8601 timestamp
+            bar_data: Dictionary with keys:
+                - timestamp (str): ISO 8601 timestamp of the bar
                 - symbol (str): Trading pair (e.g., "BTCUSDT")
-                - price (str): Decimal string of trade price
-                - quantity (str): Decimal string of trade quantity
-                - side (str): "Buy" or "Sell"
-                - trade_id (str): Unique trade identifier
-                - is_buyer_maker (bool): Whether buyer is maker
+                - open (str): Decimal string of opening price
+                - high (str): Decimal string of high price
+                - low (str): Decimal string of low price
+                - close (str): Decimal string of closing price
+                - volume (str): Decimal string of volume
+                - trade_count (int): Number of trades in period
+                - is_first_tick_of_bar (bool): True if this is first tick of bar
+                - is_bar_closed (bool): True if this bar is complete
+                - is_synthetic (bool): True if bar was generated with no ticks
+                - tick_count_in_bar (int): Number of ticks accumulated in bar
+                - current_tick (Optional[Dict]): Current tick data if available
+                    - timestamp (str): Tick timestamp
+                    - price (str): Tick price
+                    - quantity (str): Tick quantity
+                    - side (str): "Buy" or "Sell"
+                    - trade_id (str): Trade identifier
 
         Returns:
             Signal dictionary (use Signal.buy/sell/hold methods)
 
         Example:
-            >>> def on_tick(self, tick):
-            ...     if self.should_buy(tick):
-            ...         return Signal.buy(tick["symbol"], "100")
+            >>> def on_bar_data(self, bar_data):
+            ...     close = Decimal(bar_data["close"])
+            ...     symbol = bar_data["symbol"]
+            ...     if self.should_buy(close):
+            ...         return Signal.buy(symbol, "100")
             ...     return Signal.hold()
         """
         pass
@@ -137,58 +156,37 @@ class BaseStrategy(ABC):
         """
         pass
 
-    def on_ohlc(self, ohlc: Dict[str, Any]) -> Dict[str, Any]:
+    def bar_data_mode(self) -> str:
         """
-        Process OHLC (candlestick) data and generate trading signal.
+        Return the operational mode for this strategy.
 
-        Optional method for strategies that work with OHLC data instead
-        of tick-by-tick data. Override this if your strategy is
-        designed for candlestick analysis.
-
-        Args:
-            ohlc: Dictionary with keys:
-                - timestamp (str): ISO 8601 timestamp
-                - symbol (str): Trading pair
-                - timeframe (str): Timeframe ("1m", "5m", "1h", etc.)
-                - open (str): Decimal string of opening price
-                - high (str): Decimal string of high price
-                - low (str): Decimal string of low price
-                - close (str): Decimal string of closing price
-                - volume (str): Decimal string of volume
-                - trade_count (int): Number of trades in period
+        Modes:
+        - "OnEachTick": Strategy called for every tick with accumulated OHLC
+        - "OnPriceMove": Strategy called only when price changes
+        - "OnCloseBar": Strategy called only when bar closes (default)
 
         Returns:
-            Signal dictionary
-
-        Default implementation returns hold signal.
+            One of: "OnEachTick", "OnPriceMove", "OnCloseBar"
+            Default is "OnCloseBar" (most efficient for OHLC strategies)
         """
-        return Signal.hold()
+        return "OnCloseBar"
 
-    def supports_ohlc(self) -> bool:
+    def preferred_bar_type(self) -> Dict[str, Any]:
         """
-        Return True if this strategy supports OHLC data.
+        Return preferred bar type for this strategy.
 
-        Override this method to return True if your strategy implements
-        on_ohlc() and can work with candlestick data.
+        Bar types:
+        - TimeBased: Bars close after fixed time (1m, 5m, 1h, etc.)
+        - TickBased: Bars close after N ticks (e.g., 100-tick bars)
 
         Returns:
-            False by default
+            Dictionary with format:
+            - For TimeBased: {"type": "TimeBased", "timeframe": "1m"}
+            - For TickBased: {"type": "TickBased", "tick_count": 100}
+
+        Default is 1-minute time-based bars.
         """
-        return False
-
-    def preferred_timeframe(self) -> Optional[str]:
-        """
-        Return preferred timeframe for OHLC data.
-
-        Only relevant if supports_ohlc() returns True.
-
-        Returns:
-            One of: "1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"
-            or None if no preference
-
-        Default implementation returns None.
-        """
-        return None
+        return {"type": "TimeBased", "timeframe": "1m"}
 
     def reset(self):
         """

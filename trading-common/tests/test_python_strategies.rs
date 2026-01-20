@@ -59,7 +59,7 @@ fn test_create_python_strategy() {
     let _ = strategy::initialize_python_strategies(&config_path);
 
     let result = strategy::create_strategy("sma_python");
-    assert!(result.is_ok(), "Failed to create Python SMA strategy");
+    assert!(result.is_ok(), "Failed to create Python SMA strategy: {:?}", result.err());
 
     if let Ok(s) = result {
         assert_eq!(s.name(), "Simple Moving Average (Python)");

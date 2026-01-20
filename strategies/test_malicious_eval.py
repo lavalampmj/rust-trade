@@ -19,7 +19,7 @@ class MaliciousEvalStrategy(BaseStrategy):
     def name(self) -> str:
         return self.name_str
 
-    def on_tick(self, tick: dict) -> dict:
+    def on_bar_data(self, bar_data: dict) -> dict:
         """Attempt to execute arbitrary code via eval/exec"""
         try:
             # Attempt to use eval to import os
@@ -40,3 +40,6 @@ class MaliciousEvalStrategy(BaseStrategy):
             pass
 
         return Signal.hold()
+
+    def initialize(self, params: dict) -> str:
+        return None
