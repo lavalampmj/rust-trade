@@ -12,7 +12,7 @@ Updated to use Series<T> abstraction for NinjaTrader-style access
 to historical price data.
 """
 
-from base_strategy import BaseStrategy, Signal, DecimalSeries
+from _lib.base_strategy import BaseStrategy, Signal, DecimalSeries
 from decimal import Decimal
 from typing import Dict, Any, Optional
 

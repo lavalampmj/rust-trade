@@ -19,7 +19,7 @@ mod tests {
     #[test]
     fn test_calculate_file_hash() {
         // Test that we can calculate a hash for a file
-        let path = PathBuf::from("../strategies/example_sma.py");
+        let path = PathBuf::from("../strategies/examples/example_sma.py");
         if path.exists() {
             let result = calculate_file_hash(&path);
             assert!(result.is_ok(), "Should successfully calculate hash");
@@ -33,7 +33,7 @@ mod tests {
     #[test]
     fn test_hash_verification_correct() {
         // Test that strategy loads with correct hash
-        let path = PathBuf::from("../strategies/example_sma.py");
+        let path = PathBuf::from("../strategies/examples/example_sma.py");
         if !path.exists() {
             println!("Skipping test - file not found");
             return;
@@ -72,7 +72,7 @@ mod tests {
     #[test]
     fn test_hash_verification_incorrect() {
         // Test that strategy is rejected with incorrect hash
-        let path = PathBuf::from("../strategies/example_sma.py");
+        let path = PathBuf::from("../strategies/examples/example_sma.py");
         if !path.exists() {
             println!("Skipping test - file not found");
             return;
@@ -115,7 +115,7 @@ mod tests {
     #[test]
     fn test_malicious_network_import_blocked() {
         // Test that network imports are blocked
-        let path = PathBuf::from("../strategies/test_malicious_network.py");
+        let path = PathBuf::from("../strategies/_tests/test_malicious_network.py");
         if !path.exists() {
             println!("Skipping test - malicious test file not found");
             return;
@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn test_malicious_filesystem_import_blocked() {
         // Test that filesystem imports are blocked
-        let path = PathBuf::from("../strategies/test_malicious_filesystem.py");
+        let path = PathBuf::from("../strategies/_tests/test_malicious_filesystem.py");
         if !path.exists() {
             println!("Skipping test - malicious test file not found");
             return;
@@ -163,7 +163,7 @@ mod tests {
     #[test]
     fn test_malicious_subprocess_import_blocked() {
         // Test that subprocess imports are blocked
-        let path = PathBuf::from("../strategies/test_malicious_subprocess.py");
+        let path = PathBuf::from("../strategies/_tests/test_malicious_subprocess.py");
         if !path.exists() {
             println!("Skipping test - malicious test file not found");
             return;
@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn test_resource_tracking_initialization() {
         // Test that resource tracking starts at zero
-        let path = PathBuf::from("../strategies/example_sma.py");
+        let path = PathBuf::from("../strategies/examples/example_sma.py");
         if !path.exists() {
             println!("Skipping test - file not found");
             return;
@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn test_resource_tracking_after_execution() {
         // Test that resource tracking updates after on_bar_data
-        let path = PathBuf::from("../strategies/example_sma.py");
+        let path = PathBuf::from("../strategies/examples/example_sma.py");
         if !path.exists() {
             println!("Skipping test - file not found");
             return;
@@ -282,7 +282,7 @@ mod tests {
     #[test]
     fn test_resource_tracking_multiple_calls() {
         // Test that metrics accumulate over multiple calls
-        let path = PathBuf::from("../strategies/example_sma.py");
+        let path = PathBuf::from("../strategies/examples/example_sma.py");
         if !path.exists() {
             println!("Skipping test - file not found");
             return;
@@ -343,7 +343,7 @@ mod tests {
     #[test]
     fn test_resource_tracking_reset() {
         // Test that reset_metrics clears all tracking
-        let path = PathBuf::from("../strategies/example_sma.py");
+        let path = PathBuf::from("../strategies/examples/example_sma.py");
         if !path.exists() {
             println!("Skipping test - file not found");
             return;

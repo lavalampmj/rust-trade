@@ -14,7 +14,7 @@ Uses the unified on_bar_data() interface.
 
 import time
 from typing import Dict, Optional, Any
-from base_strategy import BaseStrategy, Signal
+from _lib.base_strategy import BaseStrategy, Signal
 
 
 class SlowStrategy(BaseStrategy):

@@ -18,7 +18,7 @@ Updated to use Series<T> abstraction for NinjaTrader-style access.
 
 from typing import Optional, Dict, Any
 from decimal import Decimal
-from base_strategy import BaseStrategy, Signal, FloatSeries
+from _lib.base_strategy import BaseStrategy, Signal, FloatSeries
 
 
 class ExampleRsiStrategy(BaseStrategy):

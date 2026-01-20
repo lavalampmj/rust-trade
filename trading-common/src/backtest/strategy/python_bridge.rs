@@ -49,9 +49,28 @@ impl PythonStrategy {
                 .map_err(|e| format!("Failed to get sys.path: {}", e))?;
 
             // Add parent directory of strategy file to path
-            if let Some(parent) = std::path::Path::new(path).parent() {
+            let strategy_path = std::path::Path::new(path);
+            if let Some(parent) = strategy_path.parent() {
                 py_path.call_method1("insert", (0, parent.to_str().unwrap()))
                     .map_err(|e| format!("Failed to add to sys.path: {}", e))?;
+
+                // Also add strategies root (for _lib package imports)
+                // If parent is "examples" or "_tests", go up one more level
+                if let Some(parent_name) = parent.file_name().and_then(|n| n.to_str()) {
+                    if parent_name == "examples" || parent_name == "_tests" {
+                        if let Some(strategies_root) = parent.parent() {
+                            py_path.call_method1("insert", (0, strategies_root.to_str().unwrap()))
+                                .map_err(|e| format!("Failed to add strategies root to sys.path: {}", e))?;
+
+                            // Add _lib directory for restricted_compiler import
+                            let lib_path = strategies_root.join("_lib");
+                            if lib_path.exists() {
+                                py_path.call_method1("insert", (0, lib_path.to_str().unwrap()))
+                                    .map_err(|e| format!("Failed to add _lib to sys.path: {}", e))?;
+                            }
+                        }
+                    }
+                }
             }
 
             // Load the Python module from file
@@ -68,7 +87,7 @@ impl PythonStrategy {
                 .map_err(|e| format!(
                     "Failed to import restricted_compiler: {}\n\
                      Make sure RestrictedPython is installed: pip install RestrictedPython==7.0\n\
-                     And strategies/restricted_compiler.py exists",
+                     And strategies/_lib/restricted_compiler.py exists",
                     e
                 ))?;
 

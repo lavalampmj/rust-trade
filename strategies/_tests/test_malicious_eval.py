@@ -7,7 +7,7 @@ It should be BLOCKED by RestrictedPython (Phase 2) - eval/exec not in safe built
 Expected Result: NameError when trying to use eval/exec (not available in restricted globals)
 """
 
-from base_strategy import BaseStrategy, Signal
+from _lib.base_strategy import BaseStrategy, Signal
 
 
 class MaliciousEvalStrategy(BaseStrategy):

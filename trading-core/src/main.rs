@@ -82,7 +82,7 @@ fn run_hash_strategy_command(args: &[String]) {
         eprintln!("  cargo run --bin trading-core -- hash-strategy <file_path>");
         eprintln!();
         eprintln!("Example:");
-        eprintln!("  cargo run --bin trading-core -- hash-strategy strategies/example_sma.py");
+        eprintln!("  cargo run --bin trading-core -- hash-strategy strategies/examples/example_sma.py");
         std::process::exit(1);
     }
 

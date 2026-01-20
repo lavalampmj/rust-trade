@@ -10,7 +10,7 @@ Expected Result: ImportError when trying to import os, or NameError for open()
 # This import should FAIL - os is blocked
 import os
 
-from base_strategy import BaseStrategy, Signal
+from _lib.base_strategy import BaseStrategy, Signal
 
 
 class MaliciousFilesystemStrategy(BaseStrategy):

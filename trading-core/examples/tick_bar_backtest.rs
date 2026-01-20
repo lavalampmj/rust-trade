@@ -124,10 +124,10 @@ async fn main() -> Result<(), String> {
     let strategy_name = "example_tick_bar_strategy";
 
     // Check if strategy file exists
-    let strategy_path = format!("strategies/{}.py", strategy_name);
+    let strategy_path = format!("strategies/examples/{}.py", strategy_name);
     if !std::path::Path::new(&strategy_path).exists() {
         println!("\n⚠️  Strategy file not found: {}", strategy_path);
-        println!("The example strategy should be in the strategies/ directory.");
+        println!("The example strategy should be in the strategies/examples/ directory.");
         return Ok(());
     }
 
@@ -136,8 +136,8 @@ async fn main() -> Result<(), String> {
             "Failed to load strategy: {}\n\
             Make sure:\n\
               1. RestrictedPython is installed: pip install RestrictedPython==7.0\n\
-              2. strategies/restricted_compiler.py exists\n\
-              3. strategies/base_strategy.py exists\n\
+              2. strategies/_lib/restricted_compiler.py exists\n\
+              3. strategies/_lib/base_strategy.py exists\n\
               4. Strategy file exists at: {}",
             e, strategy_path
         )

@@ -57,22 +57,22 @@ skip_hash_verification = true
 # Registered Python strategies
 [[strategies.python]]
 id = "sma_python"
-file = "example_sma.py"
+file = "examples/example_sma.py"
 class_name = "ExampleSmaStrategy"
 description = "Example Python SMA implementation"
 enabled = true
-sha256 = "7403ebb5f676c9c3e4f31db77a188a0947b9ace3fe6fb57032d1007e57e7cc02"
+sha256 = "e35b042763da125245aa3e6417c76bca5c8dc0b09ee0624f8b01997a63710cc1"
 
 [strategies.python.limits]
 max_execution_time_ms = 10  # 10ms timeout per tick
 
 [[strategies.python]]
 id = "rsi_python"
-file = "example_rsi.py"
+file = "examples/example_rsi.py"
 class_name = "ExampleRsiStrategy"
 description = "Example Python RSI implementation"
 enabled = true
-sha256 = "e5a1c623067d3acbc12580d1701a70e52ffbc3eb4b477089c08dc8ccde274cfe"
+sha256 = "72f18595b378fbd5f4238a47301166b7c8d9ef3470a0db8889520a4dfa3293b4"
 
 [strategies.python.limits]
 max_execution_time_ms = 10  # 10ms timeout per tick

@@ -10,7 +10,7 @@ Expected Result: ImportError when trying to import subprocess
 # This import should FAIL - subprocess is blocked
 import subprocess
 
-from base_strategy import BaseStrategy, Signal
+from _lib.base_strategy import BaseStrategy, Signal
 
 
 class MaliciousSubprocessStrategy(BaseStrategy):

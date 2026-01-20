@@ -10,7 +10,7 @@ Expected Result: ImportError when trying to import urllib/socket/requests
 # This import should FAIL - urllib is blocked
 import urllib.request
 
-from base_strategy import BaseStrategy, Signal
+from _lib.base_strategy import BaseStrategy, Signal
 
 
 class MaliciousNetworkStrategy(BaseStrategy):
