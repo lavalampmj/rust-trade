@@ -1,5 +1,5 @@
 use super::base::{Signal, Strategy};
-use crate::data::types::{OHLCData, TickData, Timeframe};
+use crate::data::types::{BarData, BarDataMode, BarType, OHLCData, TickData, Timeframe};
 use rust_decimal::Decimal;
 use std::collections::{HashMap, VecDeque};
 
@@ -50,6 +50,57 @@ impl Strategy for RsiStrategy {
         "RSI Strategy"
     }
 
+    fn on_bar_data(&mut self, bar_data: &BarData) -> Signal {
+        let current_price = bar_data.ohlc_bar.close;
+        let symbol = &bar_data.ohlc_bar.symbol;
+
+        if let Some(last_price) = self.prices.back() {
+            let change = current_price - last_price;
+
+            if change > Decimal::ZERO {
+                self.gains.push_back(change);
+                self.losses.push_back(Decimal::ZERO);
+            } else {
+                self.gains.push_back(Decimal::ZERO);
+                self.losses.push_back(-change);
+            }
+
+            if self.gains.len() > self.period {
+                self.gains.pop_front();
+                self.losses.pop_front();
+            }
+        }
+
+        self.prices.push_back(current_price);
+        if self.prices.len() > self.period + 1 {
+            self.prices.pop_front();
+        }
+
+        if let Some(rsi) = self.calculate_rsi() {
+            // Buy signal when RSI is oversold
+            if rsi < self.oversold && !matches!(self.last_signal, Some(Signal::Buy { .. })) {
+                let signal = Signal::Buy {
+                    symbol: symbol.clone(),
+                    quantity: Decimal::from(100),
+                };
+                self.last_signal = Some(signal.clone());
+                return signal;
+            }
+            // Sell signal when RSI is overbought
+            else if rsi > self.overbought && matches!(self.last_signal, Some(Signal::Buy { .. }))
+            {
+                let signal = Signal::Sell {
+                    symbol: symbol.clone(),
+                    quantity: Decimal::from(100),
+                };
+                self.last_signal = Some(signal.clone());
+                return signal;
+            }
+        }
+
+        Signal::Hold
+    }
+
     fn initialize(&mut self, params: HashMap<String, String>) -> Result<(), String> {
         if let Some(period) = params.get("period") {
             self.period = period.parse().map_err(|_| "Invalid period")?;
@@ -79,6 +130,15 @@ impl Strategy for RsiStrategy {
         self.last_signal = None;
     }
 
+    fn bar_data_mode(&self) -> BarDataMode {
+        BarDataMode::OnCloseBar // Process on bar close
+    }
+
+    fn preferred_bar_type(&self) -> BarType {
+        BarType::TimeBased(Timeframe::OneDay)
+    }
+
+    #[allow(deprecated)]
     fn on_tick(&mut self, tick: &TickData) -> Signal {
         if let Some(last_price) = self.prices.back() {
             let change = tick.price - last_price;
@@ -128,6 +188,7 @@ impl Strategy for RsiStrategy {
         Signal::Hold
     }
 
+    #[allow(deprecated)]
     fn on_ohlc(&mut self, ohlc: &OHLCData) -> Signal {
         if let Some(last_price) = self.prices.back() {
             let change = ohlc.close - last_price;
@@ -173,9 +234,12 @@ impl Strategy for RsiStrategy {
         Signal::Hold
     }
 
+    #[allow(deprecated)]
     fn supports_ohlc(&self) -> bool {
         true
     }
+
+    #[allow(deprecated)]
     fn preferred_timeframe(&self) -> Option<Timeframe> {
         Some(Timeframe::OneDay)
     }

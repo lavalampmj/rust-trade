@@ -245,6 +245,9 @@ impl MarketDataService {
             let mut health_monitor = interval(Duration::from_secs(30));
             let mut last_tick_count = 0u64;
 
+            // Add bar timer for time-based bar closing (every 1 second)
+            let mut bar_timer = interval(Duration::from_secs(1));
+
             loop {
                 select! {
                     // Receive new tick data
@@ -353,6 +356,16 @@ impl MarketDataService {
                                 batch_buffer.len(),
                                 batch_config.max_batch_size
                             );
+                        }
+                    }
+
+                    _ = bar_timer.tick() => {
+                        // Timer-based bar closing for time-based bars
+                        if let Some(paper_trading_processor) = &paper_trading {
+                            let mut processor = paper_trading_processor.lock().await;
+                            if let Err(e) = processor.check_timer().await {
+                                warn!("Bar timer check failed: {}", e);
+                            }
                         }
                     }
                 }

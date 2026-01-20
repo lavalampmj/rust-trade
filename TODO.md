@@ -37,7 +37,7 @@
 - [ ] Create automatic rollover method for front underying symbol
 
 ### OHLC Data Management
-- [ ] Open of Session for first bar
+- [ ] Open of Session for first bar, have OHLC realtime-timer loop set from open session time
 - [ ] Close of Session for cutting last bar short
 - [ ] Design decision: Database storage vs on-the-fly generation
   - Option A: Pre-computed OHLC table (fast queries, storage overhead)

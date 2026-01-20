@@ -524,6 +524,168 @@ impl OHLCData {
     }
 }
 
+// =================================================================
+// Unified Bar Data Types (for on_bar_data strategy interface)
+// =================================================================
+
+/// Operational mode for strategy bar data processing
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BarDataMode {
+    /// Fire on every tick (both current_tick and ohlc_bar available)
+    OnEachTick,
+    /// Fire only when price changes from previous tick
+    OnPriceMove,
+    /// Fire only when bar closes (current_tick = None, only ohlc_bar)
+    OnCloseBar,
+}
+
+/// Metadata about bar generation and state
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BarMetadata {
+    /// Type of bar (time-based or tick-based)
+    pub bar_type: BarType,
+    /// True if this is the first tick of a new bar
+    pub is_first_tick_of_bar: bool,
+    /// True if the bar has closed (complete)
+    pub is_bar_closed: bool,
+    /// Number of ticks accumulated in this bar
+    pub tick_count_in_bar: u64,
+    /// True if bar was synthetically generated (no ticks during interval)
+    pub is_synthetic: bool,
+    /// When this bar data was generated
+    pub generation_timestamp: DateTime<Utc>,
+}
+
+/// Unified bar data structure for strategy processing
+///
+/// Combines current tick information with OHLC bar state.
+/// Supports three operational modes:
+/// - OnEachTick: current_tick is Some, fires on every tick
+/// - OnPriceMove: current_tick is Some, fires only when price changes
+/// - OnCloseBar: current_tick is None, fires only when bar closes
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BarData {
+    /// Current tick that triggered this event (None for OnCloseBar mode)
+    pub current_tick: Option<TickData>,
+    /// Current state of the OHLC bar (always present)
+    pub ohlc_bar: OHLCData,
+    /// Metadata about bar generation
+    pub metadata: BarMetadata,
+}
+
+impl BarData {
+    /// Create BarData from a single tick (for OnEachTick/OnPriceMove modes)
+    ///
+    /// Creates a minimal OHLC bar where O=H=L=C=tick.price
+    pub fn from_single_tick(tick: &TickData) -> Self {
+        let ohlc = OHLCData::new(
+            tick.timestamp,
+            tick.symbol.clone(),
+            Timeframe::OneMinute, // Placeholder
+            tick.price,
+            tick.price,
+            tick.price,
+            tick.price,
+            tick.quantity,
+            1,
+        );
+
+        BarData {
+            current_tick: Some(tick.clone()),
+            ohlc_bar: ohlc,
+            metadata: BarMetadata {
+                bar_type: BarType::TimeBased(Timeframe::OneMinute),
+                is_first_tick_of_bar: true,
+                is_bar_closed: false,
+                tick_count_in_bar: 1,
+                is_synthetic: false,
+                generation_timestamp: Utc::now(),
+            },
+        }
+    }
+
+    /// Create BarData from an OHLC bar (for OnCloseBar mode)
+    ///
+    /// Used when bar is complete and no current tick reference needed
+    pub fn from_ohlc(ohlc: &OHLCData) -> Self {
+        BarData {
+            current_tick: None,
+            ohlc_bar: ohlc.clone(),
+            metadata: BarMetadata {
+                bar_type: BarType::TimeBased(ohlc.timeframe),
+                is_first_tick_of_bar: false,
+                is_bar_closed: true,
+                tick_count_in_bar: ohlc.trade_count,
+                is_synthetic: false,
+                generation_timestamp: Utc::now(),
+            },
+        }
+    }
+
+    /// Create a synthetic bar (generated when no ticks during time interval)
+    ///
+    /// All OHLC values = last_known_price
+    pub fn synthetic_bar(
+        symbol: String,
+        bar_type: BarType,
+        timestamp: DateTime<Utc>,
+        last_known_price: Decimal,
+    ) -> Self {
+        let timeframe = match bar_type {
+            BarType::TimeBased(tf) => tf,
+            BarType::TickBased(_) => Timeframe::OneMinute, // Placeholder
+        };
+
+        let ohlc = OHLCData::new(
+            timestamp,
+            symbol,
+            timeframe,
+            last_known_price,
+            last_known_price,
+            last_known_price,
+            last_known_price,
+            Decimal::ZERO,
+            0,
+        );
+
+        BarData {
+            current_tick: None,
+            ohlc_bar: ohlc,
+            metadata: BarMetadata {
+                bar_type,
+                is_first_tick_of_bar: false,
+                is_bar_closed: true,
+                tick_count_in_bar: 0,
+                is_synthetic: true,
+                generation_timestamp: Utc::now(),
+            },
+        }
+    }
+
+    /// Create BarData with tick and OHLC state (primary constructor for realtime)
+    pub fn new(
+        current_tick: Option<TickData>,
+        ohlc_bar: OHLCData,
+        bar_type: BarType,
+        is_first_tick: bool,
+        is_closed: bool,
+        tick_count: u64,
+    ) -> Self {
+        BarData {
+            current_tick,
+            ohlc_bar,
+            metadata: BarMetadata {
+                bar_type,
+                is_first_tick_of_bar: is_first_tick,
+                is_bar_closed: is_closed,
+                tick_count_in_bar: tick_count,
+                is_synthetic: false,
+                generation_timestamp: Utc::now(),
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

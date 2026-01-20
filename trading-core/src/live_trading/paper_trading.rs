@@ -1,19 +1,24 @@
 // src/live_trading/paper_trading.rs
+use chrono::Utc;
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::debug;
 
+use crate::live_trading::RealtimeOHLCGenerator;
 use crate::metrics;
 use trading_common::backtest::strategy::{Signal, Strategy};
 use trading_common::data::cache::TickDataCache;
 use trading_common::data::repository::TickDataRepository;
-use trading_common::data::types::{LiveStrategyLog, TickData};
+use trading_common::data::types::{BarData, LiveStrategyLog, TickData};
 
 pub struct PaperTradingProcessor {
     strategy: Box<dyn Strategy + Send>,
     repository: Arc<TickDataRepository>,
     pub(crate) initial_capital: Decimal,
+
+    // OHLC bar generator for unified strategy interface
+    ohlc_generator: Option<RealtimeOHLCGenerator>,
 
     //Simple status tracking
     pub(crate) cash: Decimal,
@@ -28,10 +33,35 @@ impl PaperTradingProcessor {
         repository: Arc<TickDataRepository>,
         initial_capital: Decimal,
     ) -> Self {
+        // Check if strategy uses unified interface (needs OHLC generator)
+        let bar_data_mode = strategy.bar_data_mode();
+        let bar_type = strategy.preferred_bar_type();
+
+        // Create OHLC generator if strategy uses OnCloseBar or OnPriceMove modes
+        // For OnEachTick, we still need the generator to track OHLC state
+        let ohlc_generator = {
+            // Extract symbol from strategy - for now use a default, could be configured
+            let symbol = "BTCUSDT".to_string(); // TODO: Make configurable
+            Some(RealtimeOHLCGenerator::new(symbol, bar_type))
+        };
+
+        println!("📊 Paper Trading initialized:");
+        println!("   Strategy: {}", strategy.name());
+        println!("   Bar Type: {}", bar_type.as_str());
+        println!(
+            "   Mode: {}",
+            match bar_data_mode {
+                trading_common::data::types::BarDataMode::OnEachTick => "OnEachTick",
+                trading_common::data::types::BarDataMode::OnPriceMove => "OnPriceMove",
+                trading_common::data::types::BarDataMode::OnCloseBar => "OnCloseBar",
+            }
+        );
+
         Self {
             strategy,
             repository,
             initial_capital,
+            ohlc_generator,
             cash: initial_capital,
             position: Decimal::ZERO,
             avg_cost: Decimal::ZERO,
@@ -62,11 +92,28 @@ impl PaperTradingProcessor {
             metrics::CACHE_MISSES_TOTAL.inc();
         }
 
-        // 2. Policy Handle - Using Existing Policies
-        let signal = self.strategy.on_tick(tick);
+        // 2. Generate BarData events from tick using OHLC generator
+        let bar_events = if let Some(ref mut generator) = self.ohlc_generator {
+            generator.process_tick(tick)
+        } else {
+            // Fallback: create simple BarData from tick
+            vec![BarData::from_single_tick(tick)]
+        };
 
-        // 3. Execution of trading signals
-        let signal_type = self.execute_signal(&signal, tick)?;
+        // 3. Process each bar event through strategy
+        let mut last_signal_type = "HOLD".to_string();
+        for bar_data in bar_events {
+            // Execute strategy with BarData
+            let signal = self.strategy.on_bar_data(&bar_data);
+
+            // Execute trading signal
+            let signal_type = self.execute_signal(&signal, tick)?;
+
+            // Track last non-HOLD signal for logging
+            if signal_type != "HOLD" {
+                last_signal_type = signal_type;
+            }
+        }
 
         // 4. Calculate Portfolio Value
         let portfolio_value = self.calculate_portfolio_value(tick.price);
@@ -83,7 +130,7 @@ impl PaperTradingProcessor {
             strategy_id: self.strategy.name().to_string(),
             symbol: tick.symbol.clone(),
             current_price: tick.price,
-            signal_type: signal_type.clone(),
+            signal_type: last_signal_type.clone(),
             portfolio_value,
             total_pnl,
             cache_hit,
@@ -97,7 +144,7 @@ impl PaperTradingProcessor {
 
         // 6. Real-time output
         self.log_activity(
-            &signal_type,
+            &last_signal_type,
             tick,
             portfolio_value,
             total_pnl,
@@ -108,6 +155,59 @@ impl PaperTradingProcessor {
 
         // Stop timer for paper trading tick processing
         timer.observe_duration();
+
+        Ok(())
+    }
+
+    /// Check timer for bar closing (for time-based bars)
+    ///
+    /// This should be called periodically (e.g., every 1 second) to check if
+    /// a bar should close based on wall-clock time, even if no ticks received.
+    pub async fn check_timer(&mut self) -> Result<(), String> {
+        let now = Utc::now();
+
+        // Collect bar events to process (to avoid borrow checker issues)
+        let mut bar_events = Vec::new();
+
+        if let Some(ref mut generator) = self.ohlc_generator {
+            // Check if bar should close by timer
+            if let Some(closed_bar) = generator.check_timer_close(now) {
+                debug!("⏰ TIMER_CLOSE: Bar closed by timer");
+                bar_events.push(closed_bar);
+            }
+
+            // Check if synthetic bar needed (no ticks during interval)
+            if let Some(synthetic_bar) = generator.generate_synthetic_if_needed(now) {
+                debug!("🔄 SYNTHETIC: Generated synthetic bar (no ticks)");
+                bar_events.push(synthetic_bar);
+            }
+        }
+
+        // Process bar events (after releasing the mutable borrow)
+        for bar_data in bar_events {
+            // Execute strategy with bar
+            let signal = self.strategy.on_bar_data(&bar_data);
+
+            // Use bar's close price for execution
+            let execution_price = bar_data.ohlc_bar.close;
+
+            // Create a synthetic tick for signal execution
+            let synthetic_tick = TickData {
+                timestamp: now,
+                symbol: bar_data.ohlc_bar.symbol.clone(),
+                price: execution_price,
+                quantity: Decimal::ZERO,
+                side: trading_common::data::types::TradeSide::Buy,
+                trade_id: if bar_data.metadata.is_synthetic {
+                    format!("synthetic_{}", now.timestamp())
+                } else {
+                    format!("timer_{}", now.timestamp())
+                },
+                is_buyer_maker: false,
+            };
+
+            self.execute_signal(&signal, &synthetic_tick)?;
+        }
 
         Ok(())
     }

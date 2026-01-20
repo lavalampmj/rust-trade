@@ -1,9 +1,21 @@
-use crate::backtest::{metrics::BacktestMetrics, portfolio::Portfolio, strategy::Strategy};
-use crate::data::types::TickData;
+use crate::backtest::{
+    bar_generator::HistoricalOHLCGenerator, metrics::BacktestMetrics, portfolio::Portfolio,
+    strategy::Strategy,
+};
+use crate::data::types::{BarData, OHLCData, TickData};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::str::FromStr;
+
+/// Input data for backtesting
+#[derive(Debug, Clone)]
+pub enum BacktestData {
+    /// Raw tick data
+    Ticks(Vec<TickData>),
+    /// Pre-aggregated OHLC bars
+    OHLCBars(Vec<OHLCData>),
+}
 
 #[derive(Debug, Clone)]
 pub struct BacktestConfig {
@@ -55,6 +67,168 @@ impl BacktestEngine {
         })
     }
 
+    /// Unified backtest runner using the strategy's preferred bar data mode
+    ///
+    /// This method automatically generates BarData events based on the strategy's
+    /// `bar_data_mode()` and `preferred_bar_type()` settings.
+    pub fn run_unified(&mut self, data: BacktestData) -> BacktestResult {
+        let bar_type = self.strategy.preferred_bar_type();
+        let mode = self.strategy.bar_data_mode();
+
+        println!("Starting unified backtest...");
+        println!("Strategy: {}", self.strategy.name());
+        println!("Bar Type: {}", bar_type.as_str());
+        println!(
+            "Mode: {}",
+            match mode {
+                crate::data::types::BarDataMode::OnEachTick => "OnEachTick",
+                crate::data::types::BarDataMode::OnPriceMove => "OnPriceMove",
+                crate::data::types::BarDataMode::OnCloseBar => "OnCloseBar",
+            }
+        );
+        println!("Initial capital: ${}", self.portfolio.initial_capital);
+        println!(
+            "Commission rate: {}%",
+            self.config.commission_rate * Decimal::from(100)
+        );
+
+        // Generate BarData events based on input type
+        let bar_events = match data {
+            BacktestData::Ticks(ticks) => {
+                println!("Data points: {} ticks", ticks.len());
+                let generator = HistoricalOHLCGenerator::new(bar_type, mode);
+                generator.generate_from_ticks(&ticks)
+            }
+            BacktestData::OHLCBars(ohlc_bars) => {
+                println!("Data points: {} OHLC bars", ohlc_bars.len());
+                // Convert OHLC bars directly to BarData
+                ohlc_bars
+                    .iter()
+                    .map(|ohlc| BarData::from_ohlc(ohlc))
+                    .collect()
+            }
+        };
+
+        println!("Generated {} bar events", bar_events.len());
+        println!("{}", "=".repeat(60));
+
+        // Process bar events
+        let mut processed = 0;
+        let total = bar_events.len();
+        let mut last_progress = 0;
+
+        for bar_data in bar_events {
+            // Update current price
+            self.portfolio
+                .update_price(&bar_data.ohlc_bar.symbol, bar_data.ohlc_bar.close);
+
+            // Execute strategy
+            let signal = self.strategy.on_bar_data(&bar_data);
+
+            // Determine execution price (use current tick if available, otherwise close)
+            let execution_price = bar_data
+                .current_tick
+                .as_ref()
+                .map(|t| t.price)
+                .unwrap_or(bar_data.ohlc_bar.close);
+
+            // Execute trades
+            match signal {
+                crate::backtest::strategy::Signal::Buy { symbol, quantity } => {
+                    if let Err(e) = self
+                        .portfolio
+                        .execute_buy(symbol.clone(), quantity, execution_price)
+                    {
+                        println!("Buy failed {}: {}", symbol, e);
+                    } else {
+                        println!("BUY {} {} @ ${}", symbol, quantity, execution_price);
+                    }
+                }
+                crate::backtest::strategy::Signal::Sell { symbol, quantity } => {
+                    if let Err(e) = self
+                        .portfolio
+                        .execute_sell(symbol.clone(), quantity, execution_price)
+                    {
+                        println!("Sell failed {}: {}", symbol, e);
+                    } else {
+                        println!("SELL {} {} @ ${}", symbol, quantity, execution_price);
+                    }
+                }
+                crate::backtest::strategy::Signal::Hold => {}
+            }
+
+            processed += 1;
+
+            // Progress display
+            let progress = (processed * 100) / total;
+            if progress != last_progress && progress % 10 == 0 {
+                let current_value = self.portfolio.total_value();
+                let current_pnl = self.portfolio.total_pnl();
+                println!(
+                    "Progress: {}% ({}/{}) | Portfolio Value: ${} | P&L: ${}",
+                    progress, processed, total, current_value, current_pnl
+                );
+                last_progress = progress;
+            }
+        }
+
+        println!("\n{}", "=".repeat(60));
+
+        // Calculate and return results
+        self.calculate_results()
+    }
+
+    /// Calculate backtest results from current portfolio state
+    fn calculate_results(&self) -> BacktestResult {
+        let final_value = self.portfolio.total_value();
+        let total_pnl = self.portfolio.total_pnl();
+        let total_return_pct = if self.portfolio.initial_capital > Decimal::ZERO {
+            (total_pnl / self.portfolio.initial_capital) * Decimal::from(100)
+        } else {
+            Decimal::ZERO
+        };
+
+        // Calculate performance metrics
+        let equity_curve = self.portfolio.get_equity_curve();
+        let returns = Self::calculate_returns(&equity_curve);
+
+        let max_drawdown = BacktestMetrics::calculate_max_drawdown(&equity_curve);
+        let sharpe_ratio = BacktestMetrics::calculate_sharpe_ratio(&returns, Decimal::ZERO);
+        let volatility = BacktestMetrics::calculate_volatility(&returns);
+        let win_rate = BacktestMetrics::calculate_win_rate(&self.portfolio.trades);
+        let profit_factor = BacktestMetrics::calculate_profit_factor(&self.portfolio.trades);
+        let avg_trade_duration =
+            BacktestMetrics::calculate_average_trade_duration(&self.portfolio.trades);
+
+        BacktestResult {
+            initial_capital: self.portfolio.initial_capital,
+            final_value,
+            total_pnl,
+            return_percentage: total_return_pct,
+            total_trades: self.portfolio.trades.len(),
+            winning_trades: self.count_winning_trades(),
+            losing_trades: self.count_losing_trades(),
+            max_drawdown,
+            sharpe_ratio,
+            volatility,
+            win_rate,
+            profit_factor,
+            avg_trade_duration_seconds: avg_trade_duration,
+            total_commission: self.portfolio.total_commission(),
+            positions: self.portfolio.positions.clone(),
+            trades: self.portfolio.trades.clone(),
+            equity_curve,
+            strategy_name: self.strategy.name().to_string(),
+        }
+    }
+
+    /// DEPRECATED: Use run_unified() instead
+    ///
+    /// Legacy method for tick-by-tick backtesting
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use run_unified(BacktestData::Ticks(data)) instead"
+    )]
     pub fn run(&mut self, data: Vec<TickData>) -> BacktestResult {
         println!("Starting backtest...");
         println!("Strategy: {}", self.strategy.name());
@@ -195,6 +369,13 @@ impl BacktestEngine {
             .count()
     }
 
+    /// DEPRECATED: Use run_unified() instead
+    ///
+    /// Legacy method for OHLC-based backtesting
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use run_unified(BacktestData::OHLCBars(data)) instead"
+    )]
     pub fn run_with_ohlc(&mut self, data: Vec<crate::data::types::OHLCData>) -> BacktestResult {
         println!("Starting OHLC backtest...");
         println!("Strategy: {}", self.strategy.name());

@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 use super::PaperTradingProcessor;
 use trading_common::backtest::strategy::{Signal, Strategy};
-use trading_common::data::types::{TickData, TradeSide};
+use trading_common::data::types::{BarData, TickData, TradeSide};
 use trading_common::data::{cache::TieredCache, repository::TickDataRepository};
 
 use chrono::Utc;
@@ -21,6 +21,7 @@ struct MockStrategy {
     name: String,
     signals: Vec<Signal>,
     current_index: usize,
+    last_tick_id: Option<String>, // Track last processed tick to avoid duplicate signals
 }
 
 impl MockStrategy {
@@ -29,6 +30,7 @@ impl MockStrategy {
             name: name.to_string(),
             signals,
             current_index: 0,
+            last_tick_id: None,
         }
     }
 
@@ -78,18 +80,31 @@ impl Strategy for MockStrategy {
         &self.name
     }
 
-    fn on_tick(&mut self, _tick: &TickData) -> Signal {
-        if self.current_index < self.signals.len() {
-            let signal = self.signals[self.current_index].clone();
-            self.current_index += 1;
-            signal
-        } else {
-            // Return last signal or Hold if empty
-            self.signals
-                .last()
-                .cloned()
-                .unwrap_or(Signal::Hold)
+    fn on_bar_data(&mut self, bar_data: &BarData) -> Signal {
+        // Only advance signal on new ticks (not on bar close events or duplicate tick events)
+        if let Some(ref tick) = bar_data.current_tick {
+            // Check if this is a new tick
+            let is_new_tick = self.last_tick_id.as_ref() != Some(&tick.trade_id);
+
+            if is_new_tick {
+                self.last_tick_id = Some(tick.trade_id.clone());
+
+                if self.current_index < self.signals.len() {
+                    let signal = self.signals[self.current_index].clone();
+                    self.current_index += 1;
+                    return signal;
+                } else {
+                    // Exhausted signals, return last one
+                    return self.signals
+                        .last()
+                        .cloned()
+                        .unwrap_or(Signal::Hold);
+                }
+            }
         }
+
+        // For duplicate ticks or bar close events, return Hold
+        Signal::Hold
     }
 
     fn initialize(&mut self, _params: HashMap<String, String>) -> Result<(), String> {
@@ -415,7 +430,9 @@ async fn test_database_logging() {
         .await
         .unwrap();
 
-    assert_eq!(logs.len(), 1);
+    // With OHLC generator, we might generate multiple bar events per tick,
+    // but we only log once per process_tick call
+    assert_eq!(logs.len(), 1, "Expected 1 log entry per processed tick");
 
     cleanup_test_logs(&repository, strategy_id).await;
 }

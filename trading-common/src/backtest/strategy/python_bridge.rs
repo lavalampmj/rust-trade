@@ -3,7 +3,7 @@ use pyo3::types::{PyDict, PyTuple};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
-use crate::data::types::{TickData, OHLCData, Timeframe, TradeSide};
+use crate::data::types::{BarData, TickData, OHLCData, Timeframe, TradeSide};
 use super::base::{Strategy, Signal};
 use rust_decimal::Decimal;
 use std::str::FromStr;
@@ -287,6 +287,17 @@ impl Strategy for PythonStrategy {
         &self.cached_name
     }
 
+    fn on_bar_data(&mut self, bar_data: &BarData) -> Signal {
+        // For now, delegate to old methods for backward compatibility
+        // Python strategies can be updated to implement on_bar_data in the future
+        if let Some(ref tick) = bar_data.current_tick {
+            self.on_tick(tick)
+        } else {
+            self.on_ohlc(&bar_data.ohlc_bar)
+        }
+    }
+
+    #[allow(deprecated)]
     fn on_tick(&mut self, tick: &TickData) -> Signal {
         // Start timing
         let start = std::time::Instant::now();
@@ -441,10 +452,12 @@ impl Strategy for PythonStrategy {
         signal
     }
 
+    #[allow(deprecated)]
     fn supports_ohlc(&self) -> bool {
         self.supports_ohlc_cached
     }
 
+    #[allow(deprecated)]
     fn preferred_timeframe(&self) -> Option<Timeframe> {
         self.preferred_timeframe_cached
     }

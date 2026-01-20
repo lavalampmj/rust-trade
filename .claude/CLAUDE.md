@@ -157,7 +157,7 @@ Handles all database operations with cache integration:
 
 Components:
 - `BacktestEngine`: Orchestrates tick processing, signal generation, trade execution
-- `Strategy` trait: Implement `on_tick()` or `on_ohlc()` to generate signals (BUY/SELL/HOLD)
+- `Strategy` trait: Implement `on_bar_data()` to generate signals (BUY/SELL/HOLD) using unified bar interface
 - `Portfolio`: Tracks cash, positions, trades, calculates P&L
 - `BacktestMetrics`: Sharpe ratio, max drawdown, win rate, profit factor
 
@@ -166,6 +166,65 @@ Components:
 - RSI (Relative Strength Index): Overbought/oversold levels
 
 **Adding new strategy**: Implement `Strategy` trait in `trading-common/src/backtest/strategy/`, register in `strategy/mod.rs`.
+
+**Strategy Bar Data Processing** (Unified Interface):
+
+All strategies now use a unified `on_bar_data()` interface that provides consistent behavior between backtesting and live trading:
+
+```rust
+pub trait Strategy {
+    fn on_bar_data(&mut self, bar_data: &BarData) -> Signal;
+
+    fn bar_data_mode(&self) -> BarDataMode {
+        BarDataMode::OnEachTick  // Default
+    }
+
+    fn preferred_bar_type(&self) -> BarType {
+        BarType::TimeBased(Timeframe::OneMinute)  // Default
+    }
+}
+```
+
+**BarData Structure**:
+- `current_tick: Option<TickData>` - The tick that triggered this event (None for bar close events)
+- `ohlc_bar: OHLCData` - Current OHLC state of the bar
+- `metadata: BarMetadata` - Bar metadata (is_first_tick, is_bar_closed, tick_count, etc.)
+
+**Three Operational Modes** (`BarDataMode`):
+
+1. **OnEachTick**: Strategy receives event for every tick with accumulated OHLC state
+   - Use for tick-by-tick strategies that need to react to each price update
+   - Both `current_tick` and `ohlc_bar` are available
+   - Example: Scalping strategies, market-making
+
+2. **OnPriceMove**: Strategy receives event only when price changes
+   - Filters out duplicate prices to reduce noise
+   - More efficient than OnEachTick when price updates are frequent
+   - Example: Price action strategies
+
+3. **OnCloseBar**: Strategy receives event only when bar completes (e.g., every 1 minute)
+   - `current_tick` is None, only `ohlc_bar` is available
+   - Most efficient for time-based strategies
+   - Example: SMA, RSI, MACD strategies that operate on completed candles
+
+**Bar Types**:
+- `TimeBased(Timeframe)`: Time-based bars (1m, 5m, 15m, 1h, 4h, 1d, 1w)
+  - Closed by wall-clock timer (every 1 second check)
+  - Synthetic bars generated when no ticks during interval (OHLC = last price)
+- `TickBased(u32)`: N-tick bars (e.g., 100-tick, 500-tick)
+  - Closed after N ticks received
+  - More consistent bar sizes in high-frequency scenarios
+
+**Real-time vs Historical Parity**:
+- `RealtimeOHLCGenerator` (live trading): Accumulates ticks, timer-based closing (1s checks), synthetic bars for gaps
+- `HistoricalOHLCGenerator` (backtesting): Processes tick history, gap detection, synthetic bars for missing periods
+- Both generators produce identical `BarData` events given same input ticks
+- Synthetic bars ensure continuity: if no ticks during a period, bar generated with O=H=L=C=last_price
+
+**Migration from Legacy Interface**:
+- Old: `on_tick()` and `on_ohlc()` methods (deprecated)
+- New: Single `on_bar_data()` method with mode selection
+- Backward compatibility maintained via default implementations
 
 #### 6. Paper Trading (trading-core/src/live_trading/paper_trading.rs)
 
