@@ -37,17 +37,22 @@ class Series(Generic[T]):
     - series[1] returns the previous value
     - series[n] returns the value n bars ago
 
+    Warmup System (QuantConnect Lean-style):
+    - Each series tracks a `warmup_period` indicating samples needed before ready
+    - Use `is_ready` property to check if enough samples have been collected
+    - Allows indicators to propagate their ready state up the call chain
+
     Example:
-        >>> series = Series("close")
+        >>> series = Series("close", warmup_period=20)
         >>> series.push(Decimal("100"))
-        >>> series.push(Decimal("101"))
-        >>> series.push(Decimal("102"))
-        >>> series[0]  # Most recent: 102
-        >>> series[1]  # Previous: 101
-        >>> series[2]  # Two bars ago: 100
+        >>> series.is_ready  # False - not enough samples
+        >>> # ... push 19 more values ...
+        >>> series.is_ready  # True - now ready
+        >>> series[0]  # Most recent
+        >>> series[1]  # Previous
     """
 
-    def __init__(self, name: str, max_lookback: int = 256):
+    def __init__(self, name: str, max_lookback: int = 256, warmup_period: int = 1):
         """
         Create a new series.
 
@@ -55,16 +60,43 @@ class Series(Generic[T]):
             name: Series name for identification
             max_lookback: Maximum number of values to keep (FIFO eviction).
                          Use 0 for infinite lookback.
+            warmup_period: Number of samples needed before is_ready returns True.
+                          Default is 1 (ready after first sample).
         """
         self._name = name
         self._max_lookback = max_lookback
         self._data: deque = deque(maxlen=max_lookback if max_lookback > 0 else None)
         self._current_bar_index = 0
+        self._warmup_period = warmup_period
 
     @property
     def name(self) -> str:
         """Get series name."""
         return self._name
+
+    @property
+    def is_ready(self) -> bool:
+        """
+        Check if series has enough samples to be ready.
+
+        Returns True when count() >= warmup_period.
+        This implements the QuantConnect Lean-style is_ready pattern.
+        """
+        return self.count() >= self._warmup_period
+
+    @property
+    def warmup_period(self) -> int:
+        """Get the warmup period (samples needed before is_ready returns True)."""
+        return self._warmup_period
+
+    def set_warmup_period(self, period: int) -> None:
+        """
+        Set the warmup period (for dynamic indicators).
+
+        Args:
+            period: New warmup period
+        """
+        self._warmup_period = period
 
     def push(self, value: T) -> None:
         """
@@ -136,9 +168,10 @@ class Series(Generic[T]):
         return self._current_bar_index
 
     def reset(self) -> None:
-        """Reset the series, clearing all data."""
+        """Reset the series, clearing all data but preserving warmup_period."""
         self._data.clear()
         self._current_bar_index = 0
+        # Note: warmup_period is preserved through reset
 
     def current(self) -> Optional[T]:
         """Get most recent value (bars_ago = 0)."""
@@ -376,13 +409,16 @@ class BaseStrategy(ABC):
 
     All strategies must implement:
     - name(): Return strategy name
-    - on_bar_data(bar_data): Process bar data and return signal
+    - on_bar_data(bar_data, bars): Process bar data and return signal
     - initialize(params): Initialize with parameters
+    - is_ready(bars): Check if strategy has enough data for valid signals (REQUIRED)
+    - warmup_period(): Return minimum bars needed before is_ready can return true (REQUIRED)
 
     Optional methods:
     - bar_data_mode(): Return operational mode (OnEachTick/OnPriceMove/OnCloseBar)
     - preferred_bar_type(): Return preferred bar type (TimeBased/TickBased)
     - reset(): Reset strategy state
+    - max_bars_lookback(): Return maximum bars to keep in BarsContext
     """
 
     @abstractmethod
@@ -465,6 +501,49 @@ class BaseStrategy(ABC):
             ...         return None
             ...     except Exception as e:
             ...         return str(e)
+        """
+        pass
+
+    # ========================================================================
+    # Warmup / Ready State (QuantConnect Lean-style)
+    # ========================================================================
+
+    @abstractmethod
+    def is_ready(self, bars: 'BarsContext') -> bool:
+        """
+        Check if strategy has enough data to generate valid signals.
+
+        **REQUIRED** - must implement to combine your indicators' ready states.
+        This implements the QuantConnect Lean-style is_ready pattern.
+
+        Args:
+            bars: BarsContext to check for data availability
+
+        Returns:
+            True if all indicators are warmed up and strategy can generate
+            valid signals
+
+        Example:
+            >>> def is_ready(self, bars):
+            ...     # Ready when we have enough data for our longest indicator
+            ...     return bars.is_ready_for(self.long_period)
+        """
+        pass
+
+    @abstractmethod
+    def warmup_period(self) -> int:
+        """
+        Return minimum bars needed before is_ready() can return true.
+
+        **REQUIRED** - must match the logic in is_ready().
+        Used by the framework for progress indication and optimization.
+
+        Returns:
+            Number of warmup bars needed
+
+        Example:
+            >>> def warmup_period(self):
+            ...     return self.long_period  # Longest indicator period
         """
         pass
 

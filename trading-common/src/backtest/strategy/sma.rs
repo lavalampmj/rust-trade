@@ -26,8 +26,24 @@ impl Strategy for SmaStrategy {
         "Simple Moving Average"
     }
 
+    fn is_ready(&self, bars: &BarsContext) -> bool {
+        // Both SMAs must have enough data (long_period is the limiting factor)
+        bars.is_ready_for(self.long_period)
+    }
+
+    fn warmup_period(&self) -> usize {
+        self.long_period
+    }
+
     fn on_bar_data(&mut self, _bar_data: &BarData, bars: &mut BarsContext) -> Signal {
+        // Defense-in-depth: early return if not ready
+        // (Engine also checks, but strategy can check for explicit handling)
+        if !self.is_ready(bars) {
+            return Signal::Hold;
+        }
+
         // Use BarsContext's built-in SMA calculation
+        // Since we checked is_ready(), these are guaranteed to be Some
         let short_sma = bars.sma(self.short_period);
         let long_sma = bars.sma(self.long_period);
 

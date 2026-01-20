@@ -455,4 +455,12 @@ impl Strategy for PythonStrategyWrapper {
     fn max_bars_lookback(&self) -> MaximumBarsLookBack {
         self.inner.max_bars_lookback()
     }
+
+    fn is_ready(&self, bars: &BarsContext) -> bool {
+        self.inner.is_ready(bars)
+    }
+
+    fn warmup_period(&self) -> usize {
+        self.inner.warmup_period()
+    }
 }

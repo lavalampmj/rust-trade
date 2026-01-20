@@ -94,6 +94,7 @@ impl BacktestEngine {
                 crate::data::types::BarDataMode::OnCloseBar => "OnCloseBar",
             }
         );
+        println!("Warmup period: {} bars", self.strategy.warmup_period());
         println!("Initial capital: ${}", self.portfolio.initial_capital);
         println!(
             "Commission rate: {}%",
@@ -137,7 +138,19 @@ impl BacktestEngine {
                 .update_price(&bar_data.ohlc_bar.symbol, bar_data.ohlc_bar.close);
 
             // Execute strategy with BarsContext
-            let signal = self.strategy.on_bar_data(&bar_data, &mut self.bars_context);
+            let mut signal = self.strategy.on_bar_data(&bar_data, &mut self.bars_context);
+
+            // Suppress signals if strategy reports not ready (QuantConnect Lean-style warmup)
+            // This provides a framework-level safety net even if strategy forgets to check
+            if !self.strategy.is_ready(&self.bars_context) {
+                match signal {
+                    crate::backtest::strategy::Signal::Buy { .. }
+                    | crate::backtest::strategy::Signal::Sell { .. } => {
+                        signal = crate::backtest::strategy::Signal::Hold;
+                    }
+                    crate::backtest::strategy::Signal::Hold => {}
+                }
+            }
 
             // Determine execution price (use current tick if available, otherwise close)
             let execution_price = bar_data

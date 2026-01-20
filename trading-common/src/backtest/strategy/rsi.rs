@@ -86,7 +86,21 @@ impl Strategy for RsiStrategy {
         "RSI Strategy"
     }
 
+    fn is_ready(&self, bars: &BarsContext) -> bool {
+        // Need period + 1 for price changes (to calculate gains/losses)
+        bars.is_ready_for(self.period + 1)
+    }
+
+    fn warmup_period(&self) -> usize {
+        self.period + 1
+    }
+
     fn on_bar_data(&mut self, _bar_data: &BarData, bars: &mut BarsContext) -> Signal {
+        // Defense-in-depth: early return if not ready
+        if !self.is_ready(bars) {
+            return Signal::Hold;
+        }
+
         // Calculate RSI using the context
         if let Some(rsi) = self.calculate_rsi(bars) {
             let symbol = bars.symbol().to_string();

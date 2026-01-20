@@ -36,6 +36,14 @@ class ExampleSmaStrategy(BaseStrategy):
         """Return the strategy name."""
         return "Simple Moving Average (Python)"
 
+    def is_ready(self, bars: BarsContext) -> bool:
+        """Ready when we have enough data for the long SMA."""
+        return bars.is_ready_for(self.long_period)
+
+    def warmup_period(self) -> int:
+        """Return the long period as warmup requirement."""
+        return self.long_period
+
     def initialize(self, params: Dict[str, str]) -> Optional[str]:
         """
         Initialize strategy with parameters.
@@ -77,15 +85,17 @@ class ExampleSmaStrategy(BaseStrategy):
         Returns:
             Trading signal
         """
+        # Defense-in-depth: early return if not ready
+        # (Engine also checks, but strategy can check for explicit handling)
+        if not self.is_ready(bars):
+            return Signal.hold()
+
         symbol = bar_data["symbol"]
 
         # Use BarsContext's built-in SMA helpers - no manual series management needed!
+        # Since we checked is_ready(), these are guaranteed to return values
         short_sma = bars.sma(self.short_period)
         long_sma = bars.sma(self.long_period)
-
-        # Need enough data for both SMAs
-        if short_sma is None or long_sma is None:
-            return Signal.hold()
 
         # Golden cross: short MA crosses above long MA
         if short_sma > long_sma and self.last_signal_type != "Buy":

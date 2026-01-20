@@ -98,6 +98,69 @@ class BarsContext:
         """Check if we have enough data for given lookback."""
         return self.close.count() >= lookback
 
+    # ========================================================================
+    # Warmup / Ready State (QuantConnect Lean-style)
+    # ========================================================================
+
+    @property
+    def is_ready(self) -> bool:
+        """
+        Check if BarsContext has at least 1 bar (basic readiness).
+
+        Returns True when we have at least one bar of data.
+        For more specific readiness checks, use `is_ready_for(lookback)`.
+        """
+        return self.count() > 0
+
+    def is_ready_for(self, lookback: int) -> bool:
+        """
+        Check if we have enough bars for a specific lookback period.
+
+        Use this to check if a specific indicator calculation will succeed.
+        This is the primary method strategies should use to check warmup status.
+
+        Args:
+            lookback: Number of bars needed
+
+        Returns:
+            True if count() >= lookback
+
+        Example:
+            def is_ready(self, bars):
+                # Ready when we have enough data for long SMA
+                return bars.is_ready_for(self.long_period)
+        """
+        return self.count() >= lookback
+
+    def sma_with_ready(self, period: int) -> tuple:
+        """
+        Calculate SMA and return (value, is_ready) tuple.
+
+        Useful when you want to check both the value and whether it's valid
+        in a single call.
+
+        Args:
+            period: SMA period
+
+        Returns:
+            Tuple of (SMA value or None, is_ready bool)
+        """
+        value = self.close.sma(period)
+        ready = self.count() >= period
+        return (value, ready)
+
+    def highest_high_with_ready(self, period: int) -> tuple:
+        """Get highest high with ready status."""
+        value = self.high.highest(period)
+        ready = self.count() >= period
+        return (value, ready)
+
+    def lowest_low_with_ready(self, period: int) -> tuple:
+        """Get lowest low with ready status."""
+        value = self.low.lowest(period)
+        ready = self.count() >= period
+        return (value, ready)
+
     def reset(self) -> None:
         """Reset all series (for new backtest run)."""
         self.open.reset()

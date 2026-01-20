@@ -81,6 +81,15 @@ impl Strategy for MockStrategy {
         &self.name
     }
 
+    fn is_ready(&self, _bars: &BarsContext) -> bool {
+        // Mock strategy is always ready (no warmup needed)
+        true
+    }
+
+    fn warmup_period(&self) -> usize {
+        0
+    }
+
     fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
         // Only advance signal on new ticks (not on bar close events or duplicate tick events)
         if let Some(ref tick) = bar_data.current_tick {

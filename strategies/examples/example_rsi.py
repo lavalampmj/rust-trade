@@ -49,6 +49,15 @@ class ExampleRsiStrategy(BaseStrategy):
         """Return the strategy name."""
         return "Relative Strength Index (Python)"
 
+    def is_ready(self, bars: BarsContext) -> bool:
+        """Ready when we have enough data for RSI calculation."""
+        # Need period + 1 for price changes (to calculate gains/losses)
+        return bars.is_ready_for(self.period + 1)
+
+    def warmup_period(self) -> int:
+        """Return period + 1 as warmup requirement (need price changes)."""
+        return self.period + 1
+
     def initialize(self, params: Dict[str, str]) -> Optional[str]:
         """
         Initialize strategy with parameters.
@@ -114,7 +123,7 @@ class ExampleRsiStrategy(BaseStrategy):
         """
         symbol = bar_data["symbol"]
 
-        # Register custom series on first call
+        # Register custom series on first call (needed for tracking even during warmup)
         if not bars.has_series("gains"):
             self._gains_series = bars.register_series("gains")
             self._losses_series = bars.register_series("losses")
@@ -132,8 +141,9 @@ class ExampleRsiStrategy(BaseStrategy):
         bars.push_to_series("gains", gain)
         bars.push_to_series("losses", loss)
 
-        # Need enough data
-        if bars.count() < self.period:
+        # Defense-in-depth: early return if not ready
+        # (Engine also checks, but strategy can check for explicit handling)
+        if not self.is_ready(bars):
             return Signal.hold()
 
         # Calculate RSI

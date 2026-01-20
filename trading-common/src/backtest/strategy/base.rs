@@ -55,6 +55,44 @@ pub trait Strategy: Send + Sync {
         // Strategies can override if needed
     }
 
+    // ========================================================================
+    // Warmup / Ready State (QuantConnect Lean-style)
+    // ========================================================================
+
+    /// Check if strategy has enough data to generate valid signals.
+    ///
+    /// Returns true when all required indicators are warmed up.
+    /// **REQUIRED** - no default implementation. Strategies must explicitly
+    /// consider their warmup requirements.
+    ///
+    /// This implements the QuantConnect Lean-style `is_ready` pattern where
+    /// each strategy knows its own readiness state based on its indicators.
+    ///
+    /// # Arguments
+    /// - `bars`: BarsContext to check for data availability
+    ///
+    /// # Example
+    /// ```ignore
+    /// fn is_ready(&self, bars: &BarsContext) -> bool {
+    ///     // Ready when we have enough data for our longest indicator
+    ///     bars.is_ready_for(self.long_period)
+    /// }
+    /// ```
+    fn is_ready(&self, bars: &BarsContext) -> bool;
+
+    /// Return minimum bars needed before is_ready() can return true.
+    ///
+    /// Used by the framework for progress indication and optimization.
+    /// **REQUIRED** - must match the logic in is_ready().
+    ///
+    /// # Example
+    /// ```ignore
+    /// fn warmup_period(&self) -> usize {
+    ///     self.long_period // Longest indicator period
+    /// }
+    /// ```
+    fn warmup_period(&self) -> usize;
+
     /// Specify the operational mode for bar data processing
     ///
     /// - OnEachTick: Fire on every tick (default)

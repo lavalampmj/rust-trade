@@ -46,6 +46,20 @@ impl Default for MaximumBarsLookBack {
 /// - `series[1]` returns the previous value
 /// - `series[n]` returns the value n bars ago
 ///
+/// # Warmup System (QuantConnect Lean-style)
+///
+/// Each series tracks a `warmup_period` that indicates how many samples are
+/// needed before the series is considered "ready" for use. This allows
+/// indicators to propagate their ready state up the call chain.
+///
+/// ```ignore
+/// let mut series = Series::<Decimal>::with_warmup("sma", MaximumBarsLookBack::default(), 20);
+/// series.push(value);
+/// if series.is_ready() {
+///     // Safe to use - guaranteed to have enough samples
+/// }
+/// ```
+///
 /// # Example
 /// ```ignore
 /// let mut series = Series::<Decimal>::new("close");
@@ -71,16 +85,29 @@ pub struct Series<T: SeriesValue> {
 
     /// Series name for debugging and identification
     name: String,
+
+    /// Number of samples needed before series is ready (default: 1)
+    warmup_period: usize,
 }
 
 impl<T: SeriesValue> Series<T> {
-    /// Create a new series with default lookback (256 bars)
+    /// Create a new series with default lookback (256 bars) and warmup period of 1
     pub fn new(name: &str) -> Self {
         Self::with_lookback(name, MaximumBarsLookBack::default())
     }
 
-    /// Create a new series with custom lookback
+    /// Create a new series with custom lookback and default warmup period of 1
     pub fn with_lookback(name: &str, max_lookback: MaximumBarsLookBack) -> Self {
+        Self::with_warmup(name, max_lookback, 1)
+    }
+
+    /// Create a new series with custom lookback and warmup period
+    ///
+    /// # Arguments
+    /// - `name`: Series name for identification
+    /// - `max_lookback`: Maximum lookback configuration (FIFO eviction)
+    /// - `warmup_period`: Number of samples needed before is_ready() returns true
+    pub fn with_warmup(name: &str, max_lookback: MaximumBarsLookBack, warmup_period: usize) -> Self {
         let capacity = match max_lookback {
             MaximumBarsLookBack::Fixed(n) => n,
             MaximumBarsLookBack::Infinite => 256, // Initial capacity
@@ -91,7 +118,41 @@ impl<T: SeriesValue> Series<T> {
             max_lookback,
             current_bar_index: 0,
             name: name.to_string(),
+            warmup_period,
         }
+    }
+
+    /// Check if series has enough samples to be ready
+    ///
+    /// Returns true when `count() >= warmup_period`. This implements the
+    /// QuantConnect Lean-style `is_ready` pattern where each indicator/series
+    /// knows its own readiness state.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut series = Series::<Decimal>::with_warmup("sma", MaximumBarsLookBack::default(), 20);
+    /// for _ in 0..19 {
+    ///     series.push(value);
+    ///     assert!(!series.is_ready()); // Not ready yet
+    /// }
+    /// series.push(value);
+    /// assert!(series.is_ready()); // Now ready with 20 samples
+    /// ```
+    pub fn is_ready(&self) -> bool {
+        self.count() >= self.warmup_period
+    }
+
+    /// Get the warmup period (samples needed before is_ready returns true)
+    pub fn warmup_period(&self) -> usize {
+        self.warmup_period
+    }
+
+    /// Set the warmup period (for dynamic indicators)
+    ///
+    /// Use this when the warmup period needs to be changed after construction,
+    /// for example when indicator parameters are set dynamically.
+    pub fn set_warmup_period(&mut self, period: usize) {
+        self.warmup_period = period;
     }
 
     /// Push a new value to the series
@@ -161,10 +222,11 @@ impl<T: SeriesValue> Series<T> {
         &self.name
     }
 
-    /// Reset the series, clearing all data
+    /// Reset the series, clearing all data but preserving warmup_period
     pub fn reset(&mut self) {
         self.data.clear();
         self.current_bar_index = 0;
+        // Note: warmup_period is preserved through reset
     }
 
     /// Iterate over values from oldest to newest
@@ -474,5 +536,99 @@ mod tests {
         // Reverse iteration: newest to oldest
         let reverse: Vec<Decimal> = series.iter_reverse().cloned().collect();
         assert_eq!(reverse, vec![Decimal::from(3), Decimal::from(2), Decimal::from(1)]);
+    }
+
+    #[test]
+    fn test_series_is_ready_default() {
+        let mut series: Series<Decimal> = Series::new("test");
+
+        // Default warmup_period is 1
+        assert_eq!(series.warmup_period(), 1);
+        assert!(!series.is_ready()); // Empty series not ready
+
+        series.push(Decimal::from(100));
+        assert!(series.is_ready()); // Ready with 1 sample
+    }
+
+    #[test]
+    fn test_series_is_ready_with_warmup() {
+        let mut series: Series<Decimal> = Series::with_warmup(
+            "sma",
+            MaximumBarsLookBack::default(),
+            5, // Need 5 samples
+        );
+
+        assert_eq!(series.warmup_period(), 5);
+
+        // Push 4 values - not ready yet
+        for i in 1..=4 {
+            series.push(Decimal::from(i));
+            assert!(!series.is_ready(), "Should not be ready with {} samples", i);
+        }
+
+        // Push 5th value - now ready
+        series.push(Decimal::from(5));
+        assert!(series.is_ready());
+        assert_eq!(series.count(), 5);
+    }
+
+    #[test]
+    fn test_series_set_warmup_period() {
+        let mut series: Series<Decimal> = Series::new("test");
+
+        // Initially warmup is 1
+        assert_eq!(series.warmup_period(), 1);
+
+        // Change warmup period
+        series.set_warmup_period(10);
+        assert_eq!(series.warmup_period(), 10);
+
+        // Push some values
+        for i in 1..=9 {
+            series.push(Decimal::from(i));
+            assert!(!series.is_ready());
+        }
+
+        series.push(Decimal::from(10));
+        assert!(series.is_ready());
+    }
+
+    #[test]
+    fn test_series_reset_preserves_warmup() {
+        let mut series: Series<Decimal> = Series::with_warmup(
+            "test",
+            MaximumBarsLookBack::default(),
+            5,
+        );
+
+        // Push some values and verify ready
+        for i in 1..=5 {
+            series.push(Decimal::from(i));
+        }
+        assert!(series.is_ready());
+
+        // Reset should clear data but preserve warmup_period
+        series.reset();
+        assert_eq!(series.count(), 0);
+        assert!(!series.is_ready());
+        assert_eq!(series.warmup_period(), 5); // Preserved
+
+        // Refill and verify
+        for i in 1..=5 {
+            series.push(Decimal::from(i));
+        }
+        assert!(series.is_ready());
+    }
+
+    #[test]
+    fn test_series_is_ready_zero_warmup() {
+        // Zero warmup means always ready (edge case)
+        let series: Series<Decimal> = Series::with_warmup(
+            "test",
+            MaximumBarsLookBack::default(),
+            0,
+        );
+
+        assert!(series.is_ready()); // Ready even when empty
     }
 }

@@ -497,6 +497,42 @@ impl Strategy for PythonStrategy {
         // Use default lookback for consistency
         MaximumBarsLookBack::Fixed(256)
     }
+
+    fn is_ready(&self, _bars: &BarsContext) -> bool {
+        // Call Python strategy's is_ready method with Python BarsContext
+        Python::with_gil(|py| {
+            let instance = self.py_instance.lock().unwrap();
+            let py_bars = self.py_bars_context.lock().unwrap();
+            let py_instance = instance.bind(py);
+            let py_bars_bound = py_bars.bind(py);
+
+            match py_instance.call_method1("is_ready", (py_bars_bound,)) {
+                Ok(result) => result.extract::<bool>().unwrap_or(true),
+                Err(e) => {
+                    // Log error and default to ready (fail-open for backwards compatibility)
+                    eprintln!("Python is_ready error: {} - defaulting to true", e);
+                    true
+                }
+            }
+        })
+    }
+
+    fn warmup_period(&self) -> usize {
+        // Call Python strategy's warmup_period method
+        Python::with_gil(|py| {
+            let instance = self.py_instance.lock().unwrap();
+            let py_instance = instance.bind(py);
+
+            match py_instance.call_method0("warmup_period") {
+                Ok(result) => result.extract::<usize>().unwrap_or(0),
+                Err(e) => {
+                    // Log error and default to 0 (no warmup required)
+                    eprintln!("Python warmup_period error: {} - defaulting to 0", e);
+                    0
+                }
+            }
+        })
+    }
 }
 
 // Thread safety: PythonStrategy is Send + Sync because:

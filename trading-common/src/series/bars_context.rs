@@ -125,6 +125,58 @@ impl BarsContext {
         self.close.count() >= lookback
     }
 
+    // ========================================================================
+    // Warmup / Ready State (QuantConnect Lean-style)
+    // ========================================================================
+
+    /// Check if BarsContext has at least 1 bar (basic readiness)
+    ///
+    /// Returns true when we have at least one bar of data.
+    /// For more specific readiness checks, use `is_ready_for(lookback)`.
+    pub fn is_ready(&self) -> bool {
+        self.count() > 0
+    }
+
+    /// Check if we have enough bars for a specific lookback period
+    ///
+    /// Use this to check if a specific indicator calculation will succeed.
+    /// This is the primary method strategies should use to check warmup status.
+    ///
+    /// # Example
+    /// ```ignore
+    /// fn is_ready(&self, bars: &BarsContext) -> bool {
+    ///     // Ready when we have enough data for long SMA
+    ///     bars.is_ready_for(self.long_period)
+    /// }
+    /// ```
+    pub fn is_ready_for(&self, lookback: usize) -> bool {
+        self.count() >= lookback
+    }
+
+    /// Calculate SMA and return (value, is_ready) tuple
+    ///
+    /// Useful when you want to check both the value and whether it's valid
+    /// in a single call.
+    pub fn sma_with_ready(&self, period: usize) -> (Option<Decimal>, bool) {
+        let value = self.close.sma(period);
+        let is_ready = self.count() >= period;
+        (value, is_ready)
+    }
+
+    /// Get highest high with ready status
+    pub fn highest_high_with_ready(&self, period: usize) -> (Option<Decimal>, bool) {
+        let value = self.high.highest(period);
+        let is_ready = self.count() >= period;
+        (value, is_ready)
+    }
+
+    /// Get lowest low with ready status
+    pub fn lowest_low_with_ready(&self, period: usize) -> (Option<Decimal>, bool) {
+        let value = self.low.lowest(period);
+        let is_ready = self.count() >= period;
+        (value, is_ready)
+    }
+
     /// Reset all series (for new backtest run)
     pub fn reset(&mut self) {
         self.open.reset();
@@ -536,5 +588,77 @@ mod tests {
 
         ctx.on_bar_update(&create_bar_data("100", "110", "90", "100", "50"));
         assert!(ctx.has_bars(2));
+    }
+
+    #[test]
+    fn test_bars_context_is_ready() {
+        let mut ctx = BarsContext::new("BTCUSDT");
+
+        // Empty context is not ready
+        assert!(!ctx.is_ready());
+
+        // After adding one bar, is_ready returns true
+        ctx.on_bar_update(&create_bar_data("100", "110", "90", "100", "50"));
+        assert!(ctx.is_ready());
+    }
+
+    #[test]
+    fn test_bars_context_is_ready_for() {
+        let mut ctx = BarsContext::new("BTCUSDT");
+
+        // Not ready for any lookback when empty
+        assert!(!ctx.is_ready_for(1));
+        assert!(!ctx.is_ready_for(5));
+
+        // Add bars one by one
+        for i in 1..=5 {
+            ctx.on_bar_update(&create_bar_data("100", "110", "90", "100", "50"));
+            assert!(ctx.is_ready_for(i));
+            assert!(!ctx.is_ready_for(i + 1));
+        }
+    }
+
+    #[test]
+    fn test_bars_context_sma_with_ready() {
+        let mut ctx = BarsContext::new("BTCUSDT");
+
+        // Add bars
+        for close in &["10", "20", "30", "40", "50"] {
+            ctx.on_bar_update(&create_bar_data(close, close, close, close, "100"));
+        }
+
+        // SMA(3) should be ready
+        let (sma, is_ready) = ctx.sma_with_ready(3);
+        assert!(is_ready);
+        assert!(sma.is_some());
+        assert_eq!(sma.unwrap(), Decimal::from(40));
+
+        // SMA(10) should not be ready
+        let (sma, is_ready) = ctx.sma_with_ready(10);
+        assert!(!is_ready);
+        assert!(sma.is_none());
+    }
+
+    #[test]
+    fn test_bars_context_highest_lowest_with_ready() {
+        let mut ctx = BarsContext::new("BTCUSDT");
+
+        ctx.on_bar_update(&create_bar_data("100", "110", "90", "105", "100"));
+        ctx.on_bar_update(&create_bar_data("105", "120", "100", "115", "100"));
+        ctx.on_bar_update(&create_bar_data("115", "125", "110", "120", "100"));
+
+        // Highest high should be ready for period 3
+        let (highest, is_ready) = ctx.highest_high_with_ready(3);
+        assert!(is_ready);
+        assert_eq!(highest.unwrap(), Decimal::from(125));
+
+        // Lowest low should be ready for period 3
+        let (lowest, is_ready) = ctx.lowest_low_with_ready(3);
+        assert!(is_ready);
+        assert_eq!(lowest.unwrap(), Decimal::from(90));
+
+        // Not ready for period 5
+        let (_, is_ready) = ctx.highest_high_with_ready(5);
+        assert!(!is_ready);
     }
 }

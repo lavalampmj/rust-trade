@@ -27,6 +27,15 @@ impl Strategy for TestStrategy {
         "Test Strategy"
     }
 
+    fn is_ready(&self, _bars: &BarsContext) -> bool {
+        // Test strategy is always ready (no warmup needed)
+        true
+    }
+
+    fn warmup_period(&self) -> usize {
+        0
+    }
+
     fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
         self.bar_count += 1;
 
@@ -151,6 +160,15 @@ impl Strategy for TickModeStrategy {
         "Tick Mode Test Strategy"
     }
 
+    fn is_ready(&self, _bars: &BarsContext) -> bool {
+        // Test strategy is always ready (no warmup needed)
+        true
+    }
+
+    fn warmup_period(&self) -> usize {
+        0
+    }
+
     fn on_bar_data(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
         self.tick_count += 1;
         Signal::Hold
@@ -208,6 +226,15 @@ impl Strategy for PriceMoveStrategy {
         "Price Move Strategy"
     }
 
+    fn is_ready(&self, _bars: &BarsContext) -> bool {
+        // Test strategy is always ready (no warmup needed)
+        true
+    }
+
+    fn warmup_period(&self) -> usize {
+        0
+    }
+
     fn on_bar_data(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
         self.event_count += 1;
         Signal::Hold
@@ -256,6 +283,15 @@ fn test_tick_based_bars() {
     impl Strategy for TickBasedStrategy {
         fn name(&self) -> &str {
             "Tick-Based Bar Strategy"
+        }
+
+        fn is_ready(&self, _bars: &BarsContext) -> bool {
+            // Test strategy is always ready (no warmup needed)
+            true
+        }
+
+        fn warmup_period(&self) -> usize {
+            0
         }
 
         fn on_bar_data(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) -> Signal {

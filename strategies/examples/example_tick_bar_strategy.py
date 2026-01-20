@@ -64,6 +64,14 @@ class TickBarStrategy(BaseStrategy):
         """Return the strategy name."""
         return "N-Tick Bar Momentum Strategy (Python)"
 
+    def is_ready(self, bars: BarsContext) -> bool:
+        """Ready when we have enough bars for lookback analysis."""
+        return bars.is_ready_for(self.lookback_bars)
+
+    def warmup_period(self) -> int:
+        """Return lookback_bars as warmup requirement."""
+        return self.lookback_bars
+
     def initialize(self, params: Dict[str, str]) -> Optional[str]:
         """
         Initialize strategy with parameters.
@@ -159,8 +167,9 @@ class TickBarStrategy(BaseStrategy):
             alpha = Decimal("0.2")
             self.avg_bar_volume = alpha * volume + (1 - alpha) * self.avg_bar_volume
 
-        # Need enough history before trading
-        if not bars.has_bars(self.lookback_bars):
+        # Defense-in-depth: early return if not ready
+        # (Engine also checks, but strategy can check for explicit handling)
+        if not self.is_ready(bars):
             return Signal.hold()
 
         # Check for high volume

@@ -64,6 +64,7 @@ impl PaperTradingProcessor {
                 trading_common::data::types::BarDataMode::OnCloseBar => "OnCloseBar",
             }
         );
+        println!("   Warmup period: {} bars", strategy.warmup_period());
 
         Self {
             strategy,
@@ -116,7 +117,17 @@ impl PaperTradingProcessor {
             self.bars_context.on_bar_update(&bar_data);
 
             // Execute strategy with BarData and BarsContext
-            let signal = self.strategy.on_bar_data(&bar_data, &mut self.bars_context);
+            let mut signal = self.strategy.on_bar_data(&bar_data, &mut self.bars_context);
+
+            // Suppress signals during warmup (parity with backtest engine)
+            if !self.strategy.is_ready(&self.bars_context) {
+                match signal {
+                    Signal::Buy { .. } | Signal::Sell { .. } => {
+                        signal = Signal::Hold;
+                    }
+                    Signal::Hold => {}
+                }
+            }
 
             // Execute trading signal
             let signal_type = self.execute_signal(&signal, tick)?;
@@ -201,7 +212,17 @@ impl PaperTradingProcessor {
             self.bars_context.on_bar_update(&bar_data);
 
             // Execute strategy with bar and BarsContext
-            let signal = self.strategy.on_bar_data(&bar_data, &mut self.bars_context);
+            let mut signal = self.strategy.on_bar_data(&bar_data, &mut self.bars_context);
+
+            // Suppress signals during warmup (parity with backtest engine)
+            if !self.strategy.is_ready(&self.bars_context) {
+                match signal {
+                    Signal::Buy { .. } | Signal::Sell { .. } => {
+                        signal = Signal::Hold;
+                    }
+                    Signal::Hold => {}
+                }
+            }
 
             // Use bar's close price for execution
             let execution_price = bar_data.ohlc_bar.close;

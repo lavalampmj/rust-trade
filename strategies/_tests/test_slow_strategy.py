@@ -27,6 +27,14 @@ class SlowStrategy(BaseStrategy):
     def name(self) -> str:
         return "Slow Test Strategy"
 
+    def is_ready(self, bars: BarsContext) -> bool:
+        """Test strategy is always ready (no warmup needed)."""
+        return True
+
+    def warmup_period(self) -> int:
+        """No warmup period required."""
+        return 0
+
     def on_bar_data(self, bar_data: Dict[str, Any], bars: BarsContext) -> Dict[str, Any]:
         """Simulate slow computation"""
         self.call_number += 1

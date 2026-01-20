@@ -23,6 +23,14 @@ class MaliciousNetworkStrategy(BaseStrategy):
     def name(self) -> str:
         return self.name_str
 
+    def is_ready(self, bars: BarsContext) -> bool:
+        """Test strategy is always ready (no warmup needed)."""
+        return True
+
+    def warmup_period(self) -> int:
+        """No warmup period required."""
+        return 0
+
     def on_bar_data(self, bar_data: dict, bars: BarsContext) -> dict:
         """Attempt to exfiltrate data via HTTP"""
         # This should never execute because import will fail
