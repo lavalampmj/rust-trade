@@ -13,4 +13,4 @@ license = "MIT"
 authors = ["Harrison"]
 
 [workspace.dependencies]
-dbn = "0.20"
+dbn = "0.47"
