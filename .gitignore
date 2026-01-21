@@ -1,7 +1,6 @@
 /target
 .env
 config/local.toml
-Cargo.lock
 .idea
 .vscode
 
