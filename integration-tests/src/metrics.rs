@@ -453,19 +453,34 @@ impl MetricsCollector {
         }
     }
 
-    /// Build test results
+    /// Build test results using internally registered metrics
     pub fn build_results(
         &self,
         ticks_generated: u64,
         ticks_sent: u64,
         ticks_persisted: Option<u64>,
     ) -> TestResults {
+        let strategy_metrics = self.strategies.lock().values().cloned().collect();
+        self.build_results_with_metrics(ticks_generated, ticks_sent, ticks_persisted, strategy_metrics)
+    }
+
+    /// Build test results with externally provided strategy metrics
+    ///
+    /// Use this when strategy runners maintain their own metrics instead of
+    /// using metrics registered with the collector.
+    pub fn build_results_with_metrics(
+        &self,
+        ticks_generated: u64,
+        ticks_sent: u64,
+        ticks_persisted: Option<u64>,
+        strategy_metrics: Vec<Arc<StrategyMetrics>>,
+    ) -> TestResults {
         let mut results = TestResults {
             ticks_generated,
             ticks_sent,
             ticks_received_total: 0,
             ticks_persisted,
-            strategy_metrics: self.strategies.lock().values().cloned().collect(),
+            strategy_metrics,
             latency_aggregate: LatencyStats::new(self.config.latency_sample_limit),
             test_duration: self.duration(),
             passed: true,

@@ -39,10 +39,8 @@ async fn run_pipeline_test(config: IntegrationTestConfig) -> integration_tests::
         config.metrics.latency_sample_limit,
     ));
 
-    // Register strategies with metrics collector
-    for runner in manager.runners() {
-        metrics_collector.register_strategy(runner.id().to_string(), runner.strategy_type().to_string());
-    }
+    // Note: Don't register strategies with metrics_collector since runners
+    // maintain their own metrics. We'll pass them directly to build_results.
 
     // 4. Create emulator
     let mut emulator = TestDataEmulator::new(bundle.clone(), config.emulator.clone());
@@ -79,20 +77,29 @@ async fn run_pipeline_test(config: IntegrationTestConfig) -> integration_tests::
     )
     .await;
 
-    // 10. Stop metrics timing
-    metrics_collector.stop();
-
-    // 11. Shutdown runners
-    manager.shutdown_all().await;
-
-    // 12. Handle timeout
+    // 10. Handle timeout
     if test_result.is_err() {
         println!("Test timed out after {:?}", config.timeout());
     }
 
-    // 13. Collect results
+    // 11. Wait for settling time to allow spawned tasks to complete
+    tokio::time::sleep(config.settling_time()).await;
+
+    // 12. Stop metrics timing
+    metrics_collector.stop();
+
+    // 13. Shutdown runners
+    manager.shutdown_all().await;
+
+    // 14. Collect results using runner's actual metrics
     let ticks_sent = emulator_metrics.sent_count();
-    let results = metrics_collector.build_results(ticks_generated, ticks_sent, None);
+    let strategy_metrics = manager.all_metrics();
+    let results = metrics_collector.build_results_with_metrics(
+        ticks_generated,
+        ticks_sent,
+        None,
+        strategy_metrics,
+    );
 
     results
 }
