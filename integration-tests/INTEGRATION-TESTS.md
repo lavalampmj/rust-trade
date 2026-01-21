@@ -309,7 +309,8 @@ Creates runner instances based on config (N Rust + M Python strategies).
 ```
 src/strategies/
 ├── mod.rs                  # Module exports
-└── test_tick_counter.rs    # TestTickCounterStrategy implementation
+├── test_tick_counter.rs    # Rust: TestTickCounterStrategy implementation
+└── test_tick_counter.py    # Python: Test strategy for PythonStrategyRunner
 ```
 
 **`TestTickCounterStrategy`** (`test_tick_counter.rs`):
@@ -319,7 +320,7 @@ Implements `Strategy` trait from `trading-common`:
 - Returns `Signal::Hold` always (no trading)
 - `bar_data_mode()` → `OnEachTick`
 
-This mirrors the Python strategy structure in `strategies/test_tick_counter.py`.
+**`test_tick_counter.py`**: Python equivalent for PythonStrategyRunner testing.
 
 ---
 
