@@ -112,7 +112,7 @@ mod tests {
         let handler = LogAlertHandler::new();
         let mut evaluator = AlertEvaluator::new(handler);
 
-        evaluator.add_rule(AlertRule::connection_pool_saturation(8, 0.8));
+        evaluator.add_rule(AlertRule::ipc_disconnected());
 
         assert_eq!(evaluator.rules.len(), 1);
     }
@@ -163,31 +163,23 @@ mod tests {
             count: count.clone(),
         };
 
-        // Use a very high value (1000) with threshold 0.01 (10 connections needed)
-        // This ensures the test is robust even if other tests modify metrics
-        let test_value = 1000;
-        let max_connections = 1000;
-        let threshold = 0.01; // 1% = needs 10+ connections to trigger
-
         let mut evaluator = AlertEvaluator::new(handler);
         evaluator.set_cooldown(Duration::from_millis(100)); // Short cooldown for testing
 
-        // Add a rule that will trigger: 1000/1000 = 100% >= 1%
-        evaluator.add_rule(AlertRule::connection_pool_critical(max_connections, threshold));
+        // Add a rule that will trigger when IPC is disconnected
+        evaluator.add_rule(AlertRule::ipc_disconnected());
 
-        // Manually evaluate once to ensure we get at least one alert
-        // Set the metric to a very high value right before evaluation
-        DB_CONNECTIONS_ACTIVE.set(test_value);
+        // Set IPC as disconnected to trigger alert
+        IPC_CONNECTION_STATUS.set(0);
         evaluator.evaluate_all();
 
-        // Verify we got the first alert - only assert if metric is still high
+        // Verify we got the first alert
         let alert_count = *count.lock().unwrap();
-        let current_metric = DB_CONNECTIONS_ACTIVE.get();
-        if current_metric >= 10 {
-            // Metric was high enough to trigger, should have gotten alert
-            assert!(alert_count >= 1, "Expected at least 1 alert after manual evaluation, got {} (metric={})", alert_count, current_metric);
+        let current_status = IPC_CONNECTION_STATUS.get();
+        if current_status == 0 {
+            // IPC is disconnected, should have gotten alert
+            assert!(alert_count >= 1, "Expected at least 1 alert after manual evaluation, got {} (status={})", alert_count, current_status);
         }
-        // If metric was modified by another test to be low, skip the assertion
 
         // Now start background monitoring - it should trigger more alerts after cooldown
         let handle = evaluator.start_monitoring(1);

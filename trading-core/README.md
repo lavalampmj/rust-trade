@@ -7,14 +7,14 @@ A professional-grade cryptocurrency data collection and backtesting system built
 ### **System Overview**
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Exchange      │───▶│    Service      │───▶│   Repository    │
-│   (WebSocket)   │    │  (Processing)   │    │   (Storage)     │
+│  data-manager   │───▶│  trading-core   │───▶│   Repository    │
+│   (IPC Source)  │    │  (Processing)   │    │   (Storage)     │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
          │                       ▼                       ▼
-    Binance API           ┌─────────────┐         ┌─────────────┐
-    - Real-time data      │   Cache     │         │ PostgreSQL  │
-    - Historical data     │ (L1 + L2)   │         │ Database    │
+  Shared Memory IPC       ┌─────────────┐         ┌─────────────┐
+  - Real-time data        │   Cache     │         │ PostgreSQL  │
+  - Low-latency           │ (L1 + L2)   │         │ Database    │
                           └─────────────┘         └─────────────┘
                                     │
                                     ▼
@@ -28,7 +28,7 @@ A professional-grade cryptocurrency data collection and backtesting system built
 
 #### **Live Trading Mode**
 ```
-Exchange API → Service → Repository → Database + Cache
+data-manager (IPC) → Service → Repository → Database + Cache
 ```
 
 #### **Backtesting Mode**
@@ -106,10 +106,16 @@ Database → Repository → Backtest Engine → Strategy → Portfolio → Metri
 
 #### **Live Data Collection**
 ```bash
-# Start real-time data collection
+# First, start data-manager (in a separate terminal)
+cd ../data-manager && cargo run serve --live --ipc --symbols BTCUSDT,ETHUSDT
+
+# Then start trading-core to receive data via IPC
 cargo run
 # or explicitly
 cargo run live
+
+# With paper trading enabled
+cargo run live --paper-trading
 ```
 
 #### **Backtesting**
@@ -147,13 +153,15 @@ trading-core/
 │   ├── main.rs                # CLI entry point with live/backtest modes
 │   ├── lib.rs                 # Library entry (re-exports trading-common)
 │   ├── config.rs              # Configuration management (Settings, env vars)
-│   ├── exchange/              # Exchange integrations
+│   ├── exchange/              # Exchange interface abstraction
 │   │   ├── mod.rs             # Module exports
 │   │   ├── traits.rs          # Exchange interface definition
-│   │   ├── types.rs           # Exchange-specific data structures
 │   │   ├── errors.rs          # Exchange error types
-│   │   ├── utils.rs           # Conversion and validation utilities
-│   │   └── binance.rs         # Binance WebSocket implementation
+│   │   └── rate_limiter.rs    # Reconnection rate limiting
+│   ├── data_source/           # Data source implementations
+│   │   ├── mod.rs             # Module exports
+│   │   ├── ipc.rs             # IPC data source implementation
+│   │   └── ipc_exchange.rs    # IPC Exchange adapter
 │   ├── service/               # Business logic layer (Live trading)
 │   │   ├── mod.rs             # Module exports
 │   │   ├── types.rs           # Service types (BatchConfig, stats)

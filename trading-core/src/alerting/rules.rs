@@ -21,23 +21,18 @@ impl fmt::Display for AlertSeverity {
 
 /// Condition that determines if an alert should fire
 pub enum AlertCondition {
-    /// Connection pool utilization exceeds threshold (current/max >= threshold)
-    ConnectionPoolUtilization {
-        max_connections: i64,
-        threshold_percent: f64,
-    },
-    /// Batch failure rate exceeds threshold
-    BatchFailureRate {
-        threshold_percent: f64,
-    },
-    /// WebSocket is disconnected
-    WebSocketDisconnected,
-    /// Excessive WebSocket reconnection attempts
-    WebSocketReconnectionStorm {
+    /// IPC connection is disconnected
+    IpcDisconnected,
+    /// Excessive IPC reconnection attempts
+    IpcReconnectionStorm {
         max_reconnects: u64,
     },
     /// Channel backpressure (buffer utilization too high)
     ChannelBackpressure {
+        threshold_percent: f64,
+    },
+    /// Cache update failure rate exceeds threshold
+    CacheFailureRate {
         threshold_percent: f64,
     },
 }
@@ -46,38 +41,28 @@ impl AlertCondition {
     /// Evaluate the condition against current metrics
     pub fn evaluate(&self) -> bool {
         match self {
-            AlertCondition::ConnectionPoolUtilization {
-                max_connections,
-                threshold_percent,
-            } => {
-                let active = DB_CONNECTIONS_ACTIVE.get();
-                let utilization = active as f64 / *max_connections as f64;
-                utilization >= *threshold_percent
+            AlertCondition::IpcDisconnected => {
+                IPC_CONNECTION_STATUS.get() == 0
             }
 
-            AlertCondition::BatchFailureRate { threshold_percent } => {
-                let failed = BATCHES_FAILED_TOTAL.get();
-                let flushed = BATCHES_FLUSHED_TOTAL.get();
-                let total = failed + flushed;
-
-                if total == 0 {
-                    return false; // No batches processed yet
-                }
-
-                let failure_rate = failed as f64 / total as f64;
-                failure_rate >= *threshold_percent
-            }
-
-            AlertCondition::WebSocketDisconnected => {
-                WS_CONNECTION_STATUS.get() == 0
-            }
-
-            AlertCondition::WebSocketReconnectionStorm { max_reconnects } => {
-                WS_RECONNECTS_TOTAL.get() > *max_reconnects
+            AlertCondition::IpcReconnectionStorm { max_reconnects } => {
+                IPC_RECONNECTS_TOTAL.get() > *max_reconnects
             }
 
             AlertCondition::ChannelBackpressure { threshold_percent } => {
                 CHANNEL_UTILIZATION.get() >= *threshold_percent
+            }
+
+            AlertCondition::CacheFailureRate { threshold_percent } => {
+                let failures = CACHE_UPDATE_FAILURES_TOTAL.get();
+                let total = TICKS_PROCESSED_TOTAL.get();
+
+                if total == 0 {
+                    return false; // No ticks processed yet
+                }
+
+                let failure_rate = failures as f64 / total as f64;
+                failure_rate >= *threshold_percent
             }
         }
     }
@@ -85,45 +70,18 @@ impl AlertCondition {
     /// Get a human-readable description of the condition
     pub fn description(&self) -> String {
         match self {
-            AlertCondition::ConnectionPoolUtilization {
-                max_connections,
-                threshold_percent,
-            } => {
-                let active = DB_CONNECTIONS_ACTIVE.get();
-                let utilization = (active as f64 / *max_connections as f64) * 100.0;
+            AlertCondition::IpcDisconnected => {
+                let reconnects = IPC_RECONNECTS_TOTAL.get();
                 format!(
-                    "Database connection pool saturation: {} of {} connections active ({:.1}% utilization, threshold: {:.1}%)",
-                    active, max_connections, utilization, threshold_percent * 100.0
+                    "IPC connection lost (total reconnection attempts: {})",
+                    reconnects
                 )
             }
 
-            AlertCondition::BatchFailureRate { threshold_percent } => {
-                let failed = BATCHES_FAILED_TOTAL.get();
-                let flushed = BATCHES_FLUSHED_TOTAL.get();
-                let total = failed + flushed;
-                let failure_rate = if total > 0 {
-                    (failed as f64 / total as f64) * 100.0
-                } else {
-                    0.0
-                };
+            AlertCondition::IpcReconnectionStorm { max_reconnects } => {
+                let reconnects = IPC_RECONNECTS_TOTAL.get();
                 format!(
-                    "High batch failure rate: {} failures out of {} total batches ({:.1}% failure rate, threshold: {:.1}%)",
-                    failed, total, failure_rate, threshold_percent * 100.0
-                )
-            }
-
-            AlertCondition::WebSocketDisconnected => {
-                let disconnections = WS_DISCONNECTIONS_TOTAL.get();
-                format!(
-                    "WebSocket connection lost (total disconnections: {})",
-                    disconnections
-                )
-            }
-
-            AlertCondition::WebSocketReconnectionStorm { max_reconnects } => {
-                let reconnects = WS_RECONNECTS_TOTAL.get();
-                format!(
-                    "Excessive WebSocket reconnection attempts: {} reconnects (threshold: {})",
+                    "Excessive IPC reconnection attempts: {} reconnects (threshold: {})",
                     reconnects, max_reconnects
                 )
             }
@@ -134,6 +92,20 @@ impl AlertCondition {
                 format!(
                     "Channel backpressure detected: {:.1}% utilization ({} ticks in buffer, threshold: {:.1}%)",
                     utilization, buffer_size, threshold_percent
+                )
+            }
+
+            AlertCondition::CacheFailureRate { threshold_percent } => {
+                let failures = CACHE_UPDATE_FAILURES_TOTAL.get();
+                let total = TICKS_PROCESSED_TOTAL.get();
+                let failure_rate = if total > 0 {
+                    (failures as f64 / total as f64) * 100.0
+                } else {
+                    0.0
+                };
+                format!(
+                    "High cache failure rate: {} failures out of {} processed ({:.1}% failure rate, threshold: {:.1}%)",
+                    failures, total, failure_rate, threshold_percent * 100.0
                 )
             }
         }
@@ -157,53 +129,20 @@ impl AlertRule {
         }
     }
 
-    /// Create connection pool saturation warning rule (80%+ utilization)
-    pub fn connection_pool_saturation(max_connections: i64, threshold_percent: f64) -> Self {
+    /// Create IPC disconnection critical rule
+    pub fn ipc_disconnected() -> Self {
         Self::new(
-            "connection_pool_saturation".to_string(),
-            AlertCondition::ConnectionPoolUtilization {
-                max_connections,
-                threshold_percent,
-            },
-            AlertSeverity::Warning,
-        )
-    }
-
-    /// Create connection pool critical rule (95%+ utilization)
-    pub fn connection_pool_critical(max_connections: i64, threshold_percent: f64) -> Self {
-        Self::new(
-            "connection_pool_critical".to_string(),
-            AlertCondition::ConnectionPoolUtilization {
-                max_connections,
-                threshold_percent,
-            },
+            "ipc_disconnected".to_string(),
+            AlertCondition::IpcDisconnected,
             AlertSeverity::Critical,
         )
     }
 
-    /// Create batch failure rate warning rule
-    pub fn batch_failure_rate(threshold_percent: f64) -> Self {
+    /// Create IPC reconnection storm warning rule
+    pub fn ipc_reconnection_storm(max_reconnects: u64) -> Self {
         Self::new(
-            "batch_failure_rate".to_string(),
-            AlertCondition::BatchFailureRate { threshold_percent },
-            AlertSeverity::Warning,
-        )
-    }
-
-    /// Create WebSocket disconnection critical rule
-    pub fn websocket_disconnected() -> Self {
-        Self::new(
-            "websocket_disconnected".to_string(),
-            AlertCondition::WebSocketDisconnected,
-            AlertSeverity::Critical,
-        )
-    }
-
-    /// Create WebSocket reconnection storm warning rule
-    pub fn websocket_reconnection_storm(max_reconnects: u64) -> Self {
-        Self::new(
-            "websocket_reconnection_storm".to_string(),
-            AlertCondition::WebSocketReconnectionStorm { max_reconnects },
+            "ipc_reconnection_storm".to_string(),
+            AlertCondition::IpcReconnectionStorm { max_reconnects },
             AlertSeverity::Warning,
         )
     }
@@ -213,6 +152,15 @@ impl AlertRule {
         Self::new(
             "channel_backpressure".to_string(),
             AlertCondition::ChannelBackpressure { threshold_percent },
+            AlertSeverity::Warning,
+        )
+    }
+
+    /// Create cache failure rate warning rule
+    pub fn cache_failure_rate(threshold_percent: f64) -> Self {
+        Self::new(
+            "cache_failure_rate".to_string(),
+            AlertCondition::CacheFailureRate { threshold_percent },
             AlertSeverity::Warning,
         )
     }
@@ -255,18 +203,29 @@ mod tests {
 
     #[test]
     fn test_alert_rule_creation() {
-        let rule = AlertRule::connection_pool_saturation(8, 0.8);
-        assert_eq!(rule.name(), "connection_pool_saturation");
+        let rule = AlertRule::ipc_disconnected();
+        assert_eq!(rule.name(), "ipc_disconnected");
+        assert_eq!(rule.severity(), AlertSeverity::Critical);
+    }
+
+    #[test]
+    fn test_ipc_reconnection_storm_rule() {
+        let rule = AlertRule::ipc_reconnection_storm(10);
+        assert_eq!(rule.name(), "ipc_reconnection_storm");
         assert_eq!(rule.severity(), AlertSeverity::Warning);
     }
 
     #[test]
-    fn test_alert_description_includes_metrics() {
-        DB_CONNECTIONS_ACTIVE.set(7);
-        let rule = AlertRule::connection_pool_saturation(8, 0.8);
-        let description = rule.description();
+    fn test_channel_backpressure_rule() {
+        let rule = AlertRule::channel_backpressure(80.0);
+        assert_eq!(rule.name(), "channel_backpressure");
+        assert_eq!(rule.severity(), AlertSeverity::Warning);
+    }
 
-        assert!(description.contains("7"), "Should include active connections");
-        assert!(description.contains("8"), "Should include max connections");
+    #[test]
+    fn test_cache_failure_rate_rule() {
+        let rule = AlertRule::cache_failure_rate(0.1);
+        assert_eq!(rule.name(), "cache_failure_rate");
+        assert_eq!(rule.severity(), AlertSeverity::Warning);
     }
 }

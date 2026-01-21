@@ -4,6 +4,7 @@ use dotenv::dotenv;
 use rust_decimal::Decimal;
 use sqlx::PgPool;
 use std::str::FromStr;
+use std::sync::Arc;
 use tokio::runtime::Runtime;
 use trading_core::data::{
     cache::{TickDataCache, TieredCache},
@@ -36,6 +37,7 @@ async fn setup_repository() -> DataResult<TickDataRepository> {
         .await
         .map_err(|e| trading_core::data::types::DataError::Database(e))?;
     let cache = TieredCache::new((1000, 300), (&redis_url, 10000, 3600)).await?;
+    let cache: Arc<dyn TickDataCache> = Arc::new(cache);
     Ok(TickDataRepository::new(pool, cache))
 }
 

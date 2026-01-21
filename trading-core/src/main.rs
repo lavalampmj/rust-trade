@@ -22,7 +22,7 @@ use trading_common::data;
 use config::Settings;
 use data::{cache::TieredCache, repository::TickDataRepository};
 use data::validator::{TickValidator, ValidationConfig};
-use exchange::{BinanceExchange, Exchange};
+use exchange::Exchange;
 use live_trading::PaperTradingProcessor;
 use service::MarketDataService;
 
@@ -35,19 +35,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match args.get(1).map(|s| s.as_str()) {
         Some("backtest") => run_backtest_mode().await,
         Some("live") => {
-            let data_source = parse_data_source(&args);
             // Check if paper trading is enabled
             if args.contains(&"--paper-trading".to_string()) {
-                run_live_with_paper_trading(data_source).await
+                run_live_with_paper_trading().await
             } else {
-                run_live_mode(data_source).await
+                run_live_mode().await
             }
         }
         Some("hash-strategy") => {
             run_hash_strategy_command(&args);
             Ok(())
         }
-        None => run_live_mode("binance").await,
+        None => run_live_mode().await,
         Some("--help") | Some("-h") => {
             print_usage();
             Ok(())
@@ -67,26 +66,13 @@ fn print_usage() {
     println!("  cargo run                              # Run live data collection");
     println!("  cargo run live                         # Run live data collection");
     println!("  cargo run live --paper-trading         # Run live with paper trading");
-    println!("  cargo run live --data-source ipc       # Use IPC from data-manager");
-    println!("  cargo run live --data-source binance   # Connect directly to Binance (default)");
     println!("  cargo run backtest                     # Run backtesting mode");
     println!("  cargo run hash-strategy <file_path>    # Calculate SHA256 hash of strategy file");
     println!("  cargo run --help                       # Show this help message");
     println!();
-    println!("Data Sources:");
-    println!("  binance  - Direct WebSocket connection to Binance (default)");
-    println!("  ipc      - Receive data from data-manager via shared memory IPC");
+    println!("Note: Live data is received from data-manager via IPC.");
+    println!("      Ensure data-manager is running: cd data-manager && cargo run serve --live --ipc");
     println!();
-}
-
-/// Parse --data-source argument
-fn parse_data_source(args: &[String]) -> &str {
-    for i in 0..args.len() {
-        if args[i] == "--data-source" && i + 1 < args.len() {
-            return &args[i + 1];
-        }
-    }
-    "binance" // Default
 }
 
 fn run_hash_strategy_command(args: &[String]) {
@@ -135,12 +121,12 @@ fn run_hash_strategy_command(args: &[String]) {
     }
 }
 
-async fn run_live_with_paper_trading(data_source: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_live_with_paper_trading() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize application environment
     init_application().await?;
 
     info!("🎯 Starting Trading Core Application (Live Mode + Paper Trading)");
-    info!("📡 Data source: {}", data_source);
+    info!("📡 Data source: IPC (from data-manager)");
 
     // Load configuration
     let settings = Settings::new()?;
@@ -149,7 +135,7 @@ async fn run_live_with_paper_trading(data_source: &str) -> Result<(), Box<dyn st
     if !settings.paper_trading.enabled {
         warn!("⚠️ Paper trading is disabled in config. Set paper_trading.enabled = true");
         warn!("⚠️ Falling back to live data collection only...");
-        return run_live_mode(data_source).await;
+        return run_live_mode().await;
     }
 
     info!("📋 Configuration loaded successfully");
@@ -187,31 +173,19 @@ async fn run_live_with_paper_trading(data_source: &str) -> Result<(), Box<dyn st
     test_database_connection(&pool).await?;
     info!("✅ Database connection established");
 
-    // Create cache
+    // Create shared cache
     info!("💾 Initializing cache...");
     let cache = create_cache(&settings).await?;
+    let cache: Arc<dyn TickDataCache> = Arc::new(cache);
     info!("✅ Cache initialized");
 
-    // Create repository
-    let repository = Arc::new(TickDataRepository::new(pool, cache));
+    // Create repository (needed for paper trading log writes)
+    // Repository shares the same cache instance
+    let repository = Arc::new(TickDataRepository::new(pool, Arc::clone(&cache)));
 
-    // Create exchange/data source based on type
-    let exchange: Arc<dyn Exchange> = match data_source {
-        "ipc" => {
-            info!("📡 Initializing IPC data source from data-manager...");
-            Arc::new(data_source::IpcExchange::binance())
-        }
-        _ => {
-            info!("📡 Initializing direct Binance exchange connection...");
-            let rate_limit_config = settings.reconnection_rate_limit.to_rate_limiter_config();
-            info!(
-                "🔒 Reconnection rate limit: {} attempts per {} seconds",
-                settings.reconnection_rate_limit.max_attempts,
-                settings.reconnection_rate_limit.window_secs
-            );
-            Arc::new(BinanceExchange::with_rate_limiter(rate_limit_config))
-        }
-    };
+    // Create IPC exchange to receive data from data-manager
+    info!("📡 Initializing IPC data source from data-manager...");
+    let exchange: Arc<dyn Exchange> = Arc::new(data_source::IpcExchange::binance());
     info!("✅ Data source ready");
 
     // Create strategy
@@ -243,8 +217,8 @@ async fn run_live_with_paper_trading(data_source: &str) -> Result<(), Box<dyn st
     let validator = Arc::new(TickValidator::new(validation_config));
     info!("✅ Validator initialized (enabled: {})", settings.validation.enabled);
 
-    // Create market data service
-    let service = MarketDataService::new(exchange, repository, settings.symbols.clone(), validator)
+    // Create market data service (cache only - no tick persistence, handled by data-manager)
+    let service = MarketDataService::new(exchange, cache, settings.symbols.clone(), validator)
         .with_paper_trading(paper_trading);
 
     info!(
@@ -292,12 +266,12 @@ async fn run_live_application_with_service(
 }
 
 /// Real-time mode entry
-async fn run_live_mode(data_source: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_live_mode() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize environment and logging
     init_application().await?;
 
     info!("🚀 Starting Trading Core Application (Live Mode)");
-    info!("📡 Data source: {}", data_source);
+    info!("📡 Data source: IPC (from data-manager)");
 
     // Load configuration
     let settings = Settings::new()?;
@@ -317,7 +291,7 @@ async fn run_live_mode(data_source: &str) -> Result<(), Box<dyn std::error::Erro
     );
 
     // Create and start the application
-    run_live_application(settings, data_source).await?;
+    run_live_application(settings).await?;
 
     info!("✅ Application stopped gracefully");
     Ok(())
@@ -337,6 +311,7 @@ async fn run_backtest_mode() -> Result<(), Box<dyn std::error::Error>> {
     info!("✅ Database connection established");
 
     let cache = create_backtest_cache(&settings).await?;
+    let cache: Arc<dyn TickDataCache> = Arc::new(cache);
     info!("✅ Cache initialized for backtest");
 
     let repository = TickDataRepository::new(pool, cache);
@@ -625,28 +600,18 @@ async fn init_alerting_system() -> Result<(), Box<dyn std::error::Error>> {
     evaluator.set_cooldown(Duration::from_secs(settings.alerting.cooldown_secs));
 
     // Add alert rules based on configuration
-    evaluator.add_rule(AlertRule::connection_pool_saturation(
-        settings.database.max_connections as i64,
-        settings.alerting.pool_saturation_threshold,
-    ));
+    evaluator.add_rule(AlertRule::ipc_disconnected());
 
-    evaluator.add_rule(AlertRule::connection_pool_critical(
-        settings.database.max_connections as i64,
-        settings.alerting.pool_critical_threshold,
-    ));
-
-    evaluator.add_rule(AlertRule::batch_failure_rate(
-        settings.alerting.batch_failure_threshold,
-    ));
-
-    evaluator.add_rule(AlertRule::websocket_disconnected());
-
-    evaluator.add_rule(AlertRule::websocket_reconnection_storm(
+    evaluator.add_rule(AlertRule::ipc_reconnection_storm(
         settings.alerting.reconnection_storm_threshold,
     ));
 
     evaluator.add_rule(AlertRule::channel_backpressure(
         settings.alerting.channel_backpressure_threshold,
+    ));
+
+    evaluator.add_rule(AlertRule::cache_failure_rate(
+        settings.alerting.cache_failure_threshold.unwrap_or(0.1),
     ));
 
     // Start background monitoring
@@ -657,13 +622,7 @@ async fn init_alerting_system() -> Result<(), Box<dyn std::error::Error>> {
         settings.alerting.interval_secs, settings.alerting.cooldown_secs
     );
     info!(
-        "  📋 Rules: pool saturation ({:.0}%), pool critical ({:.0}%), batch failures ({:.0}%)",
-        settings.alerting.pool_saturation_threshold * 100.0,
-        settings.alerting.pool_critical_threshold * 100.0,
-        settings.alerting.batch_failure_threshold * 100.0
-    );
-    info!(
-        "  📋 Rules: channel backpressure ({:.0}%), reconnection storm (>{} attempts)",
+        "  📋 Rules: IPC disconnected, channel backpressure ({:.0}%), reconnection storm (>{} attempts)",
         settings.alerting.channel_backpressure_threshold,
         settings.alerting.reconnection_storm_threshold
     );
@@ -695,7 +654,7 @@ fn init_tracing() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Main application runtime (original live mode)
-async fn run_live_application(settings: Settings, data_source_type: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_live_application(settings: Settings) -> Result<(), Box<dyn std::error::Error>> {
     // Validate basic configuration
     if settings.symbols.is_empty() {
         error!("❌ No symbols configured for monitoring");
@@ -718,28 +677,12 @@ async fn run_live_application(settings: Settings, data_source_type: &str) -> Res
     // Create cache
     info!("💾 Initializing cache...");
     let cache = create_cache(&settings).await?;
+    let cache: Arc<dyn TickDataCache> = Arc::new(cache);
     info!("✅ Cache initialized");
 
-    // Create repository
-    let repository = Arc::new(TickDataRepository::new(pool, cache));
-
-    // Create exchange/data source based on type
-    let exchange: Arc<dyn Exchange> = match data_source_type {
-        "ipc" => {
-            info!("📡 Initializing IPC data source from data-manager...");
-            Arc::new(data_source::IpcExchange::binance())
-        }
-        _ => {
-            info!("📡 Initializing direct Binance exchange connection...");
-            let rate_limit_config = settings.reconnection_rate_limit.to_rate_limiter_config();
-            info!(
-                "🔒 Reconnection rate limit: {} attempts per {} seconds",
-                settings.reconnection_rate_limit.max_attempts,
-                settings.reconnection_rate_limit.window_secs
-            );
-            Arc::new(BinanceExchange::with_rate_limiter(rate_limit_config))
-        }
-    };
+    // Create IPC exchange to receive data from data-manager
+    info!("📡 Initializing IPC data source from data-manager...");
+    let exchange: Arc<dyn Exchange> = Arc::new(data_source::IpcExchange::binance());
     info!("✅ Data source ready");
 
     // Create validator
@@ -754,8 +697,8 @@ async fn run_live_application(settings: Settings, data_source_type: &str) -> Res
     let validator = Arc::new(TickValidator::new(validation_config));
     info!("✅ Validator initialized (enabled: {})", settings.validation.enabled);
 
-    // Create market data service
-    let service = MarketDataService::new(exchange, repository, settings.symbols.clone(), validator);
+    // Create market data service (cache only - no tick persistence, handled by data-manager)
+    let service = MarketDataService::new(exchange, cache, settings.symbols.clone(), validator);
 
     info!(
         "🎯 Starting market data collection for {} symbols",

@@ -15,9 +15,10 @@ use std::collections::HashMap;
 use std::env;
 use std::str::FromStr;
 use trading_common::backtest::{Portfolio, Signal};
-use trading_common::data::cache::TieredCache;
+use trading_common::data::cache::{TieredCache, TickDataCache};
 use trading_common::data::repository::TickDataRepository;
 use trading_common::data::types::{BarData, BarMetadata, BarType, Timeframe};
+use std::sync::Arc;
 use trading_common::series::bars_context::BarsContext;
 
 #[tokio::main]
@@ -44,6 +45,7 @@ async fn main() -> Result<(), String> {
         .map_err(|e| format!("Cache initialization failed: {}", e))?;
 
     // Create repository
+    let cache: Arc<dyn TickDataCache> = Arc::new(cache);
     let repository = TickDataRepository::new(pool, cache);
 
     // Check available data

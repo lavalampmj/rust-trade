@@ -73,7 +73,7 @@ impl Exchange for IpcExchange {
         let subscribed = data_source.subscribed_symbols();
         if subscribed.is_empty() {
             error!("No symbols could be subscribed. Is data-manager running?");
-            return Err(ExchangeError::WebSocketError(
+            return Err(ExchangeError::ConnectionError(
                 "No IPC channels available. Ensure data-manager is running.".to_string(),
             ));
         }

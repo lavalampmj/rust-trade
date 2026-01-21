@@ -9,7 +9,7 @@ use std::str::FromStr;
 use super::PaperTradingProcessor;
 use trading_common::backtest::strategy::{Signal, Strategy};
 use trading_common::data::types::{BarData, TickData, TradeSide};
-use trading_common::data::{cache::TieredCache, repository::TickDataRepository};
+use trading_common::data::{cache::{TieredCache, TickDataCache}, repository::TickDataRepository};
 use trading_common::series::bars_context::BarsContext;
 
 use chrono::Utc;
@@ -156,6 +156,7 @@ async fn create_test_repository() -> Arc<TickDataRepository> {
     .await
     .expect("Failed to create cache");
 
+    let cache: Arc<dyn TickDataCache> = Arc::new(cache);
     Arc::new(TickDataRepository::new(pool, cache))
 }
 

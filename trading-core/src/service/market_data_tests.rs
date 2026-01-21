@@ -9,7 +9,7 @@ use super::MarketDataService;
 use crate::exchange::{errors::ExchangeError, traits::Exchange};
 use trading_common::data::types::{TickData, TradeSide};
 use trading_common::data::validator::{TickValidator, ValidationConfig};
-use trading_common::data::{cache::{TieredCache, TickDataCache}, repository::TickDataRepository};
+use trading_common::data::cache::{TieredCache, TickDataCache};
 
 use chrono::Utc;
 use rust_decimal::Decimal;
@@ -83,16 +83,9 @@ fn create_test_tick(symbol: &str, price: &str, quantity: &str, trade_id: &str) -
     )
 }
 
-async fn create_test_repository() -> Arc<TickDataRepository> {
+async fn create_test_cache() -> Arc<dyn TickDataCache> {
     dotenv::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(5)
-        .connect(&database_url)
-        .await
-        .expect("Failed to create pool");
 
     let cache = TieredCache::new(
         (100, 60),                    // memory: 100 ticks, 60s TTL
@@ -101,19 +94,12 @@ async fn create_test_repository() -> Arc<TickDataRepository> {
     .await
     .expect("Failed to create cache");
 
-    Arc::new(TickDataRepository::new(pool, cache))
+    Arc::new(cache)
 }
 
 fn create_test_validator() -> Arc<TickValidator> {
     let config = ValidationConfig::default();
     Arc::new(TickValidator::new(config))
-}
-
-async fn cleanup_test_data(repository: &TickDataRepository, symbol: &str) {
-    let _ = sqlx::query("DELETE FROM tick_data WHERE symbol = $1")
-        .bind(symbol)
-        .execute(repository.get_pool())
-        .await;
 }
 
 // ============================================================================
@@ -124,12 +110,12 @@ async fn cleanup_test_data(repository: &TickDataRepository, symbol: &str) {
 async fn test_service_creation() {
     let ticks = vec![create_test_tick("BTCTEST", "50000.0", "0.1", "1")];
     let exchange = Arc::new(MockExchange::new(ticks));
-    let repository = create_test_repository().await;
+    let cache = create_test_cache().await;
     let validator = create_test_validator();
 
     let service = MarketDataService::new(
         exchange,
-        repository,
+        cache,
         vec!["BTCTEST".to_string()],
         validator,
     );
@@ -142,12 +128,12 @@ async fn test_service_creation() {
 async fn test_reject_empty_symbols() {
     let ticks = vec![create_test_tick("BTCTEST", "50000.0", "0.1", "1")];
     let exchange = Arc::new(MockExchange::new(ticks));
-    let repository = create_test_repository().await;
+    let cache = create_test_cache().await;
     let validator = create_test_validator();
 
     let service = MarketDataService::new(
         exchange,
-        repository,
+        cache,
         vec![], // Empty symbols
         validator,
     );
@@ -159,10 +145,8 @@ async fn test_reject_empty_symbols() {
 
 #[tokio::test]
 async fn test_process_single_tick() {
-    let repository = create_test_repository().await;
+    let cache = create_test_cache().await;
     let test_symbol = format!("BTCTEST_{}", Utc::now().timestamp_millis() % 1000000);
-
-    cleanup_test_data(&repository, &test_symbol).await;
 
     let ticks = vec![create_test_tick(&test_symbol, "50000.0", "0.1", "test_1")];
     let exchange = Arc::new(MockExchange::new(ticks));
@@ -170,7 +154,7 @@ async fn test_process_single_tick() {
 
     let service = MarketDataService::new(
         exchange.clone(),
-        repository.clone(),
+        cache.clone(),
         vec![test_symbol.clone()],
         validator,
     );
@@ -194,68 +178,12 @@ async fn test_process_single_tick() {
         .expect("Service should stop within timeout");
 
     assert!(result.is_ok());
-
-    // Verify tick was inserted (may take a moment for batch to flush)
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    cleanup_test_data(&repository, &test_symbol).await;
-}
-
-#[tokio::test]
-async fn test_batch_processing() {
-    let repository = create_test_repository().await;
-    let test_symbol = format!("BATCHTEST_{}", Utc::now().timestamp_millis() % 1000000);
-
-    cleanup_test_data(&repository, &test_symbol).await;
-
-    // Create multiple ticks for batching
-    let ticks: Vec<TickData> = (1..=5)
-        .map(|i| {
-            create_test_tick(
-                &test_symbol,
-                &format!("{}.0", 50000 + i),
-                "0.1",
-                &format!("test_{}", i),
-            )
-        })
-        .collect();
-
-    let exchange = Arc::new(MockExchange::new(ticks));
-    let validator = create_test_validator();
-
-    let service = MarketDataService::new(
-        exchange,
-        repository.clone(),
-        vec![test_symbol.clone()],
-        validator,
-    );
-
-    let shutdown_tx = service.get_shutdown_tx();
-
-    // Start service
-    let service_handle = tokio::spawn(async move {
-        service.start().await
-    });
-
-    // Wait for ticks to be processed
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    // Shutdown
-    let _ = shutdown_tx.send(());
-    let _ = timeout(Duration::from_secs(2), service_handle).await;
-
-    // Wait for batch flush
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    cleanup_test_data(&repository, &test_symbol).await;
 }
 
 #[tokio::test]
 async fn test_invalid_tick_rejection() {
-    let repository = create_test_repository().await;
+    let cache = create_test_cache().await;
     let test_symbol = "INVALIDTEST".to_string();
-
-    cleanup_test_data(&repository, &test_symbol).await;
 
     // Create invalid tick (negative price)
     let invalid_tick = TickData::new_unchecked(
@@ -273,7 +201,7 @@ async fn test_invalid_tick_rejection() {
 
     let service = MarketDataService::new(
         exchange,
-        repository.clone(),
+        cache.clone(),
         vec![test_symbol.clone()],
         validator,
     );
@@ -291,26 +219,19 @@ async fn test_invalid_tick_rejection() {
     // Shutdown
     let _ = shutdown_tx.send(());
     let _ = timeout(Duration::from_secs(2), service_handle).await;
-
-    // Verify no ticks were inserted (invalid tick was rejected)
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    cleanup_test_data(&repository, &test_symbol).await;
 }
 
 #[tokio::test]
 async fn test_shutdown_signal() {
     let ticks = vec![create_test_tick("SHUTDOWNTEST", "50000.0", "0.1", "1")];
     let exchange = Arc::new(MockExchange::new(ticks).with_delay(1000)); // 1 second delay
-    let repository = create_test_repository().await;
+    let cache = create_test_cache().await;
     let validator = create_test_validator();
     let test_symbol = "SHUTDOWNTEST".to_string();
 
-    cleanup_test_data(&repository, &test_symbol).await;
-
     let service = MarketDataService::new(
         exchange,
-        repository.clone(),
+        cache.clone(),
         vec![test_symbol.clone()],
         validator,
     );
@@ -332,18 +253,13 @@ async fn test_shutdown_signal() {
         .expect("Service should stop within timeout");
 
     assert!(result.is_ok());
-
-    cleanup_test_data(&repository, &test_symbol).await;
 }
 
 #[tokio::test]
 async fn test_multiple_symbols() {
-    let repository = create_test_repository().await;
+    let cache = create_test_cache().await;
     let symbol1 = format!("BTC_{}", Utc::now().timestamp_millis() % 1000000);
     let symbol2 = format!("ETH_{}", Utc::now().timestamp_millis() % 1000000);
-
-    cleanup_test_data(&repository, &symbol1).await;
-    cleanup_test_data(&repository, &symbol2).await;
 
     let ticks = vec![
         create_test_tick(&symbol1, "50000.0", "0.1", "btc_1"),
@@ -355,7 +271,7 @@ async fn test_multiple_symbols() {
 
     let service = MarketDataService::new(
         exchange,
-        repository.clone(),
+        cache.clone(),
         vec![symbol1.clone(), symbol2.clone()],
         validator,
     );
@@ -373,20 +289,12 @@ async fn test_multiple_symbols() {
     // Shutdown
     let _ = shutdown_tx.send(());
     let _ = timeout(Duration::from_secs(2), service_handle).await;
-
-    // Wait for batch flush
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    cleanup_test_data(&repository, &symbol1).await;
-    cleanup_test_data(&repository, &symbol2).await;
 }
 
 #[tokio::test]
 async fn test_validator_integration() {
-    let repository = create_test_repository().await;
+    let cache = create_test_cache().await;
     let test_symbol = format!("VALIDTEST_{}", Utc::now().timestamp_millis() % 1000000);
-
-    cleanup_test_data(&repository, &test_symbol).await;
 
     // Create valid and invalid ticks
     let valid_tick = create_test_tick(&test_symbol, "50000.0", "0.1", "valid_1");
@@ -407,7 +315,7 @@ async fn test_validator_integration() {
 
     let service = MarketDataService::new(
         exchange,
-        repository.clone(),
+        cache.clone(),
         vec![test_symbol.clone()],
         validator,
     );
@@ -425,19 +333,12 @@ async fn test_validator_integration() {
     // Shutdown
     let _ = shutdown_tx.send(());
     let _ = timeout(Duration::from_secs(2), service_handle).await;
-
-    // Wait for batch flush
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    cleanup_test_data(&repository, &test_symbol).await;
 }
 
 #[tokio::test]
 async fn test_cache_update() {
-    let repository = create_test_repository().await;
+    let cache = create_test_cache().await;
     let test_symbol = format!("CACHETEST_{}", Utc::now().timestamp_millis() % 1000000);
-
-    cleanup_test_data(&repository, &test_symbol).await;
 
     let tick = create_test_tick(&test_symbol, "50000.0", "0.1", "cache_1");
     let exchange = Arc::new(MockExchange::new(vec![tick.clone()]));
@@ -445,7 +346,7 @@ async fn test_cache_update() {
 
     let service = MarketDataService::new(
         exchange,
-        repository.clone(),
+        cache.clone(),
         vec![test_symbol.clone()],
         validator,
     );
@@ -466,12 +367,9 @@ async fn test_cache_update() {
 
     // Verify tick was cached
     tokio::time::sleep(Duration::from_millis(100)).await;
-    let cached_ticks: Result<Vec<TickData>, _> = repository
-        .get_cache()
+    let cached_ticks: Result<Vec<TickData>, _> = cache
         .get_recent_ticks(&test_symbol, 10)
         .await;
-
-    cleanup_test_data(&repository, &test_symbol).await;
 
     // Cache might be empty if Redis is not running, but test shouldn't fail
     match cached_ticks {

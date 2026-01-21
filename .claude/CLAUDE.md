@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Backend (Rust)
 
 ```bash
-# Build entire workspace (trading-core + trading-common + src-tauri)
+# Build entire workspace (trading-common + trading-core + data-manager + src-tauri)
 cargo build
 
 # Build with optimizations
@@ -26,12 +26,55 @@ cargo fmt
 cargo clippy
 ```
 
+### Data Manager CLI
+
+```bash
+cd data-manager
+
+# Start data manager service with live Binance streaming and IPC transport
+cargo run serve --live --provider binance --symbols BTCUSDT,ETHUSDT --ipc
+
+# Start with persistence to database
+cargo run serve --live --ipc --persist
+
+# Start with custom config file
+cargo run serve -c ../config/development.toml --live --ipc
+
+# Fetch historical data from Databento
+cargo run fetch --symbols BTCUSDT --exchange binance --provider databento --start 2024-01-01 --end 2024-01-31
+
+# Dry run to see what would be fetched
+cargo run fetch --symbols BTCUSDT --exchange binance --start 2024-01-01 --end 2024-01-31 --dry-run
+
+# Symbol management
+cargo run symbol list                           # List registered symbols
+cargo run symbol add --symbols BTCUSDT,ETHUSDT  # Add symbols
+cargo run symbol remove --symbols DOGEUSDT      # Remove symbols
+cargo run symbol discover --provider binance    # Discover available symbols
+
+# Database operations
+cargo run db migrate                            # Run database migrations
+cargo run db stats                              # Show database statistics
+cargo run db compress                           # Compress old data
+
+# Backfill with cost tracking
+cargo run backfill estimate --symbols BTCUSDT --start 2024-01-01 --end 2024-01-31
+cargo run backfill fetch --symbols BTCUSDT --start 2024-01-01 --end 2024-01-31
+cargo run backfill fill-gaps --symbols BTCUSDT  # Detect and fill data gaps
+cargo run backfill status                       # Show backfill status
+cargo run backfill cost-report                  # Show cost report
+
+# Show help
+cargo run -- --help
+```
+
 ### Trading Core CLI
 
 ```bash
 cd trading-core
 
-# Start live data collection (WebSocket from Binance)
+# Start live data collection (receives data via IPC from data-manager)
+# Note: data-manager must be running first!
 cargo run live
 
 # Start live data collection with paper trading enabled
@@ -39,6 +82,9 @@ cargo run live --paper-trading
 
 # Start interactive backtesting interface
 cargo run backtest
+
+# Calculate SHA256 hash of strategy file
+cargo run hash-strategy <file_path>
 
 # Show help
 cargo run -- --help
@@ -79,47 +125,56 @@ npm run tauri build
 
 ### Workspace Structure
 
-The project uses a Rust workspace with three crates:
+The project uses a Rust workspace with four crates:
 
 - **trading-common** (shared library): Core domain models, backtesting engine, data repository, and caching
 - **trading-core** (CLI application): Live data collection from exchanges, paper trading, CLI interface
+- **data-manager** (data infrastructure): Centralized market data loading, streaming, and distribution via IPC
 - **src-tauri** (desktop app backend): Tauri commands exposing trading-common functionality to Next.js frontend
 
-This separation enables code reuse: both trading-core and src-tauri depend on trading-common, avoiding duplication.
+This separation enables code reuse: trading-core, data-manager, and src-tauri all depend on trading-common, avoiding duplication.
+
+**Data flow architecture**:
+- **IPC mode only**: data-manager streams from Binance → shared memory IPC → trading-core consumes
+- trading-core does not persist tick data to database (handled by data-manager with TimescaleDB)
+- trading-core only updates cache and processes paper trading signals
 
 ### Key Architectural Patterns
 
-#### 1. Exchange Layer (trading-core/src/exchange/)
+#### 1. Exchange Layer (trading-core/src/exchange/ and src/data_source/)
 
-**Pattern**: Trait-based abstraction for multiple exchange support
+**Pattern**: Trait-based abstraction for data sources
 
-- `Exchange` trait defines standard interface for all exchanges
-- `BinanceExchange` implements WebSocket streaming with auto-reconnection (max 10 attempts with exponential backoff)
+- `Exchange` trait defines standard interface for all data sources
+- `IpcExchange` receives data from data-manager via shared memory IPC
 - Uses callback pattern: `subscribe_trades()` accepts closure for real-time tick processing
 - Graceful shutdown via broadcast channel (`shutdown_rx`)
+
+**Data flow**: data-manager (Binance WebSocket) → IPC shared memory → trading-core (IpcExchange)
 
 **Important**: Exchange callbacks execute synchronously - avoid blocking operations in handlers.
 
 #### 2. Service Layer (trading-core/src/service/market_data.rs)
 
-**Pattern**: Event-driven pipeline with batch processing
+**Pattern**: Event-driven pipeline for cache updates and paper trading
 
 Data flow:
 ```
-Exchange (WebSocket callback)
+IpcExchange (shared memory callback)
   → Collection Task (mpsc channel)
   → Processing Task
+    → Tick Validation
     → Cache Update (L1 + L2 in parallel)
-    → Batch Accumulation (100 ticks or 1s timeout)
-    → Database Bulk Insert (with retry: 3 attempts)
     → Paper Trading Processor (optional)
 ```
 
 **Key features**:
 - Dual-task architecture decouples collection from processing
-- Batching: 100 ticks or 1 second window, whichever comes first
-- Retry logic: Failed batches retry 3 times with 1000ms delay
-- Graceful shutdown: Flushes remaining batches before exit
+- Cache-only updates (no database writes - handled by data-manager)
+- Real-time tick validation
+- Graceful shutdown via broadcast channel
+
+**Note**: Tick data persistence is handled by data-manager using TimescaleDB. trading-core only maintains cache for paper trading strategy context.
 
 #### 3. Caching System (trading-common/src/data/cache.rs)
 
@@ -252,24 +307,22 @@ Exposed commands (src-tauri/src/commands.rs):
 **Pattern**: Rule-based monitoring with periodic evaluation and cooldown
 
 Components:
-- `AlertRule`: Threshold-based conditions (connection pool, batch failures, WebSocket health)
+- `AlertRule`: Threshold-based conditions (IPC connection, cache health, channel utilization)
 - `AlertEvaluator`: Background task that evaluates rules periodically (default: every 30s)
 - `AlertHandler`: Pluggable handlers (logging, future: email, Slack, PagerDuty)
 
-**Alert Rules** (6 production-ready rules):
-1. **Connection Pool Saturation** (WARNING): Active connections ≥ 80% of max
-2. **Connection Pool Critical** (CRITICAL): Active connections ≥ 95% of max
-3. **Batch Failure Rate** (WARNING): Batch failures ≥ 20% of total batches
-4. **WebSocket Disconnected** (CRITICAL): Connection status = 0
-5. **WebSocket Reconnection Storm** (WARNING): Reconnections > 10 attempts
-6. **Channel Backpressure** (WARNING): Channel utilization ≥ 80%
+**Alert Rules** (4 production-ready rules):
+1. **IPC Disconnected** (CRITICAL): IPC connection status = 0
+2. **IPC Reconnection Storm** (WARNING): Reconnections > 10 attempts
+3. **Channel Backpressure** (WARNING): Channel utilization ≥ 80%
+4. **Cache Failure Rate** (WARNING): Cache update failures ≥ 10% of processed ticks
 
 **Cooldown mechanism**: 5-minute default cooldown between repeated alerts to prevent spam
 
 **Integration**:
 - Initialized during application startup in `main.rs::init_alerting_system()`
 - Reads thresholds from `config/development.toml` `[alerting]` section
-- Monitors Prometheus metrics (DB pool, batches, WebSocket, channel utilization)
+- Monitors Prometheus metrics (IPC status, cache failures, channel utilization)
 - Logs alerts to stdout/stderr with severity levels (INFO/WARNING/CRITICAL)
 
 **Configuration** (config/development.toml):
@@ -278,20 +331,18 @@ Components:
 enabled = true
 interval_secs = 30                      # Evaluation frequency
 cooldown_secs = 300                     # 5 minutes between repeated alerts
-pool_saturation_threshold = 0.8         # 80% WARNING
-pool_critical_threshold = 0.95          # 95% CRITICAL
-batch_failure_threshold = 0.2           # 20% WARNING
 channel_backpressure_threshold = 80.0   # 80% WARNING
 reconnection_storm_threshold = 10       # >10 reconnects WARNING
+cache_failure_threshold = 0.1           # 10% WARNING
 ```
 
-**Test coverage**: 25/25 tests passing (see `alerting/tests.rs`)
+**Test coverage**: Tests passing (see `alerting/tests.rs`)
 
 ## Configuration System
 
 ### Environment Variables
 
-Required in `.env` (root and trading-core/):
+Required in `.env` (root directory):
 ```
 DATABASE_URL=postgresql://username:password@localhost/trading_core
 REDIS_URL=redis://127.0.0.1:6379
@@ -300,7 +351,9 @@ RUN_MODE=development  # or production, test
 
 Optional:
 ```
-RUST_LOG=trading_core=info,sqlx=warn  # Logging levels
+RUST_LOG=trading_core=info,data_manager=info,sqlx=warn  # Logging levels
+DATABENTO_API_KEY=your_api_key  # Required for data-manager fetch/backfill commands
+DATA_MANAGER_CONFIG_DIR=/custom/config/path  # Custom config directory for data-manager
 ```
 
 ### Config Files (config/)
@@ -354,19 +407,29 @@ psql -d trading_core -c "\dt"
 
 ### Live Mode (with Paper Trading)
 
-```
-User: cargo run live --paper-trading
+**Architecture**: trading-core receives all live data via IPC from data-manager. Tick persistence is handled by data-manager.
 
-1. Load config (database, cache, symbols, strategy)
-2. Initialize PostgreSQL pool, Redis cache, Strategy, Paper trading processor
-3. Start WebSocket connection to Binance
-4. For each tick:
-   a. Update cache (immediate)
-   b. Generate trading signal (if paper trading enabled)
-   c. Add to batch accumulator
-   d. Flush to database when batch full (100) or timeout (1s)
-5. Output real-time: BUY/SELL signals, portfolio value, P&L
-6. Shutdown (Ctrl+C): Graceful flush and exit
+```
+Terminal 1: cd data-manager && cargo run serve --live --ipc --persist --symbols BTCUSDT
+Terminal 2: cd trading-core && cargo run live --paper-trading
+
+Data flow:
+  data-manager (Binance WebSocket)
+    → Shared memory ring buffer (IPC)
+    → trading-core (IpcExchange)
+    → Processing pipeline:
+        1. Load config (cache, symbols, strategy)
+        2. Initialize Redis cache, Strategy, Paper trading processor
+        3. For each tick from IPC:
+           a. Validate tick data
+           b. Update cache (L1 memory + L2 Redis)
+           c. Generate trading signal (if paper trading enabled)
+           d. Log paper trade to live_strategy_log table
+        4. Output real-time: BUY/SELL signals, portfolio value, P&L
+        5. Shutdown (Ctrl+C): Graceful exit
+
+Note: Tick data persistence to database is handled by data-manager (--persist flag).
+trading-core only writes paper trading logs to live_strategy_log table.
 ```
 
 ### Backtest Mode (CLI or Desktop)
@@ -472,7 +535,12 @@ shutdown_tx.send(()).ok();
 ### Debugging Live Data Collection
 
 ```bash
-# Enable debug logging
+# Terminal 1: Start data-manager with debug logging
+cd data-manager
+RUST_LOG=data_manager=debug cargo run serve --live --ipc --symbols BTCUSDT
+
+# Terminal 2: Start trading-core with debug logging
+cd trading-core
 RUST_LOG=trading_core=debug,sqlx=info cargo run live
 
 # Check database inserts
@@ -481,6 +549,9 @@ psql -d trading_core -c "SELECT COUNT(*) FROM tick_data WHERE created_at > NOW()
 # Monitor Redis cache
 redis-cli KEYS "ticks:*"
 redis-cli LRANGE "ticks:BTCUSDT" 0 10
+
+# Check data-manager database stats
+cd data-manager && cargo run db stats
 ```
 
 ### Performance Profiling
@@ -496,13 +567,13 @@ cargo flamegraph --bin trading-core -- live
 
 ## Known Constraints and Trade-offs
 
-1. **Batch processing latency**: Ticks buffered for up to 1 second before database flush - acceptable for backtesting, consider for latency-sensitive use cases
+1. **IPC dependency**: trading-core requires data-manager to be running for live data - start data-manager first
 
 2. **Cache miss on restart**: In-memory cache (L1) cleared on restart - Redis (L2) persists but takes ~100µs vs ~10µs for memory
 
 3. **Strategy execution order**: Backtests process ticks sequentially (no parallel strategy execution) - ensures deterministic results
 
-4. **WebSocket reconnection limit**: Max 10 attempts with exponential backoff - manual restart required after persistent failures
+4. **Separation of concerns**: trading-core handles paper trading only, data-manager handles tick persistence - ensures clean architecture
 
 5. **Database duplicate handling**: `ON CONFLICT DO NOTHING` silently ignores duplicates - no error logged, check `live_strategy_log` for actual insert counts
 
@@ -525,4 +596,4 @@ Based on benchmarks (trading-core/benches/):
 **Bottlenecks**:
 - Database inserts: Use batching (already implemented)
 - Cache misses: Increase L2 TTL and max_ticks_per_symbol
-- WebSocket throughput: Binance limit ~1000 msg/s per connection
+- IPC throughput: Limited by shared memory ring buffer size

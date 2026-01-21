@@ -8,7 +8,6 @@ use tracing::debug;
 use crate::live_trading::RealtimeOHLCGenerator;
 use crate::metrics;
 use trading_common::backtest::strategy::{Signal, Strategy};
-use trading_common::data::cache::TickDataCache;
 use trading_common::data::repository::TickDataRepository;
 use trading_common::data::types::{BarData, LiveStrategyLog, TickData};
 use trading_common::series::bars_context::BarsContext;

@@ -1,32 +1,37 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, Mutex};
-use tokio::time::{interval, sleep};
+use tokio::time::interval;
 use tokio::{select, spawn};
 use tracing::{debug, error, info, warn};
 
-use super::{BatchConfig, BatchStats, ServiceError};
+use super::{ProcessingStats, ServiceError};
 use crate::exchange::Exchange;
 use crate::live_trading::PaperTradingProcessor;
 use crate::metrics;
 use trading_common::data::types::TickData;
 use trading_common::data::validator::TickValidator;
-use trading_common::data::{cache::TickDataCache, repository::TickDataRepository};
+use trading_common::data::cache::TickDataCache;
 
-/// Market data service that coordinates between exchange and data storage
+/// Market data service that coordinates between exchange and data processing
+///
+/// Note: This service does NOT persist tick data to the database.
+/// Tick data persistence is handled by data-manager with the --persist flag.
+/// This service only:
+/// - Validates incoming ticks
+/// - Updates the cache (for strategy context)
+/// - Processes paper trading signals
 pub struct MarketDataService {
-    /// Exchange implementation
+    /// Exchange implementation (IPC from data-manager)
     exchange: Arc<dyn Exchange>,
-    /// Data repository (wrapped in Arc for sharing across tasks)
-    repository: Arc<TickDataRepository>,
+    /// Cache for tick data (used by paper trading for context)
+    cache: Arc<dyn TickDataCache>,
     /// Symbols to monitor
     symbols: Vec<String>,
-    /// Batch processing configuration
-    batch_config: BatchConfig,
     /// Shutdown signal sender
     shutdown_tx: broadcast::Sender<()>,
     /// Processing statistics
-    stats: Arc<Mutex<BatchStats>>,
+    stats: Arc<Mutex<ProcessingStats>>,
     /// Paper trading processor
     paper_trading: Option<Arc<Mutex<PaperTradingProcessor>>>,
     /// Tick data validator
@@ -37,7 +42,7 @@ impl MarketDataService {
     /// Create a new market data service
     pub fn new(
         exchange: Arc<dyn Exchange>,
-        repository: Arc<TickDataRepository>,
+        cache: Arc<dyn TickDataCache>,
         symbols: Vec<String>,
         validator: Arc<TickValidator>,
     ) -> Self {
@@ -45,11 +50,10 @@ impl MarketDataService {
 
         Self {
             exchange,
-            repository,
+            cache,
             symbols,
-            batch_config: BatchConfig::default(),
             shutdown_tx,
-            stats: Arc::new(Mutex::new(BatchStats::default())),
+            stats: Arc::new(Mutex::new(ProcessingStats::default())),
             paper_trading: None,
             validator,
         }
@@ -76,7 +80,6 @@ impl MarketDataService {
         );
 
         // Create data processing pipeline with larger buffer for backpressure handling
-        // Increased from 1000 to 10000 to handle burst traffic from multiple symbols
         const CHANNEL_CAPACITY: usize = 10_000;
         let (tick_tx, tick_rx) = mpsc::channel::<TickData>(CHANNEL_CAPACITY);
 
@@ -144,14 +147,7 @@ impl MarketDataService {
                     // Warn if channel is getting full (>80% utilized)
                     if utilization_pct > 80.0 {
                         warn!(
-                            "Processing backpressure detected: channel {}% full ({}/{}), data processing may be falling behind",
-                            utilization_pct as u32,
-                            max_capacity - capacity,
-                            max_capacity
-                        );
-                    } else if utilization_pct > 50.0 {
-                        debug!(
-                            "Channel utilization: {}% ({}/{})",
+                            "Processing backpressure detected: channel {}% full ({}/{})",
                             utilization_pct as u32,
                             max_capacity - capacity,
                             max_capacity
@@ -159,18 +155,13 @@ impl MarketDataService {
                     }
 
                     spawn(async move {
-                        // Use try_send for non-blocking check, fallback to send if needed
                         match tx.try_send(tick.clone()) {
-                            Ok(_) => {
-                                // Successfully sent without blocking
-                            }
+                            Ok(_) => {}
                             Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                                // Channel is full, warn and use blocking send
                                 warn!(
-                                    "Channel full! Blocking until space available. Symbol: {}, Price: {}",
-                                    tick.symbol, tick.price
+                                    "Channel full! Blocking until space available. Symbol: {}",
+                                    tick.symbol
                                 );
-
                                 if let Err(e) = tx.send(tick).await {
                                     if !e.to_string().contains("channel closed") {
                                         error!("Failed to send tick data after blocking: {}", e);
@@ -178,7 +169,6 @@ impl MarketDataService {
                                 }
                             }
                             Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                                // Channel closed, likely during shutdown
                                 debug!("Tick channel closed, skipping tick");
                             }
                         }
@@ -192,12 +182,11 @@ impl MarketDataService {
                 {
                     Ok(()) => {
                         info!("Exchange subscription completed normally");
-                        break; // Normal completion, exit loop
+                        break;
                     }
                     Err(e) => {
                         error!("Exchange subscription failed: {}", e);
 
-                        // Check if shutdown was requested before attempting retry
                         if shutdown_rx.try_recv().is_ok() {
                             info!("Data collection shutdown requested, canceling retry");
                             break;
@@ -206,8 +195,8 @@ impl MarketDataService {
                         warn!("Retrying exchange connection in 5 seconds...");
 
                         select! {
-                            _ = sleep(Duration::from_secs(5)) => {
-                                continue; // Retry connection
+                            _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                                continue;
                             }
                             _ = shutdown_rx.recv() => {
                                 info!("Data collection shutdown requested during retry delay");
@@ -229,18 +218,13 @@ impl MarketDataService {
         &self,
         mut tick_rx: mpsc::Receiver<TickData>,
     ) -> Result<tokio::task::JoinHandle<()>, ServiceError> {
-        let repository = Arc::clone(&self.repository);
-        let batch_config = self.batch_config.clone();
+        let cache = Arc::clone(&self.cache);
         let stats = Arc::clone(&self.stats);
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let paper_trading = self.paper_trading.clone();
         let validator = Arc::clone(&self.validator);
 
         let handle = spawn(async move {
-            let mut batch_buffer = Vec::with_capacity(batch_config.max_batch_size);
-            let mut last_flush = Instant::now();
-            let mut flush_timer = interval(Duration::from_secs(batch_config.max_batch_time));
-
             // Add periodic health monitoring (every 30 seconds)
             let mut health_monitor = interval(Duration::from_secs(30));
             let mut last_tick_count = 0u64;
@@ -258,13 +242,20 @@ impl MarketDataService {
                                 if let Err(e) = validator.validate(&tick) {
                                     warn!("Tick validation failed for {}: {}", tick.symbol, e);
                                     metrics::TICKS_REJECTED_TOTAL.inc();
-                                    continue; // Skip invalid tick
+                                    continue;
                                 }
 
-                                // Update cache immediately
-                                Self::update_cache_async(&repository, &tick, &stats).await;
+                                // Update cache for strategy context
+                                if let Err(e) = cache.push_tick(&tick).await {
+                                    warn!("Failed to update cache for tick {}: {}", tick.trade_id, e);
+                                    let mut s = stats.lock().await;
+                                    s.cache_update_failures += 1;
+                                    metrics::CACHE_UPDATE_FAILURES_TOTAL.inc();
+                                } else {
+                                    debug!("Cache updated for symbol: {}", tick.symbol);
+                                }
 
-                                // Paper transaction processing
+                                // Paper trading processing
                                 if let Some(paper_trading_processor) = &paper_trading {
                                     let mut processor = paper_trading_processor.lock().await;
                                     if let Err(e) = processor.process_tick(&tick).await {
@@ -272,26 +263,12 @@ impl MarketDataService {
                                     }
                                 }
 
-                                // Add to batch buffer
-                                batch_buffer.push(tick);
-
                                 // Update stats and metrics
                                 {
                                     let mut s = stats.lock().await;
                                     s.total_ticks_processed += 1;
                                 }
                                 metrics::TICKS_PROCESSED_TOTAL.inc();
-
-                                // Check if the batch is full
-                                if batch_buffer.len() >= batch_config.max_batch_size {
-                                    Self::flush_batch_with_retry(
-                                        &repository,
-                                        &mut batch_buffer,
-                                        &batch_config,
-                                        &stats,
-                                    ).await;
-                                    last_flush = Instant::now();
-                                }
                             }
                             None => {
                                 warn!("Tick data channel closed");
@@ -300,63 +277,23 @@ impl MarketDataService {
                         }
                     }
 
-                    _ = flush_timer.tick() => {
-                        if !batch_buffer.is_empty() && last_flush.elapsed() >= Duration::from_secs(batch_config.max_batch_time) {
-                            debug!("Time-based batch flush triggered (batch size: {})", batch_buffer.len());
-                            Self::flush_batch_with_retry(
-                                &repository,
-                                &mut batch_buffer,
-                                &batch_config,
-                                &stats,
-                            ).await;
-                            last_flush = Instant::now();
-                        }
-                    }
-
                     _ = shutdown_rx.recv() => {
-                        info!("Processing shutdown requested, flushing remaining data");
-                        if !batch_buffer.is_empty() {
-                            Self::flush_batch_with_retry(
-                                &repository,
-                                &mut batch_buffer,
-                                &batch_config,
-                                &stats,
-                            ).await;
-                        }
+                        info!("Processing shutdown requested");
                         break;
                     }
 
                     _ = health_monitor.tick() => {
-                        // Periodic health check and metrics logging
                         let current_stats = stats.lock().await;
                         let current_tick_count = current_stats.total_ticks_processed;
                         let ticks_processed_since_last = current_tick_count - last_tick_count;
                         last_tick_count = current_tick_count;
 
-                        // Update batch buffer size metric
-                        metrics::BATCH_BUFFER_SIZE.set(batch_buffer.len() as i64);
-
                         info!(
-                            "Pipeline Health: {} ticks/30s | Total: {} | Batches: {} | Failed: {} | Retries: {} | Buffer: {}/{}",
+                            "Pipeline Health: {} ticks/30s | Total: {} | Cache failures: {}",
                             ticks_processed_since_last,
                             current_stats.total_ticks_processed,
-                            current_stats.total_batches_flushed,
-                            current_stats.total_failed_batches,
-                            current_stats.total_retry_attempts,
-                            batch_buffer.len(),
-                            batch_config.max_batch_size
+                            current_stats.cache_update_failures
                         );
-
-                        // Warn if batch buffer is getting full
-                        let buffer_utilization = (batch_buffer.len() as f64 / batch_config.max_batch_size as f64) * 100.0;
-                        if buffer_utilization > 80.0 {
-                            warn!(
-                                "Batch buffer {}% full ({}/{}), database writes may be slow",
-                                buffer_utilization as u32,
-                                batch_buffer.len(),
-                                batch_config.max_batch_size
-                            );
-                        }
                     }
 
                     _ = bar_timer.tick() => {
@@ -375,102 +312,5 @@ impl MarketDataService {
         });
 
         Ok(handle)
-    }
-
-    /// Update cache asynchronously (non-blocking)
-    async fn update_cache_async(
-        repository: &TickDataRepository,
-        tick: &TickData,
-        stats: &Arc<Mutex<BatchStats>>,
-    ) {
-        if let Err(e) = repository.get_cache().push_tick(tick).await {
-            warn!("Failed to update cache for tick {}: {}", tick.trade_id, e);
-
-            // Update failure stats and metrics
-            {
-                let mut s = stats.lock().await;
-                s.cache_update_failures += 1;
-            }
-            metrics::CACHE_UPDATE_FAILURES_TOTAL.inc();
-        } else {
-            debug!("Cache updated for symbol: {}", tick.symbol);
-        }
-    }
-
-    /// Flush batch to database with retry logic
-    async fn flush_batch_with_retry(
-        repository: &TickDataRepository,
-        batch_buffer: &mut Vec<TickData>,
-        config: &BatchConfig,
-        stats: &Arc<Mutex<BatchStats>>,
-    ) {
-        if batch_buffer.is_empty() {
-            return;
-        }
-
-        let batch_size = batch_buffer.len();
-        let mut attempt = 0;
-
-        loop {
-            // Measure batch insert duration
-            let timer = metrics::BATCH_INSERT_DURATION.start_timer();
-            let result = repository.batch_insert(batch_buffer.clone()).await;
-            timer.observe_duration();
-
-            match result {
-                Ok(inserted_count) => {
-                    info!(
-                        "Successfully flushed batch: {} ticks inserted",
-                        inserted_count
-                    );
-
-                    // Update success stats and metrics
-                    {
-                        let mut s = stats.lock().await;
-                        s.total_batches_flushed += 1;
-                        s.last_flush_time = Some(chrono::Utc::now());
-                    }
-                    metrics::BATCHES_FLUSHED_TOTAL.inc();
-
-                    batch_buffer.clear();
-                    break;
-                }
-                Err(e) => {
-                    attempt += 1;
-                    error!(
-                        "Batch insert failed (attempt {}/{}): {}",
-                        attempt, config.max_retry_attempts, e
-                    );
-
-                    // Update retry stats and metrics
-                    {
-                        let mut s = stats.lock().await;
-                        s.total_retry_attempts += 1;
-                    }
-                    metrics::BATCH_RETRIES_TOTAL.inc();
-
-                    if attempt >= config.max_retry_attempts {
-                        error!(
-                            "Batch insert failed after {} attempts, discarding {} ticks",
-                            config.max_retry_attempts, batch_size
-                        );
-
-                        // Update failure stats and metrics
-                        {
-                            let mut s = stats.lock().await;
-                            s.total_failed_batches += 1;
-                        }
-                        metrics::BATCHES_FAILED_TOTAL.inc();
-
-                        batch_buffer.clear();
-                        break;
-                    }
-
-                    // Wait before retry
-                    warn!("Retrying batch insert in {}ms...", config.retry_delay_ms);
-                    sleep(Duration::from_millis(config.retry_delay_ms)).await;
-                }
-            }
-        }
     }
 }

@@ -8,7 +8,7 @@ use tracing::{debug, error, info, warn};
 use crate::data::types::{LiveStrategyLog, OHLCData, Timeframe};
 
 use super::backfill::{BackfillRequest, BackfillService, BackfillSource};
-use super::cache::{TickDataCache, TieredCache};
+use super::cache::TickDataCache;
 use super::types::{
     BacktestDataInfo, DataError, DataResult, DbStats, SymbolDataInfo, TickData, TickQuery,
     TradeSide,
@@ -29,14 +29,14 @@ const MAX_BATCH_SIZE: usize = 1000;
 /// TickData repository for database operations
 pub struct TickDataRepository {
     pool: PgPool,
-    cache: TieredCache,
+    cache: Arc<dyn TickDataCache>,
     /// Optional backfill service for automatic data recovery
     backfill_service: Option<Arc<dyn BackfillService>>,
 }
 
 impl TickDataRepository {
     /// Create new repository instance
-    pub fn new(pool: PgPool, cache: TieredCache) -> Self {
+    pub fn new(pool: PgPool, cache: Arc<dyn TickDataCache>) -> Self {
         Self {
             pool,
             cache,
@@ -47,7 +47,7 @@ impl TickDataRepository {
     /// Create new repository instance with backfill service
     pub fn with_backfill(
         pool: PgPool,
-        cache: TieredCache,
+        cache: Arc<dyn TickDataCache>,
         backfill_service: Arc<dyn BackfillService>,
     ) -> Self {
         Self {
@@ -76,7 +76,7 @@ impl TickDataRepository {
     }
 
     /// Get cache reference
-    pub fn get_cache(&self) -> &TieredCache {
+    pub fn get_cache(&self) -> &Arc<dyn TickDataCache> {
         &self.cache
     }
 
@@ -1089,6 +1089,7 @@ fn calculate_required_duration_hours(timeframe: Timeframe, candle_count: u32) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::cache::TieredCache;
     use chrono::{Duration, Utc};
     use dotenv::dotenv;
     use rust_decimal::Decimal;
@@ -1122,6 +1123,7 @@ mod tests {
         let cache = TieredCache::new((100, 300), (&redis_url, 1000, 3600))
             .await
             .expect("Failed to create cache");
+        let cache: Arc<dyn TickDataCache> = Arc::new(cache);
         TickDataRepository::new(pool, cache)
     }
 

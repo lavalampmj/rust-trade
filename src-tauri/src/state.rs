@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use trading_common::data::{repository::TickDataRepository, cache::TieredCache};
+use trading_common::data::{repository::TickDataRepository, cache::{TieredCache, TickDataCache}};
 use sqlx::PgPool;
 use std::time::Duration;
 
@@ -32,6 +32,7 @@ impl AppState {
         let cache = create_gui_cache(&settings).await?;
         tracing::info!("Cache initialized");
 
+        let cache: Arc<dyn TickDataCache> = Arc::new(cache);
         let repository = TickDataRepository::new(pool, cache);
 
         Ok(Self {
