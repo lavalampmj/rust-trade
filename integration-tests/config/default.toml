@@ -12,7 +12,7 @@ base_price = 50000.0
 [emulator]
 replay_speed = 1.0          # Real-time (1.0x)
 embed_send_time = true      # Embed timestamp for latency measurement
-min_delay_us = 10           # Minimum inter-tick delay
+min_delay_us = 1            # Minimum inter-tick delay
 
 [strategies]
 rust_count = 5
@@ -29,4 +29,4 @@ max_p99_latency_us = 10000   # 10ms
 [test]
 timeout_secs = 120
 settling_time_secs = 5
-verify_db_persistence = false
+verify_db_persistence = true

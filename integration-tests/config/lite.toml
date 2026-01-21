@@ -11,13 +11,13 @@ exchange = "TEST"
 base_price = 50000.0
 
 [emulator]
-replay_speed = 2.0          # 2x speed for faster testing
+replay_speed = 4.0          # 2x speed for faster testing
 embed_send_time = true
 min_delay_us = 1
 
 [strategies]
 rust_count = 2
-python_count = 0            # Skip Python for faster tests
+python_count = 2            # Skip Python for faster tests
 strategy_type = "tick_counter"
 track_latency = true
 

@@ -19,6 +19,8 @@ use super::StrategyRunner;
 pub struct RustStrategyRunner {
     /// Runner identifier
     id: String,
+    /// Symbol this runner is subscribed to
+    symbol: String,
     /// The underlying strategy (wrapped in parking_lot::Mutex for interior mutability)
     strategy: parking_lot::Mutex<Box<dyn Strategy>>,
     /// Metrics for this runner
@@ -26,9 +28,10 @@ pub struct RustStrategyRunner {
 }
 
 impl RustStrategyRunner {
-    /// Create a new Rust strategy runner
+    /// Create a new Rust strategy runner subscribed to a specific symbol
     pub fn new(
         id: String,
+        symbol: String,
         strategy: Box<dyn Strategy>,
         sample_limit: usize,
     ) -> Self {
@@ -40,14 +43,15 @@ impl RustStrategyRunner {
 
         Self {
             id,
+            symbol,
             strategy: parking_lot::Mutex::new(strategy),
             metrics,
         }
     }
 
     /// Create a new Rust strategy runner with the default TestTickCounterStrategy
-    pub fn with_tick_counter(id: String, sample_limit: usize) -> Self {
-        Self::new(id, Box::new(TestTickCounterStrategy::new()), sample_limit)
+    pub fn with_tick_counter(id: String, symbol: String, sample_limit: usize) -> Self {
+        Self::new(id, symbol, Box::new(TestTickCounterStrategy::new()), sample_limit)
     }
 
     /// Get mutable access to the strategy
@@ -64,6 +68,10 @@ impl StrategyRunner for RustStrategyRunner {
 
     fn strategy_type(&self) -> &str {
         "rust"
+    }
+
+    fn subscribed_symbol(&self) -> &str {
+        &self.symbol
     }
 
     async fn process_tick(&self, tick: &NormalizedTick) {
@@ -137,10 +145,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_rust_runner() {
-        let runner = RustStrategyRunner::with_tick_counter("test_runner".to_string(), 1000);
+        let runner = RustStrategyRunner::with_tick_counter(
+            "test_runner".to_string(),
+            "TEST0000".to_string(),
+            1000,
+        );
 
         assert_eq!(runner.id(), "test_runner");
         assert_eq!(runner.strategy_type(), "rust");
+        assert_eq!(runner.subscribed_symbol(), "TEST0000");
         assert_eq!(runner.metrics().received_count(), 0);
 
         let tick = create_test_tick();
@@ -153,17 +166,23 @@ mod tests {
     async fn test_rust_runner_with_custom_strategy() {
         let runner = RustStrategyRunner::new(
             "test_runner".to_string(),
+            "TEST0001".to_string(),
             Box::new(TestTickCounterStrategy::new()),
             1000,
         );
 
         assert_eq!(runner.id(), "test_runner");
         assert_eq!(runner.strategy_type(), "rust");
+        assert_eq!(runner.subscribed_symbol(), "TEST0001");
     }
 
     #[tokio::test]
     async fn test_rust_runner_multiple_ticks() {
-        let runner = RustStrategyRunner::with_tick_counter("test_runner".to_string(), 1000);
+        let runner = RustStrategyRunner::with_tick_counter(
+            "test_runner".to_string(),
+            "TEST0000".to_string(),
+            1000,
+        );
 
         let tick = create_test_tick();
         for _ in 0..100 {
@@ -175,7 +194,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_rust_runner_latency_recording() {
-        let runner = RustStrategyRunner::with_tick_counter("test_runner".to_string(), 1000);
+        let runner = RustStrategyRunner::with_tick_counter(
+            "test_runner".to_string(),
+            "TEST0000".to_string(),
+            1000,
+        );
 
         // Create tick with recent timestamp
         let tick = NormalizedTick::with_details(

@@ -23,6 +23,8 @@ use super::StrategyRunner;
 pub struct PythonStrategyRunner {
     /// Runner identifier
     id: String,
+    /// Symbol this runner is subscribed to
+    symbol: String,
     /// Metrics for this runner
     metrics: Arc<StrategyMetrics>,
     /// Flag to indicate if Python environment is available
@@ -30,8 +32,8 @@ pub struct PythonStrategyRunner {
 }
 
 impl PythonStrategyRunner {
-    /// Create a new Python strategy runner
-    pub fn new(id: String, sample_limit: usize) -> Self {
+    /// Create a new Python strategy runner subscribed to a specific symbol
+    pub fn new(id: String, symbol: String, sample_limit: usize) -> Self {
         let metrics = Arc::new(StrategyMetrics::new(
             id.clone(),
             "python".to_string(),
@@ -43,6 +45,7 @@ impl PythonStrategyRunner {
 
         Self {
             id,
+            symbol,
             metrics,
             python_available,
         }
@@ -83,6 +86,10 @@ impl StrategyRunner for PythonStrategyRunner {
 
     fn strategy_type(&self) -> &str {
         "python"
+    }
+
+    fn subscribed_symbol(&self) -> &str {
+        &self.symbol
     }
 
     async fn process_tick(&self, tick: &NormalizedTick) {
@@ -137,16 +144,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_python_runner() {
-        let runner = PythonStrategyRunner::new("python_0".to_string(), 1000);
+        let runner = PythonStrategyRunner::new("python_0".to_string(), "TEST0000".to_string(), 1000);
 
         assert_eq!(runner.id(), "python_0");
         assert_eq!(runner.strategy_type(), "python");
+        assert_eq!(runner.subscribed_symbol(), "TEST0000");
         assert_eq!(runner.metrics().received_count(), 0);
     }
 
     #[tokio::test]
     async fn test_python_runner_process_tick() {
-        let runner = PythonStrategyRunner::new("python_0".to_string(), 1000);
+        let runner = PythonStrategyRunner::new("python_0".to_string(), "TEST0000".to_string(), 1000);
 
         let tick = create_test_tick();
         runner.process_tick(&tick).await;
@@ -156,7 +164,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_python_runner_multiple_ticks() {
-        let runner = PythonStrategyRunner::new("python_0".to_string(), 1000);
+        let runner = PythonStrategyRunner::new("python_0".to_string(), "TEST0000".to_string(), 1000);
 
         let tick = create_test_tick();
         for _ in 0..50 {
@@ -168,7 +176,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_python_runner_latency() {
-        let runner = PythonStrategyRunner::new("python_0".to_string(), 1000);
+        let runner = PythonStrategyRunner::new("python_0".to_string(), "TEST0000".to_string(), 1000);
 
         // Create tick with recent timestamp
         let tick = NormalizedTick::with_details(
@@ -194,7 +202,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_python_runner_shutdown() {
-        let runner = PythonStrategyRunner::new("python_0".to_string(), 1000);
+        let runner = PythonStrategyRunner::new("python_0".to_string(), "TEST0000".to_string(), 1000);
 
         let tick = create_test_tick();
         runner.process_tick(&tick).await;

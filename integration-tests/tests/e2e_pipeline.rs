@@ -34,11 +34,19 @@ async fn run_pipeline_test(config: IntegrationTestConfig) -> integration_tests::
     // 2. Create metrics collector
     let metrics_collector = MetricsCollector::new(config.metrics.clone());
 
-    // 3. Create strategy runners
+    // 3. Create strategy runners with symbol subscriptions
+    // Each runner subscribes to a specific symbol (rust_0 -> TEST0000, etc.)
+    let symbols = bundle.metadata.symbols.clone();
     let manager = Arc::new(StrategyRunnerManager::from_config(
         &config.strategies,
+        &symbols,
         config.metrics.latency_sample_limit,
     ));
+
+    // Log subscription info
+    for (id, strategy_type, symbol) in manager.subscription_info() {
+        println!("  {} ({}) -> {}", id, strategy_type, symbol);
+    }
 
     // Note: Don't register strategies with metrics_collector since runners
     // maintain their own metrics. We'll pass them directly to build_results.
@@ -50,7 +58,7 @@ async fn run_pipeline_test(config: IntegrationTestConfig) -> integration_tests::
     // 5. Connect emulator
     emulator.connect().await.expect("Failed to connect emulator");
 
-    // 6. Set up callback to broadcast ticks to all strategy runners
+    // 6. Set up callback to route ticks to subscribed strategy runners
     let manager_clone = manager.clone();
     let callback = Arc::new(move |event: StreamEvent| {
         if let StreamEvent::Tick(tick) = event {
@@ -58,7 +66,8 @@ async fn run_pipeline_test(config: IntegrationTestConfig) -> integration_tests::
             let manager = manager_clone.clone();
             let tick = tick.clone();
             tokio::spawn(async move {
-                manager.broadcast_tick(&tick).await;
+                // Route tick only to runners subscribed to this symbol
+                manager.route_tick(&tick).await;
             });
         }
     });
@@ -648,10 +657,12 @@ async fn test_database_persistence() {
     db_writer.connect().await.expect("Failed to connect to database");
     let db_sender = db_writer.start().expect("Failed to start db writer");
 
-    // 3. Create metrics collector and strategy runners
+    // 3. Create metrics collector and strategy runners with symbol subscriptions
     let metrics_collector = MetricsCollector::new(config.metrics.clone());
+    let symbols = bundle.metadata.symbols.clone();
     let manager = Arc::new(StrategyRunnerManager::from_config(
         &config.strategies,
+        &symbols,
         config.metrics.latency_sample_limit,
     ));
 
@@ -660,16 +671,16 @@ async fn test_database_persistence() {
     let emulator_metrics = emulator.metrics_clone();
     emulator.connect().await.expect("Failed to connect emulator");
 
-    // 5. Set up callback that broadcasts to both strategy runners AND database writer
+    // 5. Set up callback that routes to subscribed strategy runners AND database writer
     let manager_clone = manager.clone();
     let db_sender_clone = db_sender.clone();
     let callback = Arc::new(move |event: StreamEvent| {
         if let StreamEvent::Tick(tick) = event {
-            // Send to strategy runners
+            // Route to strategy runners subscribed to this symbol
             let manager = manager_clone.clone();
             let tick_clone = tick.clone();
             tokio::spawn(async move {
-                manager.broadcast_tick(&tick_clone).await;
+                manager.route_tick(&tick_clone).await;
             });
 
             // Send to database writer
