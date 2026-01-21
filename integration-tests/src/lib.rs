@@ -74,6 +74,7 @@ pub mod metrics;
 pub mod report;
 pub mod runner;
 pub mod strategies;
+pub mod transport;
 
 // Re-export commonly used types
 pub use config::{
@@ -89,3 +90,7 @@ pub use runner::{
     StrategyRunnerManager,
 };
 pub use strategies::TestTickCounterStrategy;
+pub use transport::{
+    create_transport, DirectTransport, TickTransport, TransportConfig, TransportMode,
+    WebSocketConfig, WebSocketTransport,
+};

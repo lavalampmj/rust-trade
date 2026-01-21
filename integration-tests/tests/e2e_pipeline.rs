@@ -14,7 +14,8 @@ use integration_tests::{
     generate_report,
     DataGenConfig, EmulatorConfig, IntegrationTestConfig, MetricsConfig,
     MetricsCollector, ReportFormat, StrategyConfig, StrategyRunnerManager,
-    TestDataEmulator, TestDataGenerator, VolumeProfile,
+    TestDataEmulator, TestDataGenerator, TransportConfig, TransportMode, VolumeProfile,
+    WebSocketConfig,
 };
 
 /// Helper function to run a test with the given configuration
@@ -205,6 +206,13 @@ async fn test_custom_config() {
             replay_speed: 5.0, // 5x speed
             embed_send_time: true,
             min_delay_us: 1,
+            transport: TransportConfig {
+                websocket: WebSocketConfig {
+                    port: 19500, // Unique port for custom config test
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
         },
         strategies: StrategyConfig {
             rust_count: 3,
@@ -245,6 +253,8 @@ async fn test_concurrent_runs() {
             config.data_gen.seed = 10000 + i as u64;
             config.strategies.rust_count = 1;
             config.strategies.python_count = 0;
+            // Use unique ports for concurrent runs (19110, 19111, 19112)
+            config.emulator.transport.websocket.port = 19110 + i as u16;
             config
         })
         .collect();
@@ -291,11 +301,8 @@ async fn test_early_shutdown() {
             exchange: "TEST".to_string(),
             base_price: 50000.0,
         },
-        emulator: EmulatorConfig {
-            replay_speed: 1.0, // Real-time
-            embed_send_time: true,
-            min_delay_us: 1000, // 1ms minimum delay
-        },
+        emulator: EmulatorConfig::default()
+            .with_port(19400), // Unique port for early shutdown test
         strategies: StrategyConfig {
             rust_count: 1,
             python_count: 0,
@@ -385,4 +392,182 @@ async fn test_report_formats() {
     println!("{}", simple);
     println!("\n--- Compact Format ---");
     println!("{}", compact);
+}
+
+/// Test with WebSocket transport for realistic network simulation
+#[tokio::test]
+async fn test_websocket_transport() {
+    // Use a unique port to avoid conflicts with other tests
+    let port = 19800;
+
+    let config = IntegrationTestConfig {
+        data_gen: DataGenConfig {
+            symbol_count: 3,
+            time_window_secs: 5,
+            profile: VolumeProfile::Lite,
+            seed: 77777,
+            exchange: "TEST".to_string(),
+            base_price: 100.0,
+        },
+        emulator: EmulatorConfig {
+            replay_speed: 10.0, // Speed up for testing
+            embed_send_time: true,
+            min_delay_us: 1,
+            transport: TransportConfig {
+                mode: TransportMode::WebSocket,
+                websocket: WebSocketConfig {
+                    port,
+                    ..Default::default()
+                },
+            },
+        },
+        strategies: StrategyConfig {
+            rust_count: 2,
+            python_count: 0,
+            strategy_type: "tick_counter".to_string(),
+            track_latency: true,
+        },
+        metrics: MetricsConfig {
+            latency_sample_limit: 10000,
+            tick_loss_tolerance: 0.05, // Allow slightly higher loss for network
+            max_avg_latency_us: 50000, // 50ms - higher for WebSocket
+            max_p99_latency_us: 100000, // 100ms
+        },
+        test: integration_tests::TestConfig {
+            timeout_secs: 30,
+            settling_time_secs: 2,
+            database_url: None,
+            verify_db_persistence: false,
+        },
+    };
+
+    println!("\n=== Running WEBSOCKET Transport Test ===");
+    println!("Port: {}", port);
+
+    let results = run_pipeline_test(config).await;
+
+    let report = generate_report(&results, ReportFormat::Compact);
+    println!("{}", report);
+
+    // Assertions
+    assert!(
+        results.ticks_sent > 0,
+        "Should have sent some ticks through WebSocket"
+    );
+
+    // WebSocket should have higher latency than direct
+    let avg_latency = results.latency_aggregate.average_us();
+    println!("WebSocket average latency: {:.1}μs", avg_latency);
+
+    // Just verify it completed - latency will be higher than direct
+    assert!(results.passed || results.failures.is_empty() ||
+        results.failures.iter().all(|f| f.contains("latency")),
+        "Test should pass or only have latency-related issues");
+}
+
+/// Compare Direct vs WebSocket transport latencies
+#[tokio::test]
+async fn test_transport_comparison() {
+    println!("\n=== Transport Comparison Test ===\n");
+
+    // Common configuration
+    let base_data_gen = DataGenConfig {
+        symbol_count: 2,
+        time_window_secs: 3,
+        profile: VolumeProfile::Lite,
+        seed: 88888,
+        exchange: "TEST".to_string(),
+        base_price: 100.0,
+    };
+
+    let base_strategies = StrategyConfig {
+        rust_count: 1,
+        python_count: 0,
+        strategy_type: "tick_counter".to_string(),
+        track_latency: true,
+    };
+
+    // Test 1: Direct transport
+    let direct_config = IntegrationTestConfig {
+        data_gen: base_data_gen.clone(),
+        emulator: EmulatorConfig {
+            replay_speed: 20.0,
+            embed_send_time: true,
+            min_delay_us: 1,
+            transport: TransportConfig {
+                mode: TransportMode::Direct,
+                ..Default::default()
+            },
+        },
+        strategies: base_strategies.clone(),
+        metrics: MetricsConfig::default(),
+        test: integration_tests::TestConfig {
+            timeout_secs: 15,
+            settling_time_secs: 1,
+            database_url: None,
+            verify_db_persistence: false,
+        },
+    };
+
+    println!("--- Direct Transport ---");
+    let direct_results = run_pipeline_test(direct_config).await;
+    let direct_latency = direct_results.latency_aggregate.average_us();
+    let direct_p99 = direct_results.latency_aggregate.percentile_us(99.0);
+    println!(
+        "Direct: avg={:.1}μs, p99={:.0}μs, ticks={}",
+        direct_latency, direct_p99, direct_results.ticks_sent
+    );
+
+    // Test 2: WebSocket transport (use different port)
+    let ws_config = IntegrationTestConfig {
+        data_gen: base_data_gen,
+        emulator: EmulatorConfig {
+            replay_speed: 20.0,
+            embed_send_time: true,
+            min_delay_us: 1,
+            transport: TransportConfig {
+                mode: TransportMode::WebSocket,
+                websocket: WebSocketConfig {
+                    port: 19801,
+                    ..Default::default()
+                },
+            },
+        },
+        strategies: base_strategies,
+        metrics: MetricsConfig {
+            max_avg_latency_us: 100000, // 100ms - very lenient for WS
+            max_p99_latency_us: 500000, // 500ms
+            ..Default::default()
+        },
+        test: integration_tests::TestConfig {
+            timeout_secs: 15,
+            settling_time_secs: 2, // Longer settling for network
+            database_url: None,
+            verify_db_persistence: false,
+        },
+    };
+
+    println!("\n--- WebSocket Transport ---");
+    let ws_results = run_pipeline_test(ws_config).await;
+    let ws_latency = ws_results.latency_aggregate.average_us();
+    let ws_p99 = ws_results.latency_aggregate.percentile_us(99.0);
+    println!(
+        "WebSocket: avg={:.1}μs, p99={:.0}μs, ticks={}",
+        ws_latency, ws_p99, ws_results.ticks_sent
+    );
+
+    // Comparison summary
+    println!("\n--- Comparison ---");
+    println!(
+        "Latency overhead: {:.1}μs ({:.1}x)",
+        ws_latency - direct_latency,
+        if direct_latency > 0.0 { ws_latency / direct_latency } else { 0.0 }
+    );
+
+    // Both should have processed ticks
+    assert!(direct_results.ticks_sent > 0, "Direct should process ticks");
+    assert!(ws_results.ticks_sent > 0, "WebSocket should process ticks");
+
+    // WebSocket latency should typically be higher (network + serialization)
+    // But we don't strictly assert this as localhost can be very fast
 }

@@ -66,6 +66,14 @@ parking_lot = "0.12"
 # Configuration
 dotenv = "0.15"
 
+# WebSocket transport
+tokio-tungstenite = "0.24"
+futures-util = { version = "0.3", features = ["sink"] }
+
+# Binary serialization (faster than JSON, preserves DBN efficiency)
+# Using MessagePack for full serde compatibility with efficient binary format
+rmp-serde = "1.3"
+
 [dev-dependencies]
 tempfile = "3.10"
 tokio-test = "0.4"

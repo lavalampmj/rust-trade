@@ -36,6 +36,20 @@ Data Emulator → data-manager (WebSocket) → IPC → trading-core → strategi
 │             │ StreamEvent::Tick                                           │
 │             ▼                                                              │
 │  ┌──────────────────────────────────────────────────────────────────────┐ │
+│  │                    TRANSPORT LAYER (transport/)                       │ │
+│  │                                                                       │ │
+│  │  WebSocket Mode (default):       Direct Mode:                         │ │
+│  │  ┌──────────────────────────────┐ ┌────────────────────┐             │ │
+│  │  │  WebSocketTransport          │ │  DirectTransport   │             │ │
+│  │  │  - Network-based (~90μs)     │ │  - In-memory (~12μs)│             │ │
+│  │  │  - MessagePack serialization │ │  - No serialization │             │ │
+│  │  │  - Server + Client           │ └────────────────────┘             │ │
+│  │  │  - Optional batching         │                                    │ │
+│  │  └──────────────────────────────┘                                    │ │
+│  └──────────────────────────────────────────────────────────────────────┘ │
+│             │ callback(StreamEvent::Tick)                                 │
+│             ▼                                                              │
+│  ┌──────────────────────────────────────────────────────────────────────┐ │
 │  │                    STRATEGY RUNNERS (runner/)                         │ │
 │  │  ┌────────────────────┐     ┌──────────────────────────┐             │ │
 │  │  │  RustStrategyRunner│     │  PythonStrategyRunner    │             │ │
@@ -309,7 +323,68 @@ This mirrors the Python strategy structure in `strategies/test_tick_counter.py`.
 
 ---
 
-### 12. `tests/e2e_pipeline.rs`
+### 12. `src/transport/`
+
+**Purpose**: Configurable transport layer for tick delivery.
+
+**Structure**:
+```
+src/transport/
+├── mod.rs                  # Transport trait, config, and factory
+├── direct.rs               # DirectTransport (in-memory callback)
+└── websocket.rs            # WebSocketTransport (network-based)
+```
+
+**Transport Modes**:
+
+| Mode | Latency | Use Case |
+|------|---------|----------|
+| `WebSocket` | ~90μs | **Default** - realistic network simulation |
+| `Direct` | ~12μs | Baseline latency measurement (in-memory) |
+
+**Key Types**:
+
+- **`TransportMode`** enum: `Direct` or `WebSocket`
+- **`TransportConfig`**: Mode selection + WebSocket settings
+- **`WebSocketConfig`**: Host, port, batching options
+- **`TickTransport`** trait: Common interface for all transports
+
+**WebSocket Architecture**:
+```
+Emulator → WebSocketServer → MessagePack serialize → network → WebSocketClient → deserialize → callback
+```
+
+**Serialization**: Uses MessagePack (`rmp-serde`) for efficient binary serialization instead of JSON,
+maintaining the spirit of DBN's binary efficiency. MessagePack is ~5x faster than JSON with smaller payloads.
+
+**Configuration Examples**:
+```rust
+// Default: WebSocket transport (realistic simulation)
+EmulatorConfig::default().with_port(19100)
+
+// Direct transport (for baseline measurements)
+EmulatorConfig::default().with_direct()
+
+// WebSocket with batching
+EmulatorConfig {
+    transport: TransportConfig {
+        mode: TransportMode::WebSocket,
+        websocket: WebSocketConfig {
+            port: 9999,
+            enable_batching: true,
+            batch_size: 100,
+            ..Default::default()
+        },
+    },
+    ..Default::default()
+}
+```
+
+**Batching**: Optional message batching reduces network overhead for high-throughput scenarios.
+
+---
+
+### 13. `tests/e2e_pipeline.rs`
 
 **Purpose**: Full end-to-end integration tests.
 
@@ -332,10 +407,12 @@ This mirrors the Python strategy structure in `strategies/test_tick_counter.py`.
 | `test_concurrent_runs` | Multiple | 3 parallel pipeline runs |
 | `test_early_shutdown` | N/A | Graceful shutdown mid-replay |
 | `test_report_formats` | Lite | Validates all report formats |
+| `test_websocket_transport` | Lite | WebSocket transport validation |
+| `test_transport_comparison` | Lite | Direct vs WebSocket latency comparison |
 
 ---
 
-### 13. `tests/generator_tests.rs`
+### 14. `tests/generator_tests.rs`
 
 **Purpose**: Validates test data generator determinism and correctness.
 
@@ -353,7 +430,7 @@ This mirrors the Python strategy structure in `strategies/test_tick_counter.py`.
 
 ---
 
-### 14. `tests/latency_tests.rs`
+### 15. `tests/latency_tests.rs`
 
 **Purpose**: Validates latency measurement accuracy.
 

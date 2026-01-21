@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Duration;
 
+use crate::transport::{TransportConfig, TransportMode, WebSocketConfig};
+
 /// Volume profile for test data generation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VolumeProfile {
@@ -102,6 +104,9 @@ pub struct EmulatorConfig {
     /// Minimum inter-tick delay in microseconds
     #[serde(default = "default_min_delay_us")]
     pub min_delay_us: u64,
+    /// Transport configuration (Direct or WebSocket)
+    #[serde(default)]
+    pub transport: TransportConfig,
 }
 
 fn default_replay_speed() -> f64 {
@@ -122,7 +127,37 @@ impl Default for EmulatorConfig {
             replay_speed: 1.0,
             embed_send_time: true,
             min_delay_us: 10,
+            transport: TransportConfig::default(),
         }
+    }
+}
+
+impl EmulatorConfig {
+    /// Set WebSocket port (works with default WebSocket transport)
+    pub fn with_port(mut self, port: u16) -> Self {
+        self.transport.websocket.port = port;
+        self
+    }
+
+    /// Create config with WebSocket transport on specified port
+    pub fn with_websocket(mut self, port: u16) -> Self {
+        self.transport = TransportConfig {
+            mode: TransportMode::WebSocket,
+            websocket: WebSocketConfig {
+                port,
+                ..Default::default()
+            },
+        };
+        self
+    }
+
+    /// Create config with Direct transport (in-memory, for baseline measurements)
+    pub fn with_direct(mut self) -> Self {
+        self.transport = TransportConfig {
+            mode: TransportMode::Direct,
+            ..Default::default()
+        };
+        self
     }
 }
 
@@ -274,7 +309,7 @@ impl IntegrationTestConfig {
                 exchange: "TEST".to_string(),
                 base_price: 50000.0,
             },
-            emulator: EmulatorConfig::default(),
+            emulator: EmulatorConfig::default().with_port(19100),
             strategies: StrategyConfig {
                 rust_count: 2,
                 python_count: 0,
@@ -302,7 +337,7 @@ impl IntegrationTestConfig {
                 exchange: "TEST".to_string(),
                 base_price: 50000.0,
             },
-            emulator: EmulatorConfig::default(),
+            emulator: EmulatorConfig::default().with_port(19200),
             strategies: StrategyConfig {
                 rust_count: 5,
                 python_count: 5,
@@ -330,7 +365,7 @@ impl IntegrationTestConfig {
                 exchange: "TEST".to_string(),
                 base_price: 50000.0,
             },
-            emulator: EmulatorConfig::default(),
+            emulator: EmulatorConfig::default().with_port(19300),
             strategies: StrategyConfig {
                 rust_count: 10,
                 python_count: 10,

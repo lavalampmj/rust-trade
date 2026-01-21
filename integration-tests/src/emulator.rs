@@ -3,6 +3,15 @@
 //! This module provides a `TestDataEmulator` that replays pre-generated test data
 //! through the data pipeline, simulating a live data feed. It implements the
 //! `LiveStreamProvider` trait from data-manager.
+//!
+//! # Transport Modes
+//!
+//! The emulator supports two transport modes:
+//!
+//! - **Direct**: In-memory callback (default, lowest latency)
+//! - **WebSocket**: Network transport for realistic latency simulation
+//!
+//! Configure via `EmulatorConfig::transport.mode`.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -24,6 +33,7 @@ use trading_common::data::dbn_types::{TradeMsgExt, TradeSideCompat};
 
 use crate::config::EmulatorConfig;
 use crate::generator::TestDataBundle;
+use crate::transport::{create_transport, TickTransport, TransportMode};
 
 /// Metrics collected during emulation
 #[derive(Debug, Clone, Default)]
@@ -187,10 +197,10 @@ impl TestDataEmulator {
         Duration::from_micros(delay_micros)
     }
 
-    /// Replay all ticks through the callback
+    /// Replay all ticks through the transport layer
     async fn replay_ticks(
         &self,
-        callback: StreamCallback,
+        transport: &dyn TickTransport,
         mut shutdown_rx: broadcast::Receiver<()>,
     ) -> ProviderResult<()> {
         let ticks = &self.bundle.ticks;
@@ -226,12 +236,20 @@ impl TestDataEmulator {
             // Convert to NormalizedTick with timestamp rewriting
             let (normalized, _ts_in_delta) = self.trade_msg_to_normalized_tick(tick, &symbol);
 
-            // Send through callback
-            callback(StreamEvent::Tick(normalized));
-            self.metrics.inc_sent();
+            // Send through transport layer
+            if transport.send(StreamEvent::Tick(normalized)).await.is_ok() {
+                self.metrics.inc_sent();
+            } else {
+                self.metrics.inc_dropped();
+            }
         }
 
         Ok(())
+    }
+
+    /// Get the transport mode being used
+    pub fn transport_mode(&self) -> TransportMode {
+        self.config.transport.mode
     }
 }
 
@@ -280,26 +298,40 @@ impl LiveStreamProvider for TestDataEmulator {
             return Err(ProviderError::NotConnected);
         }
 
-        // Notify connection status
-        callback(StreamEvent::Status(ConnectionStatus::Connected));
-
+        let transport_mode = self.config.transport.mode;
         tracing::info!(
-            "Starting emulator replay: {} ticks, {} symbols",
+            "Starting emulator replay: {} ticks, {} symbols, transport={:?}",
             self.bundle.ticks.len(),
-            self.bundle.metadata.symbols.len()
+            self.bundle.metadata.symbols.len(),
+            transport_mode
         );
 
-        // Replay ticks
-        self.replay_ticks(callback.clone(), shutdown_rx).await?;
+        // Create and start transport
+        let mut transport = create_transport(
+            &self.config.transport,
+            callback.clone(),
+            shutdown_rx.resubscribe(),
+        );
+        transport.start().await?;
+
+        // Notify connection status through transport
+        transport.send(StreamEvent::Status(ConnectionStatus::Connected)).await?;
+
+        // Replay ticks through transport
+        self.replay_ticks(transport.as_ref(), shutdown_rx).await?;
 
         tracing::info!(
-            "Emulator replay complete: {} sent, {} dropped",
+            "Emulator replay complete: {} sent, {} dropped, transport_sent={}",
             self.metrics.sent_count(),
-            self.metrics.dropped_count()
+            self.metrics.dropped_count(),
+            transport.sent_count()
         );
 
-        // Notify completion
-        callback(StreamEvent::Status(ConnectionStatus::Disconnected));
+        // Notify completion through transport
+        let _ = transport.send(StreamEvent::Status(ConnectionStatus::Disconnected)).await;
+
+        // Stop transport
+        transport.stop().await?;
 
         Ok(())
     }
@@ -423,6 +455,7 @@ mod tests {
             replay_speed: 100.0, // Speed up for testing
             embed_send_time: true,
             min_delay_us: 1,
+            transport: Default::default(),
         };
         let mut emulator = TestDataEmulator::new(bundle, config);
 
@@ -461,6 +494,7 @@ mod tests {
             replay_speed: 1.0, // Real-time (will be slow)
             embed_send_time: true,
             min_delay_us: 1000, // 1ms minimum
+            transport: Default::default(),
         };
         let mut emulator = TestDataEmulator::new(bundle.clone(), config);
 
