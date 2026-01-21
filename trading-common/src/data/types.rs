@@ -20,33 +20,57 @@ pub enum TradeSide {
     Sell,
 }
 
-/// Standard trading data structure - corresponds one-to-one with the tick_data table fields
+/// Standard trading data structure - corresponds one-to-one with the market_ticks table fields
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TickData {
-    /// UTC timestamp, supports millisecond precision
+    /// Event timestamp (ts_event in database)
     pub timestamp: DateTime<Utc>,
+
+    /// Receive timestamp (ts_recv in database)
+    #[serde(default = "Utc::now")]
+    pub ts_recv: DateTime<Utc>,
 
     /// Trading pair, such as "BTCUSDT"
     pub symbol: String,
 
+    /// Exchange name (e.g., "BINANCE", "DATABENTO")
+    #[serde(default = "default_exchange")]
+    pub exchange: String,
+
     /// Trading price
     pub price: Decimal,
 
-    /// Trading quantity
+    /// Trading quantity (size in database)
     pub quantity: Decimal,
 
     /// Trading direction
     pub side: TradeSide,
 
-    /// Original transaction ID
+    /// Data provider (e.g., "BINANCE", "DATABENTO")
+    #[serde(default = "default_provider")]
+    pub provider: String,
+
+    /// Provider's original transaction ID (provider_trade_id in database)
     pub trade_id: String,
 
     /// Whether the buyer is the maker
     pub is_buyer_maker: bool,
+
+    /// Sequence number for ordering
+    #[serde(default)]
+    pub sequence: i64,
+}
+
+fn default_exchange() -> String {
+    "UNKNOWN".to_string()
+}
+
+fn default_provider() -> String {
+    "UNKNOWN".to_string()
 }
 
 impl TickData {
-    /// New TickData
+    /// New TickData with minimal required fields (uses defaults for exchange/provider/sequence)
     pub fn new(
         timestamp: DateTime<Utc>,
         symbol: String,
@@ -58,12 +82,45 @@ impl TickData {
     ) -> Self {
         Self {
             timestamp,
+            ts_recv: timestamp, // Default to same as event time
             symbol,
+            exchange: "UNKNOWN".to_string(),
             price,
             quantity,
             side,
+            provider: "UNKNOWN".to_string(),
             trade_id,
             is_buyer_maker,
+            sequence: 0,
+        }
+    }
+
+    /// Create TickData with all fields specified
+    pub fn with_details(
+        timestamp: DateTime<Utc>,
+        ts_recv: DateTime<Utc>,
+        symbol: String,
+        exchange: String,
+        price: Decimal,
+        quantity: Decimal,
+        side: TradeSide,
+        provider: String,
+        trade_id: String,
+        is_buyer_maker: bool,
+        sequence: i64,
+    ) -> Self {
+        Self {
+            timestamp,
+            ts_recv,
+            symbol,
+            exchange,
+            price,
+            quantity,
+            side,
+            provider,
+            trade_id,
+            is_buyer_maker,
+            sequence,
         }
     }
 
@@ -77,15 +134,7 @@ impl TickData {
         trade_id: String,
         is_buyer_maker: bool,
     ) -> Self {
-        Self {
-            timestamp,
-            symbol,
-            price,
-            quantity,
-            side,
-            trade_id,
-            is_buyer_maker,
-        }
+        Self::new(timestamp, symbol, price, quantity, side, trade_id, is_buyer_maker)
     }
 }
 
@@ -107,11 +156,37 @@ pub struct DbStats {
 // =================================================================
 
 impl TradeSide {
-    /// Convert to database string representation
+    /// Convert to database string representation (single char: 'B' or 'S')
     pub fn as_db_str(&self) -> &'static str {
         match self {
-            TradeSide::Buy => "BUY",
-            TradeSide::Sell => "SELL",
+            TradeSide::Buy => "B",
+            TradeSide::Sell => "S",
+        }
+    }
+
+    /// Convert to database char representation
+    pub fn as_db_char(&self) -> char {
+        match self {
+            TradeSide::Buy => 'B',
+            TradeSide::Sell => 'S',
+        }
+    }
+
+    /// Parse from database char ('B' or 'S')
+    pub fn from_db_char(c: char) -> Option<Self> {
+        match c {
+            'B' => Some(TradeSide::Buy),
+            'S' => Some(TradeSide::Sell),
+            _ => None,
+        }
+    }
+
+    /// Parse from database string ('B', 'S', 'BUY', 'SELL')
+    pub fn from_db_str(s: &str) -> Option<Self> {
+        match s.to_uppercase().as_str() {
+            "B" | "BUY" => Some(TradeSide::Buy),
+            "S" | "SELL" => Some(TradeSide::Sell),
+            _ => None,
         }
     }
 
@@ -167,14 +242,24 @@ impl TickData {
     ///
     /// Requires symbol lookup since TradeMsg only contains instrument_id
     pub fn from_trade_msg(msg: &TradeMsg, symbol: String) -> Self {
+        Self::from_trade_msg_with_exchange(msg, symbol, "UNKNOWN".to_string())
+    }
+
+    /// Create TickData from TradeMsg with explicit exchange
+    pub fn from_trade_msg_with_exchange(msg: &TradeMsg, symbol: String, exchange: String) -> Self {
+        let ts = msg.timestamp();
         TickData {
-            timestamp: msg.timestamp(),
+            timestamp: ts,
+            ts_recv: ts, // Use same timestamp for recv
             symbol,
+            exchange: exchange.clone(),
             price: msg.price_decimal(),
             quantity: msg.size_decimal(),
             side: TradeSide::from_dbn_side(msg.trade_side()),
+            provider: exchange, // Use exchange as provider
             trade_id: msg.sequence.to_string(),
             is_buyer_maker: msg.side as u8 as char == 'A', // Ask side = buyer is maker
+            sequence: msg.sequence as i64,
         }
     }
 }
@@ -803,14 +888,19 @@ mod tests {
         quantity: &str,
         timestamp_offset_secs: i64,
     ) -> TickData {
+        let ts = Utc::now() + Duration::seconds(timestamp_offset_secs);
         TickData {
-            timestamp: Utc::now() + Duration::seconds(timestamp_offset_secs),
+            timestamp: ts,
+            ts_recv: ts,
             symbol: symbol.to_string(),
+            exchange: "TEST".to_string(),
             price: Decimal::from_str(price).unwrap(),
             quantity: Decimal::from_str(quantity).unwrap(),
             side: TradeSide::Buy,
+            provider: "TEST".to_string(),
             trade_id: format!("trade_{}", timestamp_offset_secs),
             is_buyer_maker: false,
+            sequence: timestamp_offset_secs,
         }
     }
 
@@ -970,30 +1060,42 @@ mod tests {
         let ticks = vec![
             TickData {
                 timestamp: base_time,
+                ts_recv: base_time,
                 symbol: "BTCUSDT".to_string(),
+                exchange: "TEST".to_string(),
                 price: Decimal::from_str("50000").unwrap(),
                 quantity: Decimal::from_str("1.0").unwrap(),
                 side: TradeSide::Buy,
+                provider: "TEST".to_string(),
                 trade_id: "1".to_string(),
                 is_buyer_maker: false,
+                sequence: 1,
             },
             TickData {
                 timestamp: base_time + Duration::seconds(10),
+                ts_recv: base_time + Duration::seconds(10),
                 symbol: "BTCUSDT".to_string(),
+                exchange: "TEST".to_string(),
                 price: Decimal::from_str("50100").unwrap(),
                 quantity: Decimal::from_str("1.0").unwrap(),
                 side: TradeSide::Buy,
+                provider: "TEST".to_string(),
                 trade_id: "2".to_string(),
                 is_buyer_maker: false,
+                sequence: 2,
             },
             TickData {
                 timestamp: base_time + Duration::seconds(20),
+                ts_recv: base_time + Duration::seconds(20),
                 symbol: "BTCUSDT".to_string(),
+                exchange: "TEST".to_string(),
                 price: Decimal::from_str("50200").unwrap(),
                 quantity: Decimal::from_str("1.0").unwrap(),
                 side: TradeSide::Buy,
+                provider: "TEST".to_string(),
                 trade_id: "3".to_string(),
                 is_buyer_maker: false,
+                sequence: 3,
             },
         ];
 

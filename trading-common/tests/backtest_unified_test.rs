@@ -82,15 +82,20 @@ fn create_test_ticks(count: usize, base_price: &str) -> Vec<TickData> {
         // Small price variation
         let price_delta = Decimal::from(i % 10); // Keep price changes small
         let price = base_price + price_delta;
-        ticks.push(TickData {
-            timestamp: base_time + Duration::seconds(i as i64),
-            symbol: "TESTUSDT".to_string(),
+        let ts = base_time + Duration::seconds(i as i64);
+        ticks.push(TickData::with_details(
+            ts,
+            ts,
+            "TESTUSDT".to_string(),
+            "TEST".to_string(),
             price,
-            quantity: Decimal::from(10),
-            side: TradeSide::Buy,
-            trade_id: format!("trade_{}", i),
-            is_buyer_maker: false,
-        });
+            Decimal::from(10),
+            TradeSide::Buy,
+            "TEST".to_string(),
+            format!("trade_{}", i),
+            false,
+            i as i64,
+        ));
     }
 
     ticks

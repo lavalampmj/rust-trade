@@ -227,19 +227,23 @@ impl PaperTradingProcessor {
             let execution_price = bar_data.ohlc_bar.close;
 
             // Create a synthetic tick for signal execution
-            let synthetic_tick = TickData {
-                timestamp: now,
-                symbol: bar_data.ohlc_bar.symbol.clone(),
-                price: execution_price,
-                quantity: Decimal::ZERO,
-                side: trading_common::data::types::TradeSide::Buy,
-                trade_id: if bar_data.metadata.is_synthetic {
+            let synthetic_tick = TickData::with_details(
+                now,
+                now,
+                bar_data.ohlc_bar.symbol.clone(),
+                "UNKNOWN".to_string(),
+                execution_price,
+                Decimal::ZERO,
+                trading_common::data::types::TradeSide::Buy,
+                "PAPER".to_string(),
+                if bar_data.metadata.is_synthetic {
                     format!("synthetic_{}", now.timestamp())
                 } else {
                     format!("timer_{}", now.timestamp())
                 },
-                is_buyer_maker: false,
-            };
+                false,
+                0,
+            );
 
             self.execute_signal(&signal, &synthetic_tick)?;
         }

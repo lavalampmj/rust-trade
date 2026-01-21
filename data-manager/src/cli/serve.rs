@@ -35,8 +35,8 @@ pub struct ServeArgs {
     #[arg(long)]
     pub ipc: bool,
 
-    /// Persist data to database
-    #[arg(long)]
+    /// Persist data to database (enabled by default, use --persist=false to disable)
+    #[arg(long, default_value_t = true)]
     pub persist: bool,
 
     /// Bind address for API

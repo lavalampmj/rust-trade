@@ -360,18 +360,22 @@ impl<P: HistoricalDataProvider + Send + Sync + 'static> BackfillService for Back
         let ticks: Vec<trading_common::data::types::TickData> = existing_ticks
             .iter()
             .map(|t| {
-                trading_common::data::types::TickData {
-                    timestamp: t.ts_event,
-                    symbol: t.symbol.clone(),
-                    price: t.price,
-                    quantity: t.size,
-                    side: match t.side {
+                trading_common::data::types::TickData::with_details(
+                    t.ts_event,
+                    t.ts_recv,
+                    t.symbol.clone(),
+                    t.exchange.clone(),
+                    t.price,
+                    t.size,
+                    match t.side {
                         crate::schema::TradeSide::Buy => trading_common::data::types::TradeSide::Buy,
                         crate::schema::TradeSide::Sell => trading_common::data::types::TradeSide::Sell,
                     },
-                    trade_id: t.provider_trade_id.clone().unwrap_or_else(|| format!("{}_{}", t.symbol, t.ts_event.timestamp_nanos_opt().unwrap_or(0))),
-                    is_buyer_maker: t.is_buyer_maker.unwrap_or(false),
-                }
+                    t.provider.clone(),
+                    t.provider_trade_id.clone().unwrap_or_else(|| format!("{}_{}", t.symbol, t.ts_event.timestamp_nanos_opt().unwrap_or(0))),
+                    t.is_buyer_maker.unwrap_or(false),
+                    t.sequence,
+                )
             })
             .collect();
 

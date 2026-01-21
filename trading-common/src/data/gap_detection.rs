@@ -305,15 +305,19 @@ mod tests {
     use crate::data::types::TradeSide;
 
     fn create_tick(symbol: &str, timestamp: DateTime<Utc>) -> TickData {
-        TickData {
+        TickData::with_details(
             timestamp,
-            symbol: symbol.to_string(),
-            price: Decimal::from(100),
-            quantity: Decimal::from(1),
-            side: TradeSide::Buy,
-            trade_id: format!("test_{}", timestamp.timestamp_millis()),
-            is_buyer_maker: false,
-        }
+            timestamp,
+            symbol.to_string(),
+            "TEST".to_string(),
+            Decimal::from(100),
+            Decimal::from(1),
+            TradeSide::Buy,
+            "TEST".to_string(),
+            format!("test_{}", timestamp.timestamp_millis()),
+            false,
+            0,
+        )
     }
 
     #[test]

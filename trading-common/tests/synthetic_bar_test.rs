@@ -11,15 +11,20 @@ fn create_tick(price: &str, timestamp_offset_seconds: i64) -> TickData {
         .with_nanosecond(0)
         .unwrap();
 
-    TickData {
-        timestamp: base_time + Duration::seconds(timestamp_offset_seconds),
-        symbol: "BTCUSDT".to_string(),
-        price: Decimal::from_str(price).unwrap(),
-        quantity: Decimal::from_str("1.0").unwrap(),
-        side: TradeSide::Buy,
-        trade_id: format!("test_{}", timestamp_offset_seconds),
-        is_buyer_maker: false,
-    }
+    let ts = base_time + Duration::seconds(timestamp_offset_seconds);
+    TickData::with_details(
+        ts,
+        ts,
+        "BTCUSDT".to_string(),
+        "TEST".to_string(),
+        Decimal::from_str(price).unwrap(),
+        Decimal::from_str("1.0").unwrap(),
+        TradeSide::Buy,
+        "TEST".to_string(),
+        format!("test_{}", timestamp_offset_seconds),
+        false,
+        timestamp_offset_seconds,
+    )
 }
 
 #[test]

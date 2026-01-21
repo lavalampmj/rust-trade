@@ -13,15 +13,20 @@ fn get_config_path() -> String {
 }
 
 fn create_sample_tick(symbol: &str, price: &str, index: i64) -> TickData {
-    TickData {
-        timestamp: Utc::now(),
-        symbol: symbol.to_string(),
-        price: Decimal::from_str(price).unwrap(),
-        quantity: Decimal::from_str("1.0").unwrap(),
-        side: TradeSide::Buy,
-        trade_id: index.to_string(),
-        is_buyer_maker: false,
-    }
+    let ts = Utc::now();
+    TickData::with_details(
+        ts,
+        ts,
+        symbol.to_string(),
+        "TEST".to_string(),
+        Decimal::from_str(price).unwrap(),
+        Decimal::from_str("1.0").unwrap(),
+        TradeSide::Buy,
+        "TEST".to_string(),
+        index.to_string(),
+        false,
+        index,
+    )
 }
 
 #[test]
