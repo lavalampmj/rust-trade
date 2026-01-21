@@ -1,6 +1,7 @@
 //! IPC Stress Tests
 //!
 //! These tests verify the shared memory IPC implementation under stress conditions.
+//! Uses `dbn::TradeMsg` (48 bytes) as the canonical IPC format.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -8,8 +9,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use data_manager::schema::{CompactTick, NormalizedTick, TradeSide};
+use data_manager::schema::{NormalizedTick, TradeSide};
 use data_manager::transport::ipc::{SharedMemoryChannel, SharedMemoryConfig};
+use dbn::TradeMsg;
 use rust_decimal_macros::dec;
 
 fn create_test_tick(symbol: &str, exchange: &str, seq: i64) -> NormalizedTick {
@@ -35,23 +37,24 @@ fn test_basic_producer_consumer() {
     let config = SharedMemoryConfig {
         path_prefix: "/test_basic_".to_string(),
         buffer_entries: 1024,
-        entry_size: std::mem::size_of::<CompactTick>(),
+        entry_size: std::mem::size_of::<TradeMsg>(),
     };
 
     let channel = SharedMemoryChannel::create("ES", "CME", config).unwrap();
     let mut producer = channel.producer();
     let mut consumer = channel.consumer();
 
-    // Send 100 ticks
+    // Send 100 ticks (convert to TradeMsg)
     for i in 0..100i64 {
         let tick = create_test_tick("ES", "CME", i);
-        producer.send(&tick).unwrap();
+        let trade_msg = tick.to_trade_msg();
+        producer.send(&trade_msg).unwrap();
     }
 
     // Receive all ticks
-    let mut received = 0;
-    while let Some(tick) = consumer.try_recv().unwrap() {
-        assert_eq!(tick.sequence, received);
+    let mut received = 0u32;
+    while let Some(msg) = consumer.try_recv().unwrap() {
+        assert_eq!(msg.sequence, received);
         received += 1;
     }
 
@@ -65,7 +68,7 @@ fn test_throughput_single_thread() {
     let config = SharedMemoryConfig {
         path_prefix: "/test_throughput_".to_string(),
         buffer_entries,
-        entry_size: std::mem::size_of::<CompactTick>(),
+        entry_size: std::mem::size_of::<TradeMsg>(),
     };
 
     let channel = SharedMemoryChannel::create("ES", "CME", config).unwrap();
@@ -78,14 +81,15 @@ fn test_throughput_single_thread() {
     let start = Instant::now();
     for i in 0..tick_count as i64 {
         let tick = create_test_tick("ES", "CME", i);
-        producer.send(&tick).unwrap();
+        let trade_msg = tick.to_trade_msg();
+        producer.send(&trade_msg).unwrap();
     }
     let send_elapsed = start.elapsed();
 
     // Measure receive throughput - we may have lost some due to overflow
     let start = Instant::now();
     let mut received = 0u64;
-    while let Some(_tick) = consumer.try_recv().unwrap() {
+    while let Some(_msg) = consumer.try_recv().unwrap() {
         received += 1;
     }
     let recv_elapsed = start.elapsed();
@@ -119,7 +123,7 @@ fn test_concurrent_producer_consumer() {
     let config = SharedMemoryConfig {
         path_prefix: "/test_concurrent_".to_string(),
         buffer_entries: 65536,
-        entry_size: std::mem::size_of::<CompactTick>(),
+        entry_size: std::mem::size_of::<TradeMsg>(),
     };
 
     let channel = Arc::new(SharedMemoryChannel::create("ES", "CME", config).unwrap());
@@ -134,15 +138,16 @@ fn test_concurrent_producer_consumer() {
     let consumer_received = Arc::clone(&received_count);
     let consumer_handle = thread::spawn(move || {
         let mut consumer = consumer_channel.consumer();
-        let mut last_seq = -1i64;
+        let mut last_seq: i64 = -1;
         let mut out_of_order = 0u64;
 
         while !consumer_stop.load(Ordering::Relaxed) {
-            if let Some(tick) = consumer.try_recv().unwrap() {
-                if tick.sequence <= last_seq && last_seq != -1 {
+            if let Some(msg) = consumer.try_recv().unwrap() {
+                let seq = msg.sequence as i64;
+                if seq <= last_seq && last_seq != -1 {
                     out_of_order += 1;
                 }
-                last_seq = tick.sequence;
+                last_seq = seq;
                 consumer_received.fetch_add(1, Ordering::Relaxed);
             } else {
                 thread::yield_now();
@@ -150,11 +155,12 @@ fn test_concurrent_producer_consumer() {
         }
 
         // Drain remaining
-        while let Some(tick) = consumer.try_recv().unwrap() {
-            if tick.sequence <= last_seq && last_seq != -1 {
+        while let Some(msg) = consumer.try_recv().unwrap() {
+            let seq = msg.sequence as i64;
+            if seq <= last_seq && last_seq != -1 {
                 out_of_order += 1;
             }
-            last_seq = tick.sequence;
+            last_seq = seq;
             consumer_received.fetch_add(1, Ordering::Relaxed);
         }
 
@@ -169,7 +175,8 @@ fn test_concurrent_producer_consumer() {
 
         for i in 0..tick_count as i64 {
             let tick = create_test_tick("ES", "CME", i);
-            producer.send(&tick).unwrap();
+            let trade_msg = tick.to_trade_msg();
+            producer.send(&trade_msg).unwrap();
             producer_sent.fetch_add(1, Ordering::Relaxed);
         }
     });
@@ -207,7 +214,7 @@ fn test_overflow_behavior() {
     let config = SharedMemoryConfig {
         path_prefix: "/test_overflow_".to_string(),
         buffer_entries: 64, // Small buffer to force overflow
-        entry_size: std::mem::size_of::<CompactTick>(),
+        entry_size: std::mem::size_of::<TradeMsg>(),
     };
 
     let channel = SharedMemoryChannel::create("ES", "CME", config).unwrap();
@@ -218,7 +225,8 @@ fn test_overflow_behavior() {
     let tick_count = 200i64;
     for i in 0..tick_count {
         let tick = create_test_tick("ES", "CME", i);
-        producer.send(&tick).unwrap();
+        let trade_msg = tick.to_trade_msg();
+        producer.send(&trade_msg).unwrap();
     }
 
     // Consumer should detect overflow
@@ -226,13 +234,13 @@ fn test_overflow_behavior() {
 
     // Should be able to read remaining ticks (most recent ones)
     let mut received = Vec::new();
-    while let Some(tick) = consumer.try_recv().unwrap() {
-        received.push(tick.sequence);
+    while let Some(msg) = consumer.try_recv().unwrap() {
+        received.push(msg.sequence);
     }
 
     // We should have received the most recent ticks
     assert!(!received.is_empty());
-    assert_eq!(*received.last().unwrap(), tick_count - 1);
+    assert_eq!(*received.last().unwrap(), (tick_count - 1) as u32);
 
     println!(
         "Overflow test: sent={}, received={} (oldest lost as expected)",
@@ -252,7 +260,7 @@ fn test_multiple_symbols() {
         let config = SharedMemoryConfig {
             path_prefix: format!("/test_multi_{}_", symbol),
             buffer_entries: 4096,
-            entry_size: std::mem::size_of::<CompactTick>(),
+            entry_size: std::mem::size_of::<TradeMsg>(),
         };
         channels.push(SharedMemoryChannel::create(symbol, exchange, config).unwrap());
     }
@@ -262,17 +270,17 @@ fn test_multiple_symbols() {
         for (idx, channel) in channels.iter().enumerate() {
             let (symbol, exchange) = &symbols[idx];
             let tick = create_test_tick(symbol, exchange, i);
-            channel.producer().send(&tick).unwrap();
+            let trade_msg = tick.to_trade_msg();
+            channel.producer().send(&trade_msg).unwrap();
         }
     }
 
     // Verify all channels received correct data
-    for (idx, channel) in channels.iter().enumerate() {
+    // Note: TradeMsg doesn't have symbol/exchange - they are tracked by channel
+    for channel in channels.iter() {
         let mut consumer = channel.consumer();
         let mut count = 0i64;
-        while let Some(tick) = consumer.try_recv().unwrap() {
-            assert_eq!(tick.symbol, symbols[idx].0);
-            assert_eq!(tick.exchange, symbols[idx].1);
+        while let Some(_msg) = consumer.try_recv().unwrap() {
             count += 1;
         }
         assert_eq!(count, tick_count);
@@ -286,7 +294,7 @@ fn test_stress_high_rate() {
     let config = SharedMemoryConfig {
         path_prefix: "/test_stress_".to_string(),
         buffer_entries,
-        entry_size: std::mem::size_of::<CompactTick>(),
+        entry_size: std::mem::size_of::<TradeMsg>(),
     };
 
     let channel = Arc::new(SharedMemoryChannel::create("ES", "CME", config).unwrap());
@@ -300,12 +308,13 @@ fn test_stress_high_rate() {
     let consumer_received = Arc::clone(&received_count);
     let consumer_handle = thread::spawn(move || {
         let mut consumer = consumer_channel.consumer();
-        let mut max_seq = -1i64;
+        let mut max_seq: i64 = -1;
 
         while !consumer_stop.load(Ordering::Relaxed) {
-            if let Some(tick) = consumer.try_recv().unwrap() {
-                if tick.sequence > max_seq {
-                    max_seq = tick.sequence;
+            if let Some(msg) = consumer.try_recv().unwrap() {
+                let seq = msg.sequence as i64;
+                if seq > max_seq {
+                    max_seq = seq;
                 }
                 consumer_received.fetch_add(1, Ordering::Relaxed);
             } else {
@@ -315,9 +324,10 @@ fn test_stress_high_rate() {
         }
 
         // Drain remaining
-        while let Some(tick) = consumer.try_recv().unwrap() {
-            if tick.sequence > max_seq {
-                max_seq = tick.sequence;
+        while let Some(msg) = consumer.try_recv().unwrap() {
+            let seq = msg.sequence as i64;
+            if seq > max_seq {
+                max_seq = seq;
             }
             consumer_received.fetch_add(1, Ordering::Relaxed);
         }
@@ -334,7 +344,8 @@ fn test_stress_high_rate() {
         let mut producer = channel.producer();
         for i in 0..tick_count as i64 {
             let tick = create_test_tick("ES", "CME", i);
-            producer.send(&tick).unwrap();
+            let trade_msg = tick.to_trade_msg();
+            producer.send(&trade_msg).unwrap();
         }
     }
     let elapsed = start.elapsed();
@@ -371,7 +382,7 @@ fn test_latency() {
     let config = SharedMemoryConfig {
         path_prefix: "/test_latency_".to_string(),
         buffer_entries: 1024,
-        entry_size: std::mem::size_of::<CompactTick>(),
+        entry_size: std::mem::size_of::<TradeMsg>(),
     };
 
     let channel = SharedMemoryChannel::create("ES", "CME", config).unwrap();
@@ -382,8 +393,9 @@ fn test_latency() {
 
     for i in 0..10000i64 {
         let tick = create_test_tick("ES", "CME", i);
+        let trade_msg = tick.to_trade_msg();
         let start = Instant::now();
-        producer.send(&tick).unwrap();
+        producer.send(&trade_msg).unwrap();
         let _received = consumer.try_recv().unwrap().unwrap();
         let latency = start.elapsed();
         latencies.push(latency.as_nanos() as u64);
@@ -415,7 +427,7 @@ fn test_real_shared_memory() {
     let config = SharedMemoryConfig {
         path_prefix: "/test_real_".to_string(),
         buffer_entries: 4096,
-        entry_size: std::mem::size_of::<CompactTick>(),
+        entry_size: std::mem::size_of::<TradeMsg>(),
     };
 
     // Create channel (simulates data-manager)
@@ -428,7 +440,8 @@ fn test_real_shared_memory() {
         let mut producer = channel.producer();
         for i in 0..tick_count {
             let tick = create_test_tick("ES", "CME", i);
-            producer.send(&tick).unwrap();
+            let trade_msg = tick.to_trade_msg();
+            producer.send(&trade_msg).unwrap();
         }
         // Keep channel alive until consumer is done
         thread::sleep(Duration::from_millis(500));
@@ -445,8 +458,8 @@ fn test_real_shared_memory() {
         let mut received = Vec::new();
         let start = Instant::now();
         while received.len() < tick_count as usize && start.elapsed() < Duration::from_secs(2) {
-            if let Some(tick) = consumer.try_recv().unwrap() {
-                received.push(tick.sequence);
+            if let Some(msg) = consumer.try_recv().unwrap() {
+                received.push(msg.sequence);
             } else {
                 thread::yield_now();
             }
@@ -464,9 +477,9 @@ fn test_real_shared_memory() {
         "Did not receive all ticks"
     );
 
-    // Verify order
+    // Verify order (sequence is u32)
     for (i, seq) in received.iter().enumerate() {
-        assert_eq!(*seq, i as i64, "Tick {} out of order", i);
+        assert_eq!(*seq, i as u32, "Tick {} out of order", i);
     }
 
     // Cleanup
