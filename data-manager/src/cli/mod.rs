@@ -2,11 +2,12 @@
 //!
 //! Provides CLI commands for the data manager.
 
-pub mod serve;
+pub mod backfill;
+pub mod db;
 pub mod fetch;
 pub mod import;
+pub mod serve;
 pub mod symbol;
-pub mod db;
 
 use clap::{Parser, Subcommand};
 
@@ -36,4 +37,7 @@ pub enum Commands {
     /// Database operations
     #[command(subcommand)]
     Db(db::DbCommands),
+    /// Backfill data with cost tracking
+    #[command(subcommand)]
+    Backfill(backfill::BackfillCommands),
 }

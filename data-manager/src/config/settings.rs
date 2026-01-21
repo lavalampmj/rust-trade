@@ -2,6 +2,7 @@
 
 use config::{Config, ConfigError, Environment, File};
 use serde::{Deserialize, Serialize};
+use trading_common::data::backfill_config::BackfillConfig;
 
 /// Main application settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,6 +17,9 @@ pub struct Settings {
     pub symbol: SymbolSettings,
     /// Storage settings
     pub storage: StorageSettings,
+    /// Backfill configuration
+    #[serde(default)]
+    pub backfill: BackfillConfig,
 }
 
 /// Database connection settings
@@ -212,6 +216,7 @@ impl Settings {
                 compression_after_days: 7,
                 batch_insert_size: 1000,
             },
+            backfill: BackfillConfig::default(),
         }
     }
 }

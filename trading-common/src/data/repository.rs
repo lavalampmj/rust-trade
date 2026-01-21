@@ -2,10 +2,12 @@ use chrono::{DateTime, Duration, Utc};
 use rust_decimal::Decimal;
 use sqlx::{PgPool, QueryBuilder, Row};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 use crate::data::types::{LiveStrategyLog, OHLCData, Timeframe};
 
+use super::backfill::{BackfillRequest, BackfillService, BackfillSource};
 use super::cache::{TickDataCache, TieredCache};
 use super::types::{
     BacktestDataInfo, DataError, DataResult, DbStats, SymbolDataInfo, TickData, TickQuery,
@@ -28,12 +30,44 @@ const MAX_BATCH_SIZE: usize = 1000;
 pub struct TickDataRepository {
     pool: PgPool,
     cache: TieredCache,
+    /// Optional backfill service for automatic data recovery
+    backfill_service: Option<Arc<dyn BackfillService>>,
 }
 
 impl TickDataRepository {
     /// Create new repository instance
     pub fn new(pool: PgPool, cache: TieredCache) -> Self {
-        Self { pool, cache }
+        Self {
+            pool,
+            cache,
+            backfill_service: None,
+        }
+    }
+
+    /// Create new repository instance with backfill service
+    pub fn with_backfill(
+        pool: PgPool,
+        cache: TieredCache,
+        backfill_service: Arc<dyn BackfillService>,
+    ) -> Self {
+        Self {
+            pool,
+            cache,
+            backfill_service: Some(backfill_service),
+        }
+    }
+
+    /// Set the backfill service
+    pub fn set_backfill_service(&mut self, service: Arc<dyn BackfillService>) {
+        self.backfill_service = Some(service);
+    }
+
+    /// Check if backfill is available
+    pub fn has_backfill(&self) -> bool {
+        self.backfill_service
+            .as_ref()
+            .map(|s| s.is_enabled())
+            .unwrap_or(false)
     }
 
     /// Get database pool reference
@@ -431,6 +465,88 @@ impl TickDataRepository {
 
         let ticks = ticks?;
         debug!("Retrieved {} historical ticks for backtest", ticks.len());
+        Ok(ticks)
+    }
+
+    /// Get historical data for backtesting with optional automatic backfill
+    ///
+    /// This method extends `get_historical_data_for_backtest` with automatic
+    /// backfill capability. When data is missing and a backfill service is
+    /// configured, it will attempt to fetch the missing data.
+    ///
+    /// # Arguments
+    /// * `symbol` - Trading symbol
+    /// * `start_time` - Start of time range
+    /// * `end_time` - End of time range
+    /// * `limit` - Optional limit on records
+    ///
+    /// # Returns
+    /// Vector of tick data, possibly after triggering a backfill request
+    pub async fn get_historical_data_for_backtest_with_backfill(
+        &self,
+        symbol: &str,
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
+        limit: Option<i64>,
+    ) -> DataResult<Vec<TickData>> {
+        // First try to get data from database
+        let ticks = self
+            .get_historical_data_for_backtest(symbol, start_time, end_time, limit)
+            .await?;
+
+        // If we have data or no backfill service, return what we have
+        if !ticks.is_empty() || !self.has_backfill() {
+            return Ok(ticks);
+        }
+
+        // Data is missing and backfill is enabled - try to trigger backfill
+        if let Some(ref backfill_service) = self.backfill_service {
+            info!(
+                "Missing data for {} from {} to {}, attempting backfill",
+                symbol, start_time, end_time
+            );
+
+            // Estimate cost first
+            match backfill_service
+                .estimate_cost(&[symbol.to_string()], start_time, end_time)
+                .await
+            {
+                Ok(estimate) => {
+                    if estimate.can_auto_approve {
+                        // Auto-trigger for small requests
+                        let request = BackfillRequest::new(
+                            symbol,
+                            start_time,
+                            end_time,
+                            BackfillSource::OnDemand,
+                        )
+                        .with_auto_approve();
+
+                        match backfill_service.request_backfill(request).await {
+                            Ok(job_id) => {
+                                info!(
+                                    "Auto-triggered backfill for {}, job_id: {}, estimated cost: ${:.2}",
+                                    symbol, job_id, estimate.estimated_cost_usd
+                                );
+                            }
+                            Err(e) => {
+                                warn!("Failed to submit backfill for {}: {}", symbol, e);
+                            }
+                        }
+                    } else {
+                        warn!(
+                            "Missing data for {}, backfill requires confirmation (${:.2})",
+                            symbol, estimate.estimated_cost_usd
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to estimate backfill cost for {}: {}", symbol, e);
+                }
+            }
+        }
+
+        // Return empty result - backfill may happen asynchronously
         Ok(ticks)
     }
 

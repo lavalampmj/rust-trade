@@ -10,3 +10,63 @@ default_symbols = [
     "ES.FUT@GLBX",    # E-mini S&P 500
     "NQ.FUT@GLBX",    # E-mini Nasdaq-100
 ]
+
+# =================================================================
+# Backfill Configuration
+# =================================================================
+# IMPORTANT: Backfill is DISABLED by default to prevent accidental
+# costs from Databento API calls. Enable carefully and set appropriate limits.
+
+[backfill]
+# Master switch - MUST be explicitly enabled
+enabled = false
+# Operational mode: "disabled" | "on_demand" | "scheduled" | "manual_only"
+mode = "disabled"
+
+[backfill.cost_limits]
+# Maximum cost per single request (USD)
+max_cost_per_request = 10.0
+# Maximum daily spend (USD)
+max_daily_spend = 50.0
+# Maximum monthly spend (USD)
+max_monthly_spend = 500.0
+# Require confirmation above this threshold (USD)
+confirmation_threshold = 5.0
+# Auto-approve requests below this threshold (USD)
+auto_approve_threshold = 1.0
+# Enable auto-approval (disabled by default for safety)
+auto_approve_enabled = false
+
+[backfill.on_demand]
+# Enable on-demand backfill (triggers when data is missing)
+enabled = false
+# Maximum lookback period (days)
+max_lookback_days = 30
+# Minimum gap size to trigger backfill (minutes)
+min_gap_minutes = 5
+# Priority for on-demand jobs (higher = more urgent)
+priority = 10
+# Cooldown between auto-triggered requests for same symbol (seconds)
+cooldown_secs = 300
+
+[backfill.scheduled]
+# Enable scheduled backfill (fills gaps via scheduled jobs)
+enabled = false
+# Cron expression for gap-filling schedule
+schedule = "0 0 * * *"
+# Maximum gaps to fill per scheduled run
+max_gaps_per_run = 10
+# Priority for scheduled jobs
+priority = 0
+
+[backfill.provider]
+# Provider name
+name = "databento"
+# Default dataset (CME Globex)
+dataset = "GLBX.MDP3"
+# Maximum concurrent backfill jobs
+max_concurrent_jobs = 2
+# Request timeout in seconds
+timeout_secs = 300
+# Retry attempts for failed requests
+retry_attempts = 3

@@ -44,6 +44,9 @@ async fn main() -> Result<()> {
         Commands::Db(cmd) => {
             data_manager::cli::db::execute(cmd).await?;
         }
+        Commands::Backfill(cmd) => {
+            data_manager::cli::backfill::execute(cmd).await?;
+        }
     }
 
     Ok(())
