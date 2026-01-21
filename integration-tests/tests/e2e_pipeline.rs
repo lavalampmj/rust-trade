@@ -15,7 +15,7 @@ use integration_tests::{
     DataGenConfig, EmulatorConfig, IntegrationTestConfig, MetricsConfig,
     MetricsCollector, ReportFormat, StrategyConfig, StrategyRunnerManager,
     TestDataEmulator, TestDataGenerator, TransportConfig, TransportMode, VolumeProfile,
-    WebSocketConfig,
+    WebSocketConfig, DbWriter, DbWriterConfig, DbVerifier,
 };
 
 /// Helper function to run a test with the given configuration
@@ -570,4 +570,282 @@ async fn test_transport_comparison() {
 
     // WebSocket latency should typically be higher (network + serialization)
     // But we don't strictly assert this as localhost can be very fast
+}
+
+/// Test database persistence verification
+///
+/// This test verifies that ticks are correctly persisted to TimescaleDB.
+/// Requires DATABASE_URL environment variable to be set.
+#[tokio::test]
+#[ignore = "Requires database connection, run with --ignored"]
+async fn test_database_persistence() {
+    use chrono::Utc;
+    use std::env;
+
+    println!("\n=== Running DATABASE PERSISTENCE Test ===");
+
+    // Get database URL from environment
+    let database_url = match env::var("DATABASE_URL") {
+        Ok(url) => url,
+        Err(_) => {
+            println!("DATABASE_URL not set, skipping test");
+            return;
+        }
+    };
+
+    // Configuration for the test
+    let config = IntegrationTestConfig {
+        data_gen: DataGenConfig {
+            symbol_count: 3,
+            time_window_secs: 5,
+            profile: VolumeProfile::Lite,
+            seed: 55555,
+            exchange: "TEST".to_string(),
+            base_price: 100.0,
+        },
+        emulator: EmulatorConfig {
+            replay_speed: 10.0, // Speed up for testing
+            embed_send_time: true,
+            min_delay_us: 1,
+            transport: TransportConfig {
+                mode: TransportMode::WebSocket,
+                websocket: WebSocketConfig {
+                    port: 19900, // Unique port for db persistence test
+                    ..Default::default()
+                },
+            },
+        },
+        strategies: StrategyConfig {
+            rust_count: 1,
+            python_count: 0,
+            strategy_type: "tick_counter".to_string(),
+            track_latency: true,
+        },
+        metrics: MetricsConfig::default(),
+        test: integration_tests::TestConfig {
+            timeout_secs: 60,
+            settling_time_secs: 5,
+            database_url: Some(database_url.clone()),
+            verify_db_persistence: true,
+        },
+    };
+
+    // Record start time for querying
+    let test_start = Utc::now();
+
+    // 1. Generate test data
+    let mut generator = TestDataGenerator::new(config.data_gen.clone());
+    let bundle = generator.generate();
+    let ticks_generated = bundle.ticks.len() as u64;
+    println!("Generated {} ticks", ticks_generated);
+
+    // 2. Set up database writer
+    let db_config = DbWriterConfig::new(database_url.clone())
+        .with_batch_size(500)
+        .with_flush_interval_ms(50);
+    let mut db_writer = DbWriter::new(db_config);
+
+    db_writer.connect().await.expect("Failed to connect to database");
+    let db_sender = db_writer.start().expect("Failed to start db writer");
+
+    // 3. Create metrics collector and strategy runners
+    let metrics_collector = MetricsCollector::new(config.metrics.clone());
+    let manager = Arc::new(StrategyRunnerManager::from_config(
+        &config.strategies,
+        config.metrics.latency_sample_limit,
+    ));
+
+    // 4. Create emulator
+    let mut emulator = TestDataEmulator::new(bundle.clone(), config.emulator.clone());
+    let emulator_metrics = emulator.metrics_clone();
+    emulator.connect().await.expect("Failed to connect emulator");
+
+    // 5. Set up callback that broadcasts to both strategy runners AND database writer
+    let manager_clone = manager.clone();
+    let db_sender_clone = db_sender.clone();
+    let callback = Arc::new(move |event: StreamEvent| {
+        if let StreamEvent::Tick(tick) = event {
+            // Send to strategy runners
+            let manager = manager_clone.clone();
+            let tick_clone = tick.clone();
+            tokio::spawn(async move {
+                manager.broadcast_tick(&tick_clone).await;
+            });
+
+            // Send to database writer
+            let sender = db_sender_clone.clone();
+            tokio::spawn(async move {
+                if let Err(e) = sender.send(tick).await {
+                    eprintln!("Failed to send tick to db writer: {}", e);
+                }
+            });
+        }
+    });
+
+    // 6. Create shutdown channel
+    let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
+
+    // 7. Start metrics timing
+    metrics_collector.start();
+
+    // 8. Run the pipeline
+    let subscription = data_manager::provider::LiveSubscription::trades(vec![]);
+    let test_result = timeout(
+        config.timeout(),
+        emulator.subscribe(subscription, callback, shutdown_rx),
+    )
+    .await;
+
+    if test_result.is_err() {
+        println!("Test timed out");
+    }
+
+    // 9. Wait for settling time
+    tokio::time::sleep(config.settling_time()).await;
+
+    // 10. Stop components
+    metrics_collector.stop();
+    manager.shutdown_all().await;
+
+    // Drop the sender to signal the writer to finish
+    drop(db_sender);
+    db_writer.stop().await.expect("Failed to stop db writer");
+
+    let db_metrics = db_writer.metrics().clone();
+
+    // Record end time
+    let test_end = Utc::now();
+
+    // 11. Verify database persistence
+    println!("\n--- Verifying Database Persistence ---");
+
+    let verifier = DbVerifier::new(&database_url)
+        .await
+        .expect("Failed to connect to database for verification");
+
+    let stats = verifier
+        .get_test_tick_stats("TEST", Some(test_start), Some(test_end))
+        .await
+        .expect("Failed to get tick stats");
+
+    println!("Database Stats:");
+    println!("  Total ticks:     {}", stats.total_count);
+    println!("  Distinct symbols: {}", stats.symbol_count);
+    println!("  Time range:       {:?} - {:?}", stats.earliest_time, stats.latest_time);
+
+    // Per-symbol breakdown
+    println!("\nPer-symbol counts:");
+    for (symbol, count) in &stats.symbol_counts {
+        println!("  {}: {}", symbol, count);
+    }
+
+    // 12. Build results
+    let ticks_sent = emulator_metrics.sent_count();
+    let strategy_metrics = manager.all_metrics();
+    let results = metrics_collector.build_results_with_metrics(
+        ticks_generated,
+        ticks_sent,
+        Some(stats.total_count), // Use verified DB count
+        strategy_metrics,
+    );
+
+    // Generate and print report
+    let report = generate_report(&results, ReportFormat::Pretty);
+    println!("{}", report);
+
+    // 13. Assertions
+    println!("\n--- Assertions ---");
+
+    // Ticks should have been sent
+    assert!(
+        ticks_sent > 0,
+        "Should have sent some ticks: sent={}",
+        ticks_sent
+    );
+    println!("✓ Ticks sent: {}", ticks_sent);
+
+    // Database writer should have written ticks
+    assert!(
+        db_metrics.written_count() > 0,
+        "Database writer should have written ticks"
+    );
+    println!("✓ DB writer written: {}", db_metrics.written_count());
+
+    // Database should have persisted ticks
+    assert!(
+        stats.total_count > 0,
+        "Database should have persisted ticks: count={}",
+        stats.total_count
+    );
+    println!("✓ DB persisted: {}", stats.total_count);
+
+    // Verify persistence ratio (allow some loss due to timing)
+    let persistence_ratio = stats.total_count as f64 / ticks_sent as f64;
+    println!(
+        "✓ Persistence ratio: {:.2}% ({} / {})",
+        persistence_ratio * 100.0,
+        stats.total_count,
+        ticks_sent
+    );
+
+    // Should persist at least 90% of sent ticks
+    assert!(
+        persistence_ratio > 0.90,
+        "Should persist at least 90% of ticks: {:.2}%",
+        persistence_ratio * 100.0
+    );
+
+    // 14. Cleanup test data from database
+    println!("\n--- Cleanup ---");
+    let deleted = verifier
+        .cleanup_test_ticks_in_range(test_start, test_end)
+        .await
+        .expect("Failed to cleanup test ticks");
+    println!("Cleaned up {} test ticks from database", deleted);
+
+    verifier.close().await;
+
+    println!("\n=== Database Persistence Test PASSED ===");
+}
+
+/// Test database verification only (without writing)
+///
+/// This test just checks the database verification functionality.
+#[tokio::test]
+#[ignore = "Requires database connection, run with --ignored"]
+async fn test_db_verifier_functionality() {
+    use std::env;
+
+    println!("\n=== Testing Database Verifier Functionality ===");
+
+    let database_url = match env::var("DATABASE_URL") {
+        Ok(url) => url,
+        Err(_) => {
+            println!("DATABASE_URL not set, skipping test");
+            return;
+        }
+    };
+
+    // Connect to database
+    let verifier = DbVerifier::new(&database_url)
+        .await
+        .expect("Failed to connect to database");
+
+    // Count all test ticks (should work even if empty)
+    let total_count = verifier.count_test_ticks().await.expect("Failed to count ticks");
+    println!("Total test ticks in database: {}", total_count);
+
+    // Get stats
+    let stats = verifier
+        .get_test_tick_stats("TEST", None, None)
+        .await
+        .expect("Failed to get stats");
+
+    println!("Stats:");
+    println!("  Total: {}", stats.total_count);
+    println!("  Symbols: {}", stats.symbol_count);
+
+    verifier.close().await;
+
+    println!("✓ Database verifier functionality works");
 }

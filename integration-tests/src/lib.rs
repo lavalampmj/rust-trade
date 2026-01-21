@@ -68,6 +68,8 @@
 //! easy identification of test data in logs and databases.
 
 pub mod config;
+pub mod db_verifier;
+pub mod db_writer;
 pub mod emulator;
 pub mod generator;
 pub mod metrics;
@@ -94,3 +96,5 @@ pub use transport::{
     create_transport, DirectTransport, TickTransport, TransportConfig, TransportMode,
     WebSocketConfig, WebSocketTransport,
 };
+pub use db_verifier::{DbVerifier, DbVerifierError, DbVerifierResult, DbVerificationOptions, PersistedTickStats};
+pub use db_writer::{DbWriter, DbWriterConfig, DbWriterError, DbWriterMetrics, DbWriterResult};
