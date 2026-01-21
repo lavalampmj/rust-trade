@@ -70,3 +70,63 @@ max_concurrent_jobs = 2
 timeout_secs = 300
 # Retry attempts for failed requests
 retry_attempts = 3
+
+# =================================================================
+# Provider Routing Configuration
+# =================================================================
+# Maps symbols to data providers for both realtime and historical data.
+# Uses three-tier resolution: Symbol-specific → Asset type → Global default
+
+[routing]
+# Default provider when no routing rules match
+default_provider = "databento"
+
+# Databento-specific dataset mappings
+[routing.databento]
+default_dataset = "GLBX.MDP3"
+
+# Dataset mappings: "asset_type@exchange" -> dataset
+[routing.databento.datasets]
+"futures@CME" = "GLBX.MDP3"
+"futures@CBOT" = "GLBX.MDP3"
+"futures@NYMEX" = "GLBX.MDP3"
+"futures@COMEX" = "GLBX.MDP3"
+"futures@GLBX" = "GLBX.MDP3"
+"equity@NASDAQ" = "XNAS.ITCH"
+"equity@NYSE" = "XNYS.TRADES"
+
+# Asset type routing rules (fallback tier)
+[routing.asset_types.futures]
+historical = "databento"
+realtime = "databento"
+default_exchange = "CME"
+
+[routing.asset_types.equity]
+historical = "databento"
+realtime = "databento"
+default_exchange = "NASDAQ"
+
+[routing.asset_types.crypto]
+historical = "databento"
+realtime = "binance"
+default_exchange = "BINANCE"
+
+[routing.asset_types.fx]
+historical = "databento"
+realtime = "databento"
+
+# Symbol-specific routing rules (highest priority)
+# Uncomment and customize as needed:
+#
+# [[routing.symbols]]
+# symbol = "ES"
+# exchange = "CME"
+# asset_type = "futures"
+# [routing.symbols.historical]
+# provider = "databento"
+# dataset = "GLBX.MDP3"
+# [routing.symbols.realtime]
+# provider = "databento"
+# dataset = "GLBX.MDP3"
+# [routing.symbols.provider_symbols]
+# databento = "ES.FUT"

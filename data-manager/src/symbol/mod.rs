@@ -14,6 +14,7 @@ pub use universe::*;
 pub use discovery::*;
 pub use registry::*;
 
+use crate::config::routing::AssetType;
 use serde::{Deserialize, Serialize};
 
 /// Symbol specification with exchange
@@ -23,6 +24,9 @@ pub struct SymbolSpec {
     pub symbol: String,
     /// Exchange identifier (e.g., "CME", "BINANCE", "NASDAQ")
     pub exchange: String,
+    /// Asset type for routing decisions
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_type: Option<AssetType>,
     /// Provider-specific symbol mapping
     #[serde(default)]
     pub provider_mapping: std::collections::HashMap<String, String>,
@@ -42,6 +46,21 @@ impl SymbolSpec {
         Self {
             symbol: symbol.into(),
             exchange: exchange.into(),
+            asset_type: None,
+            provider_mapping: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Create a new symbol spec with asset type
+    pub fn with_asset_type(
+        symbol: impl Into<String>,
+        exchange: impl Into<String>,
+        asset_type: AssetType,
+    ) -> Self {
+        Self {
+            symbol: symbol.into(),
+            exchange: exchange.into(),
+            asset_type: Some(asset_type),
             provider_mapping: std::collections::HashMap::new(),
         }
     }
@@ -54,6 +73,12 @@ impl SymbolSpec {
         } else {
             None
         }
+    }
+
+    /// Set the asset type for this symbol
+    pub fn set_asset_type(mut self, asset_type: AssetType) -> Self {
+        self.asset_type = Some(asset_type);
+        self
     }
 
     /// Get the full symbol identifier

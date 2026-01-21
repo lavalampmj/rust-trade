@@ -1,5 +1,6 @@
 //! Application settings and configuration
 
+use crate::config::routing::RoutingConfig;
 use config::{Config, ConfigError, Environment, File};
 use serde::{Deserialize, Serialize};
 use trading_common::data::backfill_config::BackfillConfig;
@@ -20,6 +21,9 @@ pub struct Settings {
     /// Backfill configuration
     #[serde(default)]
     pub backfill: BackfillConfig,
+    /// Provider routing configuration
+    #[serde(default)]
+    pub routing: RoutingConfig,
 }
 
 /// Database connection settings
@@ -217,6 +221,7 @@ impl Settings {
                 batch_insert_size: 1000,
             },
             backfill: BackfillConfig::default(),
+            routing: RoutingConfig::default(),
         }
     }
 }
