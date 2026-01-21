@@ -340,7 +340,7 @@ mod tests {
         )
         .with_priority(10); // Higher priority
 
-        let id1 = queue.submit(job1);
+        let _id1 = queue.submit(job1);
         let id2 = queue.submit(job2);
 
         // Higher priority job should come first

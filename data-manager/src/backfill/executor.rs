@@ -28,6 +28,7 @@ use super::spend_tracker::SpendTracker;
 
 /// Internal job state for backfill operations
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields used for future job tracking functionality
 struct BackfillJob {
     /// Original request
     request: CommonBackfillRequest,

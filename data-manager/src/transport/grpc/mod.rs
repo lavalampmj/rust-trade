@@ -7,6 +7,7 @@ use crate::schema::NormalizedTick;
 use crate::transport::{Transport, TransportResult, TransportStats};
 
 /// Placeholder gRPC transport
+#[allow(dead_code)] // Placeholder for future implementation
 pub struct GrpcTransport {
     /// Bind address
     bind_address: String,

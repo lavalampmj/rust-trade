@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
-use shared_memory::{Shmem, ShmemConf, ShmemError};
+use shared_memory::{Shmem, ShmemConf};
 use tracing::debug;
 
 use crate::schema::{CompactTick, NormalizedTick};
@@ -43,13 +43,16 @@ impl Default for SharedMemoryConfig {
 pub struct SharedMemoryChannel {
     /// The shared memory segment
     shmem: Shmem,
-    /// Symbol
+    /// Symbol (kept for identification/debugging)
+    #[allow(dead_code)]
     symbol: String,
-    /// Exchange
+    /// Exchange (kept for identification/debugging)
+    #[allow(dead_code)]
     exchange: String,
     /// Whether we own (created) the shared memory
     is_owner: bool,
-    /// Configuration
+    /// Configuration (kept for reference)
+    #[allow(dead_code)]
     config: SharedMemoryConfig,
 }
 
@@ -214,7 +217,11 @@ impl Drop for SharedMemoryChannel {
 /// IPC Producer for sending ticks to shared memory
 pub struct IpcProducer {
     producer: RingBufferProducer,
+    /// Symbol (kept for identification/debugging)
+    #[allow(dead_code)]
     symbol: String,
+    /// Exchange (kept for identification/debugging)
+    #[allow(dead_code)]
     exchange: String,
 }
 

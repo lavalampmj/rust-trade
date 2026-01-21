@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use data_manager::schema::NormalizedTick;
-use data_manager::transport::ipc::{SharedMemoryChannel, SharedMemoryConfig};
+use data_manager::transport::ipc::SharedMemoryChannel;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -61,7 +61,11 @@ pub struct IpcDataSource {
 /// Per-symbol consumer
 struct SymbolConsumer {
     channel: SharedMemoryChannel,
+    /// Symbol (kept for identification/debugging)
+    #[allow(dead_code)]
     symbol: String,
+    /// Exchange (kept for identification/debugging)
+    #[allow(dead_code)]
     exchange: String,
 }
 
@@ -170,7 +174,8 @@ impl IpcDataSource {
     ) -> Result<(mpsc::Receiver<TickData>, tokio::task::JoinHandle<()>), IpcDataSourceError> {
         let key = format!("{}@{}", symbol, exchange);
 
-        let consumer = self
+        // Verify symbol is subscribed (we'll create a fresh channel for streaming)
+        let _consumer = self
             .consumers
             .get(&key)
             .ok_or_else(|| IpcDataSourceError::SymbolNotFound(key.clone()))?;
@@ -277,9 +282,8 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use data_manager::schema::TradeSide as DmTradeSide;
+    use data_manager::transport::ipc::SharedMemoryConfig;
     use rust_decimal_macros::dec;
-    use std::thread;
-    use std::time::Duration;
 
     fn create_test_tick(symbol: &str, exchange: &str, seq: i64) -> NormalizedTick {
         NormalizedTick::new(

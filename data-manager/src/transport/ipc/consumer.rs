@@ -4,7 +4,7 @@
 //! Use `SharedMemoryChannel::consumer()` or `IpcConsumer` from the parent module.
 
 // Re-export from shared_memory for backwards compatibility
-pub use super::shared_memory::{IpcConsumer, IpcProducer};
+pub use super::shared_memory::IpcConsumer;
 
 /// Builder for creating IPC consumers (convenience wrapper)
 pub struct IpcConsumerBuilder {

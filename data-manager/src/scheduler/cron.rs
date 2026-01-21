@@ -148,7 +148,8 @@ pub trait ScheduledTask: Send + Sync {
 pub struct Scheduler {
     /// Schedules by name
     schedules: Arc<RwLock<HashMap<String, Schedule>>>,
-    /// Shutdown signal
+    /// Shutdown signal (reserved for graceful shutdown implementation)
+    #[allow(dead_code)]
     shutdown_tx: Option<broadcast::Sender<()>>,
 }
 

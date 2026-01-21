@@ -3,6 +3,8 @@
 //! This module provides helpers for subscribing to live market data
 //! from Databento's WebSocket API.
 
+#![allow(dead_code)] // Module contains stub implementations for future use
+
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::broadcast;

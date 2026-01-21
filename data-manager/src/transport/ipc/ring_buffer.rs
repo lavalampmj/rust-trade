@@ -81,7 +81,8 @@ pub struct RingBufferProducer {
     header: *mut RingBufferHeader,
     /// Pointer to data area
     data: *mut u8,
-    /// Cached write position for batch operations
+    /// Cached write position for batch operations (reserved for future optimization)
+    #[allow(dead_code)]
     cached_write_pos: u64,
 }
 
@@ -176,7 +177,8 @@ pub struct RingBufferConsumer {
     header: *mut RingBufferHeader,
     /// Pointer to data area
     data: *const u8,
-    /// Cached read position
+    /// Cached read position (reserved for future optimization)
+    #[allow(dead_code)]
     cached_read_pos: u64,
 }
 

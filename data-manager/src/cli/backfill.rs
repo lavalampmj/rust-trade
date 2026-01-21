@@ -480,7 +480,7 @@ async fn execute_status(args: StatusArgs) -> Result<()> {
 }
 
 /// Execute cost-report command
-async fn execute_cost_report(args: CostReportArgs) -> Result<()> {
+async fn execute_cost_report(_args: CostReportArgs) -> Result<()> {
     let settings = Settings::load().unwrap_or_else(|_| Settings::default_settings());
 
     println!("=== Backfill Cost Report ===");

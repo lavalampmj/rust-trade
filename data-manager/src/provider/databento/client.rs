@@ -17,6 +17,7 @@ use crate::symbol::SymbolSpec;
 use super::normalizer::DatabentoNormalizer;
 
 /// Databento data provider
+#[allow(dead_code)] // Fields used for future implementation
 pub struct DatabentoClient {
     /// Provider information
     info: ProviderInfo,

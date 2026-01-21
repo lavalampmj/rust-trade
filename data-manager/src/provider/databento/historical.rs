@@ -3,6 +3,8 @@
 //! This module provides helpers for fetching historical data from Databento's
 //! timeseries API.
 
+#![allow(dead_code)] // Module contains stub implementations for future use
+
 use tracing::{debug, info};
 
 use crate::provider::{HistoricalRequest, ProviderResult};
