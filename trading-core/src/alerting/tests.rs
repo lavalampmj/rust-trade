@@ -61,20 +61,34 @@ fn test_connection_pool_critical_saturation() {
 
 #[test]
 fn test_batch_failure_rate_alert() {
-    // Given: 10 batches processed, 3 failed
+    // Given: High failure rate
     // When: Failure rate exceeds 20%
     // Then: WARNING alert should be triggered
 
+    // Reset metrics first
     BATCHES_FLUSHED_TOTAL.reset();
     BATCHES_FAILED_TOTAL.reset();
 
-    BATCHES_FLUSHED_TOTAL.inc_by(7); // 7 successful
-    BATCHES_FAILED_TOTAL.inc_by(3);  // 3 failed (30% failure rate)
+    // Use large values to ensure threshold is exceeded even if other tests
+    // add to the flushed count (race condition resilience)
+    // 100 failed + 100 flushed = 50% failure rate, well above 20% threshold
+    BATCHES_FAILED_TOTAL.inc_by(100);
+    BATCHES_FLUSHED_TOTAL.inc_by(100);
 
     let rule = AlertRule::batch_failure_rate(0.2); // 20% threshold
     let condition_met = rule.evaluate();
 
-    assert!(condition_met, "Alert should trigger at 30% batch failure rate");
+    // Get current values for debug output
+    let failed = BATCHES_FAILED_TOTAL.get();
+    let flushed = BATCHES_FLUSHED_TOTAL.get();
+    let total = failed + flushed;
+    let actual_rate = if total > 0 { failed as f64 / total as f64 } else { 0.0 };
+
+    assert!(
+        condition_met,
+        "Alert should trigger when failure rate exceeds 20% (actual: failed={}, flushed={}, rate={:.1}%)",
+        failed, flushed, actual_rate * 100.0
+    );
     assert_eq!(rule.severity(), AlertSeverity::Warning);
 }
 
@@ -130,10 +144,13 @@ fn test_no_alert_when_below_threshold() {
     // When: Values are below thresholds
     // Then: No alerts should be triggered
 
+    // Reset ALL relevant metrics to ensure clean state
     DB_CONNECTIONS_ACTIVE.set(4); // 50% of 8
     BATCHES_FAILED_TOTAL.reset();
-    BATCHES_FLUSHED_TOTAL.inc_by(10);
-    WS_CONNECTION_STATUS.set(1);
+    BATCHES_FLUSHED_TOTAL.reset();
+    BATCHES_FLUSHED_TOTAL.inc_by(10); // 0% failure rate (0 failed / 10 total)
+    WS_CONNECTION_STATUS.set(1); // Connected
+    WS_RECONNECTS_TOTAL.reset(); // Reset reconnects too
     CHANNEL_UTILIZATION.set(50.0);
 
     let rules = vec![
@@ -144,7 +161,8 @@ fn test_no_alert_when_below_threshold() {
     ];
 
     for rule in rules {
-        assert!(!rule.evaluate(), "No alert should trigger when metrics are healthy");
+        let result = rule.evaluate();
+        assert!(!result, "No alert should trigger when metrics are healthy: {} evaluated to {}", rule.name(), result);
     }
 }
 

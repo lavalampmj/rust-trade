@@ -420,11 +420,12 @@ async fn test_portfolio_value_calculation() {
 #[tokio::test]
 async fn test_database_logging() {
     let repository = create_test_repository().await;
-    let strategy = Box::new(MockStrategy::always_hold());
+    // Use a unique strategy name to avoid conflicts with parallel tests
+    let unique_strategy_id = format!("DbLogTest_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let strategy = Box::new(MockStrategy::new(&unique_strategy_id, vec![Signal::Hold]));
     let initial_capital = Decimal::from_str("10000.0").unwrap();
-    let strategy_id = "AlwaysHold";
 
-    cleanup_test_logs(&repository, strategy_id).await;
+    cleanup_test_logs(&repository, &unique_strategy_id).await;
 
     let mut processor = PaperTradingProcessor::new(strategy, repository.clone(), initial_capital);
 
@@ -435,7 +436,7 @@ async fn test_database_logging() {
 
     // Verify log was inserted into database
     let logs = sqlx::query("SELECT * FROM live_strategy_log WHERE strategy_id = $1")
-        .bind(strategy_id)
+        .bind(&unique_strategy_id)
         .fetch_all(repository.get_pool())
         .await
         .unwrap();
@@ -444,7 +445,7 @@ async fn test_database_logging() {
     // but we only log once per process_tick call
     assert_eq!(logs.len(), 1, "Expected 1 log entry per processed tick");
 
-    cleanup_test_logs(&repository, strategy_id).await;
+    cleanup_test_logs(&repository, &unique_strategy_id).await;
 }
 
 #[tokio::test]

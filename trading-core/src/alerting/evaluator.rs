@@ -163,16 +163,24 @@ mod tests {
             count: count.clone(),
         };
 
+        // Use a very high value (100) with threshold 0.5 (50 connections needed)
+        // This ensures the test is robust even if other tests modify metrics
+        let test_value = 100;
+        let max_connections = 100;
+        let threshold = 0.5; // 50% = needs 50+ connections to trigger
+
         // Set metric value high to ensure rule triggers
-        DB_CONNECTIONS_ACTIVE.set(8);
+        DB_CONNECTIONS_ACTIVE.set(test_value);
 
         let mut evaluator = AlertEvaluator::new(handler);
-        evaluator.set_cooldown(Duration::from_millis(500)); // Short cooldown for testing
+        evaluator.set_cooldown(Duration::from_millis(100)); // Short cooldown for testing
 
-        // Add a rule that will trigger
-        evaluator.add_rule(AlertRule::connection_pool_critical(8, 0.95));
+        // Add a rule that will trigger: 100/100 = 100% >= 50%
+        evaluator.add_rule(AlertRule::connection_pool_critical(max_connections, threshold));
 
         // Manually evaluate once to ensure we get at least one alert
+        // Re-set the metric right before evaluation to ensure it's correct
+        DB_CONNECTIONS_ACTIVE.set(test_value);
         evaluator.evaluate_all();
 
         // Verify we got the first alert
@@ -183,12 +191,12 @@ mod tests {
         let handle = evaluator.start_monitoring(1);
 
         // Wait for background evaluations
-        tokio::time::sleep(Duration::from_millis(2000)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Stop the monitoring task
         handle.abort();
 
-        // Should have at least 2 alerts total (1 manual + at least 1 from background)
+        // Should have at least 1 alert total
         let final_count = *count.lock().unwrap();
         assert!(final_count >= 1, "Expected at least 1 alert total, got {}", final_count);
     }
