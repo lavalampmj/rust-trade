@@ -52,7 +52,7 @@ impl Default for MaximumBarsLookBack {
 /// needed before the series is considered "ready" for use. This allows
 /// indicators to propagate their ready state up the call chain.
 ///
-/// ```ignore
+/// ```text
 /// let mut series = Series::<Decimal>::with_warmup("sma", MaximumBarsLookBack::default(), 20);
 /// series.push(value);
 /// if series.is_ready() {
@@ -61,7 +61,7 @@ impl Default for MaximumBarsLookBack {
 /// ```
 ///
 /// # Example
-/// ```ignore
+/// ```text
 /// let mut series = Series::<Decimal>::new("close");
 /// series.push(Decimal::from(100));
 /// series.push(Decimal::from(101));
@@ -129,7 +129,7 @@ impl<T: SeriesValue> Series<T> {
     /// knows its own readiness state.
     ///
     /// # Example
-    /// ```ignore
+    /// ```text
     /// let mut series = Series::<Decimal>::with_warmup("sma", MaximumBarsLookBack::default(), 20);
     /// for _ in 0..19 {
     ///     series.push(value);

@@ -8,14 +8,8 @@ fn get_config_path() -> String {
     format!("{}/../config/development.toml", manifest_dir)
 }
 
-#[test]
-#[ignore] // This test can't run with others because initialize_python_strategies can only be called once
-fn test_python_strategy_initialization() {
-    // Initialize Python strategies from config
-    let config_path = get_config_path();
-    let result = strategy::initialize_python_strategies(&config_path);
-    assert!(result.is_ok(), "Python strategy initialization failed: {:?}", result);
-}
+// Note: test_python_strategy_initialization was removed as redundant.
+// Python initialization is tested via all other tests that call initialize_python_strategies.
 
 #[test]
 fn test_list_strategies() {

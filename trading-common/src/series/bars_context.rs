@@ -14,7 +14,7 @@ use std::collections::HashMap;
 /// ensuring alignment across all series including custom indicators.
 ///
 /// # Example
-/// ```ignore
+/// ```text
 /// // In strategy on_bar_data:
 /// fn on_bar_data(&mut self, bar_data: &BarData, bars: &mut BarsContext) -> Signal {
 ///     // Access OHLCV with reverse indexing
@@ -143,7 +143,7 @@ impl BarsContext {
     /// This is the primary method strategies should use to check warmup status.
     ///
     /// # Example
-    /// ```ignore
+    /// ```text
     /// fn is_ready(&self, bars: &BarsContext) -> bool {
     ///     // Ready when we have enough data for long SMA
     ///     bars.is_ready_for(self.long_period)
@@ -295,7 +295,7 @@ impl BarsContext {
     /// it aligns with the current bar, so `my_series[10]` corresponds to `close[10]`.
     ///
     /// # Example
-    /// ```ignore
+    /// ```text
     /// bars.register_series::<Decimal>("MyIndicator");
     /// bars.push_to_series("MyIndicator", calculated_value);
     /// let value_10_bars_ago = bars.get_series::<Decimal>("MyIndicator").unwrap()[10];

@@ -38,7 +38,7 @@ impl LiveStreamer {
     /// Start streaming live data
     ///
     /// In production, this would use the databento crate:
-    /// ```ignore
+    /// ```text
     /// use databento::LiveClient;
     /// use dbn::{Schema, SType};
     ///

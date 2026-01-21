@@ -29,7 +29,7 @@ pub trait Strategy: Send + Sync {
     ///   - Custom series registration for indicators
     ///
     /// # Example
-    /// ```ignore
+    /// ```text
     /// fn on_bar_data(&mut self, bar_data: &BarData, bars: &mut BarsContext) -> Signal {
     ///     // Access current and historical prices
     ///     let current_close = bars.close[0];
@@ -72,7 +72,7 @@ pub trait Strategy: Send + Sync {
     /// - `bars`: BarsContext to check for data availability
     ///
     /// # Example
-    /// ```ignore
+    /// ```text
     /// fn is_ready(&self, bars: &BarsContext) -> bool {
     ///     // Ready when we have enough data for our longest indicator
     ///     bars.is_ready_for(self.long_period)
@@ -86,7 +86,7 @@ pub trait Strategy: Send + Sync {
     /// **REQUIRED** - must match the logic in is_ready().
     ///
     /// # Example
-    /// ```ignore
+    /// ```text
     /// fn warmup_period(&self) -> usize {
     ///     self.long_period // Longest indicator period
     /// }

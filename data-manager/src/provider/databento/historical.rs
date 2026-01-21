@@ -30,7 +30,7 @@ impl HistoricalFetcher {
     /// Fetch ticks for a request
     ///
     /// In production, this would use the databento crate:
-    /// ```ignore
+    /// ```text
     /// use databento::HistoricalClient;
     /// use dbn::{Schema, SType};
     ///

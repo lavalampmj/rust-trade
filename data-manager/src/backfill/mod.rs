@@ -11,10 +11,7 @@
 //!
 //! ## Usage
 //!
-//! ```ignore
-//! use data_manager::backfill::{BackfillExecutor, DisabledBackfillService};
-//! use trading_common::data::backfill::BackfillService;
-//!
+//! ```text
 //! // Create executor (requires provider and repository)
 //! let executor = BackfillExecutor::new(config, provider, repository, job_queue);
 //!
