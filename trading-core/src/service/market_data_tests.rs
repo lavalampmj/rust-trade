@@ -8,7 +8,6 @@ use tokio::time::timeout;
 use super::MarketDataService;
 use crate::exchange::{errors::ExchangeError, traits::Exchange};
 use trading_common::data::types::{TickData, TradeSide};
-use trading_common::data::validator::{TickValidator, ValidationConfig};
 use trading_common::data::cache::{TieredCache, TickDataCache};
 
 use chrono::Utc;
@@ -97,11 +96,6 @@ async fn create_test_cache() -> Arc<dyn TickDataCache> {
     Arc::new(cache)
 }
 
-fn create_test_validator() -> Arc<TickValidator> {
-    let config = ValidationConfig::default();
-    Arc::new(TickValidator::new(config))
-}
-
 // ============================================================================
 // Tests
 // ============================================================================
@@ -111,13 +105,11 @@ async fn test_service_creation() {
     let ticks = vec![create_test_tick("BTCTEST", "50000.0", "0.1", "1")];
     let exchange = Arc::new(MockExchange::new(ticks));
     let cache = create_test_cache().await;
-    let validator = create_test_validator();
 
     let service = MarketDataService::new(
         exchange,
         cache,
         vec!["BTCTEST".to_string()],
-        validator,
     );
 
     // Verify service was created
@@ -129,13 +121,11 @@ async fn test_reject_empty_symbols() {
     let ticks = vec![create_test_tick("BTCTEST", "50000.0", "0.1", "1")];
     let exchange = Arc::new(MockExchange::new(ticks));
     let cache = create_test_cache().await;
-    let validator = create_test_validator();
 
     let service = MarketDataService::new(
         exchange,
         cache,
         vec![], // Empty symbols
-        validator,
     );
 
     let result = service.start().await;
@@ -150,13 +140,11 @@ async fn test_process_single_tick() {
 
     let ticks = vec![create_test_tick(&test_symbol, "50000.0", "0.1", "test_1")];
     let exchange = Arc::new(MockExchange::new(ticks));
-    let validator = create_test_validator();
 
     let service = MarketDataService::new(
         exchange.clone(),
         cache.clone(),
         vec![test_symbol.clone()],
-        validator,
     );
 
     let shutdown_tx = service.get_shutdown_tx();
@@ -181,59 +169,16 @@ async fn test_process_single_tick() {
 }
 
 #[tokio::test]
-async fn test_invalid_tick_rejection() {
-    let cache = create_test_cache().await;
-    let test_symbol = "INVALIDTEST".to_string();
-
-    // Create invalid tick (negative price)
-    let invalid_tick = TickData::new_unchecked(
-        Utc::now(),
-        test_symbol.clone(),
-        Decimal::from_str("-100.0").unwrap(), // Invalid negative price
-        Decimal::from_str("0.1").unwrap(),
-        TradeSide::Buy,
-        "invalid_1".to_string(),
-        false,
-    );
-
-    let exchange = Arc::new(MockExchange::new(vec![invalid_tick]));
-    let validator = create_test_validator();
-
-    let service = MarketDataService::new(
-        exchange,
-        cache.clone(),
-        vec![test_symbol.clone()],
-        validator,
-    );
-
-    let shutdown_tx = service.get_shutdown_tx();
-
-    // Start service
-    let service_handle = tokio::spawn(async move {
-        service.start().await
-    });
-
-    // Wait for processing
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    // Shutdown
-    let _ = shutdown_tx.send(());
-    let _ = timeout(Duration::from_secs(2), service_handle).await;
-}
-
-#[tokio::test]
 async fn test_shutdown_signal() {
     let ticks = vec![create_test_tick("SHUTDOWNTEST", "50000.0", "0.1", "1")];
     let exchange = Arc::new(MockExchange::new(ticks).with_delay(1000)); // 1 second delay
     let cache = create_test_cache().await;
-    let validator = create_test_validator();
     let test_symbol = "SHUTDOWNTEST".to_string();
 
     let service = MarketDataService::new(
         exchange,
         cache.clone(),
         vec![test_symbol.clone()],
-        validator,
     );
 
     let shutdown_tx = service.get_shutdown_tx();
@@ -267,57 +212,11 @@ async fn test_multiple_symbols() {
     ];
 
     let exchange = Arc::new(MockExchange::new(ticks));
-    let validator = create_test_validator();
 
     let service = MarketDataService::new(
         exchange,
         cache.clone(),
         vec![symbol1.clone(), symbol2.clone()],
-        validator,
-    );
-
-    let shutdown_tx = service.get_shutdown_tx();
-
-    // Start service
-    let service_handle = tokio::spawn(async move {
-        service.start().await
-    });
-
-    // Wait for processing
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    // Shutdown
-    let _ = shutdown_tx.send(());
-    let _ = timeout(Duration::from_secs(2), service_handle).await;
-}
-
-#[tokio::test]
-async fn test_validator_integration() {
-    let cache = create_test_cache().await;
-    let test_symbol = format!("VALIDTEST_{}", Utc::now().timestamp_millis() % 1000000);
-
-    // Create valid and invalid ticks
-    let valid_tick = create_test_tick(&test_symbol, "50000.0", "0.1", "valid_1");
-
-    // Invalid: zero price
-    let invalid_tick = TickData::new_unchecked(
-        Utc::now(),
-        test_symbol.clone(),
-        Decimal::ZERO,
-        Decimal::from_str("0.1").unwrap(),
-        TradeSide::Buy,
-        "invalid_1".to_string(),
-        false,
-    );
-
-    let exchange = Arc::new(MockExchange::new(vec![valid_tick, invalid_tick]));
-    let validator = create_test_validator();
-
-    let service = MarketDataService::new(
-        exchange,
-        cache.clone(),
-        vec![test_symbol.clone()],
-        validator,
     );
 
     let shutdown_tx = service.get_shutdown_tx();
@@ -342,13 +241,11 @@ async fn test_cache_update() {
 
     let tick = create_test_tick(&test_symbol, "50000.0", "0.1", "cache_1");
     let exchange = Arc::new(MockExchange::new(vec![tick.clone()]));
-    let validator = create_test_validator();
 
     let service = MarketDataService::new(
         exchange,
         cache.clone(),
         vec![test_symbol.clone()],
-        validator,
     );
 
     let shutdown_tx = service.get_shutdown_tx();

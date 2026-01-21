@@ -21,7 +21,6 @@ use trading_common::data;
 
 use config::Settings;
 use data::{cache::TieredCache, repository::TickDataRepository};
-use data::validator::{TickValidator, ValidationConfig};
 use exchange::Exchange;
 use live_trading::PaperTradingProcessor;
 use service::MarketDataService;
@@ -205,20 +204,9 @@ async fn run_live_with_paper_trading() -> Result<(), Box<dyn std::error::Error>>
         initial_capital,
     )));
 
-    // Create validator
-    let validation_config = ValidationConfig {
-        enabled: settings.validation.enabled,
-        max_price_change_pct: Decimal::try_from(settings.validation.max_price_change_pct)
-            .unwrap_or(Decimal::from(10)),
-        timestamp_tolerance_minutes: settings.validation.timestamp_tolerance_minutes,
-        max_past_days: settings.validation.max_past_days,
-        symbol_overrides: std::collections::HashMap::new(),
-    };
-    let validator = Arc::new(TickValidator::new(validation_config));
-    info!("✅ Validator initialized (enabled: {})", settings.validation.enabled);
-
     // Create market data service (cache only - no tick persistence, handled by data-manager)
-    let service = MarketDataService::new(exchange, cache, settings.symbols.clone(), validator)
+    // Note: Tick validation happens at data-manager ingestion point, not here
+    let service = MarketDataService::new(exchange, cache, settings.symbols.clone())
         .with_paper_trading(paper_trading);
 
     info!(
@@ -685,20 +673,9 @@ async fn run_live_application(settings: Settings) -> Result<(), Box<dyn std::err
     let exchange: Arc<dyn Exchange> = Arc::new(data_source::IpcExchange::binance());
     info!("✅ Data source ready");
 
-    // Create validator
-    let validation_config = ValidationConfig {
-        enabled: settings.validation.enabled,
-        max_price_change_pct: Decimal::try_from(settings.validation.max_price_change_pct)
-            .unwrap_or(Decimal::from(10)),
-        timestamp_tolerance_minutes: settings.validation.timestamp_tolerance_minutes,
-        max_past_days: settings.validation.max_past_days,
-        symbol_overrides: std::collections::HashMap::new(),
-    };
-    let validator = Arc::new(TickValidator::new(validation_config));
-    info!("✅ Validator initialized (enabled: {})", settings.validation.enabled);
-
     // Create market data service (cache only - no tick persistence, handled by data-manager)
-    let service = MarketDataService::new(exchange, cache, settings.symbols.clone(), validator);
+    // Note: Tick validation happens at data-manager ingestion point, not here
+    let service = MarketDataService::new(exchange, cache, settings.symbols.clone());
 
     info!(
         "🎯 Starting market data collection for {} symbols",

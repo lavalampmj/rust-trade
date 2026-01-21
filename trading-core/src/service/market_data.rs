@@ -10,7 +10,6 @@ use crate::exchange::Exchange;
 use crate::live_trading::PaperTradingProcessor;
 use crate::metrics;
 use trading_common::data::types::TickData;
-use trading_common::data::validator::TickValidator;
 use trading_common::data::cache::TickDataCache;
 
 /// Market data service that coordinates between exchange and data processing
@@ -18,9 +17,10 @@ use trading_common::data::cache::TickDataCache;
 /// Note: This service does NOT persist tick data to the database.
 /// Tick data persistence is handled by data-manager with the --persist flag.
 /// This service only:
-/// - Validates incoming ticks
 /// - Updates the cache (for strategy context)
 /// - Processes paper trading signals
+///
+/// Tick validation happens at the data-manager ingestion point, not here.
 pub struct MarketDataService {
     /// Exchange implementation (IPC from data-manager)
     exchange: Arc<dyn Exchange>,
@@ -34,8 +34,6 @@ pub struct MarketDataService {
     stats: Arc<Mutex<ProcessingStats>>,
     /// Paper trading processor
     paper_trading: Option<Arc<Mutex<PaperTradingProcessor>>>,
-    /// Tick data validator
-    validator: Arc<TickValidator>,
 }
 
 impl MarketDataService {
@@ -44,7 +42,6 @@ impl MarketDataService {
         exchange: Arc<dyn Exchange>,
         cache: Arc<dyn TickDataCache>,
         symbols: Vec<String>,
-        validator: Arc<TickValidator>,
     ) -> Self {
         let (shutdown_tx, _) = broadcast::channel(16);
 
@@ -55,7 +52,6 @@ impl MarketDataService {
             shutdown_tx,
             stats: Arc::new(Mutex::new(ProcessingStats::default())),
             paper_trading: None,
-            validator,
         }
     }
 
@@ -222,7 +218,6 @@ impl MarketDataService {
         let stats = Arc::clone(&self.stats);
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let paper_trading = self.paper_trading.clone();
-        let validator = Arc::clone(&self.validator);
 
         let handle = spawn(async move {
             // Add periodic health monitoring (every 30 seconds)
@@ -234,17 +229,10 @@ impl MarketDataService {
 
             loop {
                 select! {
-                    // Receive new tick data
+                    // Receive new tick data (already validated at data-manager ingestion)
                     tick_opt = tick_rx.recv() => {
                         match tick_opt {
                             Some(tick) => {
-                                // Validate tick data
-                                if let Err(e) = validator.validate(&tick) {
-                                    warn!("Tick validation failed for {}: {}", tick.symbol, e);
-                                    metrics::TICKS_REJECTED_TOTAL.inc();
-                                    continue;
-                                }
-
                                 // Update cache for strategy context
                                 if let Err(e) = cache.push_tick(&tick).await {
                                     warn!("Failed to update cache for tick {}: {}", tick.trade_id, e);

@@ -5,10 +5,6 @@ pub mod dbn_types;
 pub mod gap_detection;
 pub mod repository;
 pub mod types;
-pub mod validator;
-
-#[cfg(test)]
-mod validator_tests;
 
 // Re-export DBN types as the canonical format
 pub use dbn_types::{

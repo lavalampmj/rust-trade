@@ -17,15 +17,16 @@
 //! ultra-low latency.
 
 pub mod backfill;
+pub mod cli;
 pub mod config;
 pub mod provider;
+pub mod scheduler;
 pub mod schema;
 pub mod storage;
 pub mod subscription;
 pub mod symbol;
 pub mod transport;
-pub mod scheduler;
-pub mod cli;
+pub mod validation;
 
 // Re-export commonly used types
 pub use config::Settings;
@@ -38,3 +39,4 @@ pub use storage::MarketDataRepository;
 pub use subscription::{SubscriptionManager, SubscriptionRequest, BackfillRequest};
 pub use symbol::{SymbolUniverse, SymbolSpec, SymbolRegistry};
 pub use transport::{Transport, TransportError};
+pub use validation::{TickValidator, ValidationConfig, ValidationError, ValidationResult};
