@@ -2,6 +2,7 @@
 members = [
     "trading-common",
     "trading-core",
+    "data-manager",
     "src-tauri"
 ]
 resolver = "2"

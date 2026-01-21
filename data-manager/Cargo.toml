@@ -1,0 +1,77 @@
+[package]
+name = "data-manager"
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+edition = "2021"
+description = "Centralized data infrastructure for market data loading, streaming, and distribution"
+
+[[bin]]
+name = "data-manager"
+path = "src/main.rs"
+
+[lib]
+name = "data_manager"
+path = "src/lib.rs"
+
+[dependencies]
+# Workspace dependencies
+trading-common = { path = "../trading-common" }
+
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio", "tls-rustls", "postgres", "chrono", "rust_decimal", "uuid"] }
+
+# Market data providers
+databento = "0.18"
+dbn = "0.20"
+
+# IPC / Shared memory
+shared_memory = "0.12"
+ringbuf = "0.3"
+
+# CLI
+clap = { version = "4.4", features = ["derive"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Time/Date handling
+chrono = { version = "0.4.35", features = ["serde"] }
+
+# Numeric precision
+rust_decimal = { version = "1.32", features = ["serde"] }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Async traits
+async-trait = "0.1"
+
+# Logging/tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# UUID
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+# Configuration
+config = "0.14"
+dotenv = "0.15"
+
+# Memory mapping helpers
+memmap2 = "0.9"
+bytemuck = { version = "1.14", features = ["derive"] }
+
+# Synchronization
+parking_lot = "0.12"
+
+[dev-dependencies]
+tempfile = "3.10"
+tokio-test = "0.4"
+rust_decimal_macros = "1.32"
