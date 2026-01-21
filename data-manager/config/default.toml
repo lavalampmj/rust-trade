@@ -1,0 +1,41 @@
+# Data Manager Configuration
+
+[database]
+url = "${DATABASE_URL}"
+max_connections = 10
+min_connections = 2
+
+[provider.databento]
+api_key = "${DATABENTO_API_KEY}"
+# Default dataset for historical data
+default_dataset = "GLBX.MDP3"
+# Enable live streaming
+enable_live = true
+
+[transport.ipc]
+enabled = true
+shm_path_prefix = "/data_manager_"
+ring_buffer_entries = 65536
+entry_size = 256
+
+[transport.grpc]
+enabled = false
+bind_address = "0.0.0.0:50051"
+
+[symbols]
+# Default symbols to subscribe to (format: "SYMBOL@EXCHANGE" or Databento native)
+# CME Futures examples
+default_symbols = [
+    "ES.FUT@GLBX",    # E-mini S&P 500
+    "NQ.FUT@GLBX",    # E-mini Nasdaq-100
+    "CL.FUT@GLBX",    # Crude Oil
+    "GC.FUT@GLBX",    # Gold
+]
+# Enable automatic symbol discovery from provider
+auto_discover = false
+
+[storage]
+# Compress chunks older than N days
+compression_after_days = 7
+# Batch insert size for database writes
+batch_insert_size = 1000

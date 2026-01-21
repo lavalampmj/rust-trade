@@ -3,6 +3,7 @@
 
 pub mod alerting;
 pub mod config;
+pub mod data_source;
 pub mod exchange;
 pub mod live_trading;
 pub mod metrics;

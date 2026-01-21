@@ -31,6 +31,7 @@ dbn = "0.20"
 # IPC / Shared memory
 shared_memory = "0.12"
 ringbuf = "0.3"
+libc = "0.2"
 
 # CLI
 clap = { version = "4.4", features = ["derive"] }

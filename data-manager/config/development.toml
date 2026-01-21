@@ -1,0 +1,12 @@
+# Development environment overrides
+
+[database]
+max_connections = 5
+min_connections = 1
+
+[symbols]
+# Smaller symbol set for development/testing
+default_symbols = [
+    "ES.FUT@GLBX",    # E-mini S&P 500
+    "NQ.FUT@GLBX",    # E-mini Nasdaq-100
+]
