@@ -1,0 +1,33 @@
+# Lite Integration Test Configuration
+# Quick validation tests (~15 seconds)
+# Use for rapid iteration and CI pipelines
+
+[data_gen]
+symbol_count = 5            # TEST0000 - TEST0004
+time_window_secs = 10       # 10 seconds
+profile = "Lite"            # 25 ticks/sec/symbol = ~1,250 total ticks
+seed = 12345                # Deterministic
+exchange = "TEST"
+base_price = 50000.0
+
+[emulator]
+replay_speed = 2.0          # 2x speed for faster testing
+embed_send_time = true
+min_delay_us = 1
+
+[strategies]
+rust_count = 2
+python_count = 0            # Skip Python for faster tests
+strategy_type = "tick_counter"
+track_latency = true
+
+[metrics]
+latency_sample_limit = 10000
+tick_loss_tolerance = 0.01   # 1% (more lenient for quick tests)
+max_avg_latency_us = 5000    # 5ms
+max_p99_latency_us = 50000   # 50ms
+
+[test]
+timeout_secs = 30
+settling_time_secs = 2
+verify_db_persistence = false

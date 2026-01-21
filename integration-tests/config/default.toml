@@ -1,0 +1,32 @@
+# Default Integration Test Configuration
+# Uses Normal profile - suitable for most testing scenarios
+
+[data_gen]
+symbol_count = 10           # TEST0000 - TEST0009
+time_window_secs = 60       # 1 minute
+profile = "Normal"          # 250 ticks/sec/symbol = ~150K total ticks
+seed = 12345                # Deterministic
+exchange = "TEST"
+base_price = 50000.0
+
+[emulator]
+replay_speed = 1.0          # Real-time (1.0x)
+embed_send_time = true      # Embed timestamp for latency measurement
+min_delay_us = 10           # Minimum inter-tick delay
+
+[strategies]
+rust_count = 5
+python_count = 5
+strategy_type = "tick_counter"
+track_latency = true
+
+[metrics]
+latency_sample_limit = 100000
+tick_loss_tolerance = 0.001  # 0.1%
+max_avg_latency_us = 1000    # 1ms
+max_p99_latency_us = 10000   # 10ms
+
+[test]
+timeout_secs = 120
+settling_time_secs = 5
+verify_db_persistence = false

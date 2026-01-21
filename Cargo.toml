@@ -3,7 +3,8 @@ members = [
     "trading-common",
     "trading-core",
     "data-manager",
-    "src-tauri"
+    "src-tauri",
+    "integration-tests"
 ]
 resolver = "2"
 

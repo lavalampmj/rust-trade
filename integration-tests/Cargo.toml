@@ -1,0 +1,72 @@
+[package]
+name = "integration-tests"
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+edition = "2021"
+description = "End-to-end integration test harness for the trading data pipeline"
+
+[lib]
+name = "integration_tests"
+path = "src/lib.rs"
+
+[[test]]
+name = "e2e_pipeline"
+path = "tests/e2e_pipeline.rs"
+
+[[test]]
+name = "generator_tests"
+path = "tests/generator_tests.rs"
+
+[[test]]
+name = "latency_tests"
+path = "tests/latency_tests.rs"
+
+[dependencies]
+# Workspace dependencies
+trading-common = { path = "../trading-common" }
+data-manager = { path = "../data-manager" }
+dbn.workspace = true
+
+# Async runtime
+tokio = { version = "1.0", features = ["full", "sync", "time", "rt-multi-thread"] }
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio", "tls-rustls", "postgres", "chrono", "rust_decimal", "uuid"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Time/Date handling
+chrono = { version = "0.4.35", features = ["serde"] }
+
+# Numeric precision
+rust_decimal = { version = "1.32", features = ["serde"] }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Async traits
+async-trait = "0.1"
+
+# Logging/tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Random number generation
+rand = "0.8"
+rand_chacha = "0.3"
+
+# Synchronization primitives
+parking_lot = "0.12"
+
+# Configuration
+dotenv = "0.15"
+
+[dev-dependencies]
+tempfile = "3.10"
+tokio-test = "0.4"
+rust_decimal_macros = "1.32"
