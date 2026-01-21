@@ -12,6 +12,37 @@ default_symbols = [
 ]
 
 # =================================================================
+# Binance Provider Configuration
+# =================================================================
+
+[provider.binance]
+# Enable Binance provider for crypto data
+enabled = true
+# WebSocket URL (US version)
+ws_url = "wss://stream.binance.us:9443/stream"
+# Reconnection rate limiting
+rate_limit_attempts = 5
+rate_limit_window_secs = 60
+# Default crypto symbols
+default_symbols = [
+    "BTCUSDT",
+    "ETHUSDT",
+]
+
+# =================================================================
+# IPC Transport Configuration
+# =================================================================
+
+[transport.ipc]
+enabled = true
+# Shared memory path prefix (must match trading-core)
+shm_path_prefix = "/data_manager_"
+# Ring buffer entries per symbol
+ring_buffer_entries = 65536
+# Entry size in bytes
+entry_size = 256
+
+# =================================================================
 # Backfill Configuration
 # =================================================================
 # IMPORTANT: Backfill is DISABLED by default to prevent accidental

@@ -1,50 +1,64 @@
 -- =================================================================
 -- Core Data Table for Quantitative Trading System: Tick Data
 -- Design Principles: Single table storage, high-performance queries, data integrity
+-- TimescaleDB: Hypertable with automatic compression
 -- =================================================================
 
-CREATE TABLE tick_data (
+-- Enable TimescaleDB extension (requires superuser on first install)
+-- Run this manually if not already installed:
+-- CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
+
+-- Check if TimescaleDB is available
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb') THEN
+        RAISE NOTICE 'TimescaleDB extension not installed. Installing...';
+        CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
+    END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS tick_data (
     -- 【Timestamp】UTC time, supports millisecond precision
     -- Why use TIMESTAMP WITH TIME ZONE:
     -- 1. Global markets require a unified timezone (UTC)
     -- 2. Supports millisecond-level precision for high-frequency trading needs
     -- 3. Time zone info avoids issues like daylight saving time
     timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
-    
+
     -- 【Trading Pair】e.g., 'BTCUSDT', 'ETHUSDT'
     -- Why use VARCHAR(20):
     -- 1. Cryptocurrency trading pairs are typically 8-15 characters
     -- 2. Reserved space for future new trading pairs
     -- 3. Fixed length storage offers better performance
     symbol VARCHAR(20) NOT NULL,
-    
+
     -- 【Trade Price】Use DECIMAL to ensure precision
     -- Why use DECIMAL(20, 8):
     -- 1. Total 20 digits: supports prices in the trillions
     -- 2. 8 decimal places: meets cryptocurrency precision requirements (Bitcoin has 8 decimals)
     -- 3. Avoids floating point precision loss
     price DECIMAL(20, 8) NOT NULL,
-    
+
     -- 【Trade Quantity】Also uses DECIMAL to ensure precision
     -- Why use DECIMAL(20, 8):
     -- 1. Trade volume calculations require high precision
     -- 2. Consistent precision with price
     quantity DECIMAL(20, 8) NOT NULL,
-    
+
     -- 【Trade Side】Buy or Sell
     -- Why use VARCHAR(4) + CHECK constraint:
     -- 1. 'BUY'/'SELL' is more intuitive than boolean
     -- 2. CHECK constraint enforces data validity
     -- 3. Facilitates SQL querying and reporting
     side VARCHAR(4) NOT NULL CHECK (side IN ('BUY', 'SELL')),
-    
+
     -- 【Trade ID】Original trade identifier from exchange
     -- Why use VARCHAR(50):
     -- 1. Different exchanges have different ID formats (numeric, alphanumeric, UUID, etc.)
     -- 2. Used for deduplication and traceability
     -- 3. Supports various exchange ID lengths
     trade_id VARCHAR(50) NOT NULL,
-    
+
     -- 【Maker Flag】Whether the buyer is the maker (order placer)
     -- Why this field is needed:
     -- 1. Distinguish between aggressive and passive trades
@@ -52,6 +66,31 @@ CREATE TABLE tick_data (
     -- 3. Basis for fee calculation
     is_buyer_maker BOOLEAN NOT NULL
 );
+
+-- =================================================================
+-- TimescaleDB Hypertable Conversion
+-- Enables automatic partitioning by time for efficient queries
+-- =================================================================
+
+-- Convert to hypertable (only if not already a hypertable)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM timescaledb_information.hypertables
+        WHERE hypertable_name = 'tick_data'
+    ) THEN
+        PERFORM create_hypertable(
+            'tick_data',
+            'timestamp',
+            chunk_time_interval => INTERVAL '1 day',
+            if_not_exists => TRUE,
+            migrate_data => TRUE
+        );
+        RAISE NOTICE 'Created hypertable for tick_data with 1-day chunks';
+    ELSE
+        RAISE NOTICE 'tick_data is already a hypertable';
+    END IF;
+END $$;
 
 -- =================================================================
 -- Index Strategy: Optimized for different query scenarios
@@ -67,7 +106,7 @@ CREATE TABLE tick_data (
 -- - Composite index (symbol, timestamp DESC): group by symbol first, then order by time descending
 -- - DESC order: prioritizes newest data, aligns with real-time query needs
 -- - Supports index-only scans to avoid heap fetches and improve performance
-CREATE INDEX idx_tick_symbol_time ON tick_data(symbol, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_tick_symbol_time ON tick_data(symbol, timestamp DESC);
 
 -- 【Index 2】Data integrity unique index
 -- Use cases:
@@ -77,7 +116,7 @@ CREATE INDEX idx_tick_symbol_time ON tick_data(symbol, timestamp DESC);
 -- - Unique constraint on three fields: same symbol + same trade_id + same timestamp = unique record
 -- - Unique constraint implicitly creates corresponding unique index to support fast duplicate checks
 -- - Business logic aligns with financial system requirement of no duplicate and no missing data
-CREATE UNIQUE INDEX idx_tick_unique ON tick_data(symbol, trade_id, timestamp);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tick_unique ON tick_data(symbol, trade_id, timestamp);
 
 -- 【Index 3】Backtesting time index
 -- Use cases:
@@ -88,37 +127,92 @@ CREATE UNIQUE INDEX idx_tick_unique ON tick_data(symbol, trade_id, timestamp);
 -- - Single-column time index: more efficient than composite index when queries do not filter by symbol
 -- - Supports range queries: BETWEEN operation fully utilizes B-tree index
 -- - Essential for backtesting: ensures performance of historical data analysis
-CREATE INDEX idx_tick_timestamp ON tick_data(timestamp);
+CREATE INDEX IF NOT EXISTS idx_tick_timestamp ON tick_data(timestamp);
 
 -- =================================================================
--- Design Validation and Performance Testing
+-- TimescaleDB Compression Configuration
+-- Automatically compresses chunks older than 7 days
 -- =================================================================
 
--- Verify table structure
-\d tick_data
+-- Enable compression on the hypertable
+DO $$
+BEGIN
+    -- Set compression settings
+    ALTER TABLE tick_data SET (
+        timescaledb.compress,
+        timescaledb.compress_segmentby = 'symbol',
+        timescaledb.compress_orderby = 'timestamp DESC'
+    );
+    RAISE NOTICE 'Compression enabled for tick_data';
+EXCEPTION
+    WHEN others THEN
+        RAISE NOTICE 'Compression settings may already be configured: %', SQLERRM;
+END $$;
 
--- View index information and sizes
-SELECT 
-    indexname,
-    indexdef,
-    pg_size_pretty(pg_relation_size(indexname::regclass)) AS size
-FROM pg_indexes 
-WHERE tablename = 'tick_data'
-ORDER BY indexname;
+-- Add compression policy (compress chunks older than 7 days)
+DO $$
+BEGIN
+    PERFORM add_compression_policy('tick_data', INTERVAL '7 days', if_not_exists => TRUE);
+    RAISE NOTICE 'Compression policy added: compress chunks older than 7 days';
+EXCEPTION
+    WHEN others THEN
+        RAISE NOTICE 'Compression policy may already exist: %', SQLERRM;
+END $$;
 
--- Performance test queries (run after data is inserted)
-/*
--- Real-time query test
-EXPLAIN (ANALYZE, BUFFERS) 
-SELECT * FROM tick_data 
-WHERE symbol = 'BTCUSDT' 
-ORDER BY timestamp DESC 
+-- =================================================================
+-- Paper Trading Log Table
+-- =================================================================
+
+CREATE TABLE IF NOT EXISTS live_strategy_log (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    symbol VARCHAR(20) NOT NULL,
+    strategy VARCHAR(50) NOT NULL,
+    signal VARCHAR(10) NOT NULL,
+    price DECIMAL(20, 8) NOT NULL,
+    quantity DECIMAL(20, 8),
+    portfolio_value DECIMAL(20, 8),
+    cash_balance DECIMAL(20, 8),
+    position_size DECIMAL(20, 8),
+    pnl DECIMAL(20, 8),
+    notes TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_strategy_log_time ON live_strategy_log(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_strategy_log_symbol ON live_strategy_log(symbol, timestamp DESC);
+
+-- =================================================================
+-- Verification Queries
+-- =================================================================
+
+-- Check hypertable information
+SELECT
+    hypertable_name,
+    num_chunks,
+    compression_enabled
+FROM timescaledb_information.hypertables
+WHERE hypertable_name = 'tick_data';
+
+-- Check chunk information
+SELECT
+    chunk_name,
+    range_start,
+    range_end,
+    is_compressed,
+    pg_size_pretty(total_bytes) as size
+FROM timescaledb_information.chunks
+WHERE hypertable_name = 'tick_data'
+ORDER BY range_start DESC
 LIMIT 10;
 
--- Backtesting query test
-EXPLAIN (ANALYZE, BUFFERS)
-SELECT COUNT(*), AVG(price) 
-FROM tick_data 
-WHERE timestamp BETWEEN NOW() - INTERVAL '1 day' AND NOW()
-AND symbol IN ('BTCUSDT', 'ETHUSDT');
-*/
+-- Check compression policy
+SELECT * FROM timescaledb_information.jobs
+WHERE proc_name = 'policy_compression';
+
+-- View index information and sizes
+SELECT
+    indexname,
+    pg_size_pretty(pg_relation_size(indexname::regclass)) AS size
+FROM pg_indexes
+WHERE tablename = 'tick_data'
+ORDER BY indexname;

@@ -106,6 +106,27 @@ window_secs = 60
 # If not set, defaults to window_secs
 # wait_on_limit_secs = 60
 
+# =================================================================
+# Data Source Configuration
+# =================================================================
+# Controls where trading-core receives market data from:
+# - "binance": Direct WebSocket connection to Binance (default)
+# - "ipc": Receive data from data-manager via shared memory IPC
+
+[data_source]
+# Data source type: "binance" or "ipc"
+# Use --data-source flag to override at runtime
+type = "binance"
+
+# IPC configuration (used when type = "ipc")
+[data_source.ipc]
+# Shared memory path prefix (must match data-manager)
+shm_path_prefix = "/data_manager_"
+# Poll interval in microseconds when no data available
+poll_interval_us = 100
+# Channel buffer size for tick forwarding
+channel_buffer_size = 10000
+
 [alerting]
 # Enable the alerting system for monitoring critical metrics
 enabled = true

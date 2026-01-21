@@ -52,6 +52,55 @@ fn default_min_connections() -> u32 {
 pub struct ProviderSettings {
     /// Databento configuration
     pub databento: Option<DatabentoSettings>,
+    /// Binance configuration
+    pub binance: Option<BinanceSettings>,
+}
+
+/// Binance provider settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BinanceSettings {
+    /// Enable Binance provider
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// WebSocket URL
+    #[serde(default = "default_binance_ws_url")]
+    pub ws_url: String,
+    /// Maximum reconnection attempts per window
+    #[serde(default = "default_rate_limit_attempts")]
+    pub rate_limit_attempts: u32,
+    /// Rate limit window in seconds
+    #[serde(default = "default_rate_limit_window")]
+    pub rate_limit_window_secs: u64,
+    /// Default symbols to subscribe to
+    #[serde(default)]
+    pub default_symbols: Vec<String>,
+}
+
+fn default_binance_ws_url() -> String {
+    "wss://stream.binance.us:9443/stream".to_string()
+}
+
+fn default_rate_limit_attempts() -> u32 {
+    5
+}
+
+fn default_rate_limit_window() -> u64 {
+    60
+}
+
+impl Default for BinanceSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            ws_url: default_binance_ws_url(),
+            rate_limit_attempts: default_rate_limit_attempts(),
+            rate_limit_window_secs: default_rate_limit_window(),
+            default_symbols: vec![
+                "BTCUSDT".to_string(),
+                "ETHUSDT".to_string(),
+            ],
+        }
+    }
 }
 
 /// Databento provider settings
@@ -202,6 +251,7 @@ impl Settings {
             },
             provider: ProviderSettings {
                 databento: None,
+                binance: Some(BinanceSettings::default()),
             },
             transport: TransportSettings {
                 ipc: IpcSettings {
