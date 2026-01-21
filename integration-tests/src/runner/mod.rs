@@ -6,7 +6,7 @@
 mod rust_runner;
 mod python_runner;
 
-pub use rust_runner::{RustStrategyRunner, TestTickCounterStrategy};
+pub use rust_runner::RustStrategyRunner;
 pub use python_runner::PythonStrategyRunner;
 
 use async_trait::async_trait;
@@ -16,6 +16,7 @@ use data_manager::schema::NormalizedTick;
 
 use crate::config::StrategyConfig;
 use crate::metrics::StrategyMetrics;
+use crate::strategies::TestTickCounterStrategy;
 
 /// Trait for strategy runners that can process ticks
 #[async_trait]

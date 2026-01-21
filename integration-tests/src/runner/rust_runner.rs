@@ -1,112 +1,19 @@
 //! Rust strategy runner implementation
 //!
-//! This module provides a runner for native Rust strategies and includes
-//! a minimal test strategy for tick counting and latency measurement.
+//! This module provides a runner for native Rust strategies that implements
+//! the StrategyRunner trait for use in integration tests.
 
 use async_trait::async_trait;
 use chrono::Utc;
-use rust_decimal::Decimal;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use data_manager::schema::NormalizedTick;
-use trading_common::backtest::strategy::{Signal, Strategy};
-use trading_common::data::types::{BarData, BarDataMode, BarType, Timeframe};
-use trading_common::series::bars_context::BarsContext;
-use trading_common::series::MaximumBarsLookBack;
+use trading_common::backtest::strategy::Strategy;
 
 use crate::metrics::StrategyMetrics;
+use crate::strategies::TestTickCounterStrategy;
 
 use super::StrategyRunner;
-
-/// Minimal test strategy for counting ticks and measuring latency
-///
-/// This strategy does not generate trading signals - it simply counts
-/// every tick it receives and records latency measurements.
-pub struct TestTickCounterStrategy {
-    tick_count: u64,
-    total_value: Decimal,
-}
-
-impl TestTickCounterStrategy {
-    /// Create a new test tick counter strategy
-    pub fn new() -> Self {
-        Self {
-            tick_count: 0,
-            total_value: Decimal::ZERO,
-        }
-    }
-
-    /// Get the total tick count processed by this strategy
-    pub fn tick_count(&self) -> u64 {
-        self.tick_count
-    }
-
-    /// Get the total value (sum of price * quantity)
-    pub fn total_value(&self) -> Decimal {
-        self.total_value
-    }
-
-    /// Process a tick directly (bypassing BarData for simpler testing)
-    pub fn process_tick_direct(&mut self, price: Decimal, quantity: Decimal) {
-        self.tick_count += 1;
-        self.total_value += price * quantity;
-    }
-}
-
-impl Default for TestTickCounterStrategy {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Strategy for TestTickCounterStrategy {
-    fn name(&self) -> &str {
-        "Test Tick Counter"
-    }
-
-    fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
-        // Process tick if available
-        if let Some(ref tick) = bar_data.current_tick {
-            self.tick_count += 1;
-            self.total_value += tick.price * tick.quantity;
-        }
-
-        // Always hold - this strategy doesn't trade
-        Signal::Hold
-    }
-
-    fn initialize(&mut self, _params: HashMap<String, String>) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn reset(&mut self) {
-        self.tick_count = 0;
-        self.total_value = Decimal::ZERO;
-    }
-
-    fn is_ready(&self, _bars: &BarsContext) -> bool {
-        // Always ready - no warmup needed
-        true
-    }
-
-    fn warmup_period(&self) -> usize {
-        0
-    }
-
-    fn bar_data_mode(&self) -> BarDataMode {
-        // Process on each tick
-        BarDataMode::OnEachTick
-    }
-
-    fn preferred_bar_type(&self) -> BarType {
-        BarType::TimeBased(Timeframe::OneMinute)
-    }
-
-    fn max_bars_lookback(&self) -> MaximumBarsLookBack {
-        MaximumBarsLookBack::Fixed(1)
-    }
-}
 
 /// Rust strategy runner that wraps a Strategy implementation
 pub struct RustStrategyRunner {
@@ -136,6 +43,11 @@ impl RustStrategyRunner {
             strategy: parking_lot::Mutex::new(strategy),
             metrics,
         }
+    }
+
+    /// Create a new Rust strategy runner with the default TestTickCounterStrategy
+    pub fn with_tick_counter(id: String, sample_limit: usize) -> Self {
+        Self::new(id, Box::new(TestTickCounterStrategy::new()), sample_limit)
     }
 
     /// Get mutable access to the strategy
@@ -208,6 +120,7 @@ impl StrategyExt for Box<dyn Strategy> {
 mod tests {
     use super::*;
     use data_manager::schema::TradeSide;
+    use rust_decimal::Decimal;
 
     fn create_test_tick() -> NormalizedTick {
         NormalizedTick::new(
@@ -222,48 +135,9 @@ mod tests {
         )
     }
 
-    #[test]
-    fn test_tick_counter_strategy() {
-        let mut strategy = TestTickCounterStrategy::new();
-
-        assert_eq!(strategy.tick_count(), 0);
-
-        strategy.process_tick_direct(Decimal::from(100), Decimal::from(10));
-        strategy.process_tick_direct(Decimal::from(200), Decimal::from(5));
-
-        assert_eq!(strategy.tick_count(), 2);
-        assert_eq!(strategy.total_value(), Decimal::from(2000)); // 100*10 + 200*5
-    }
-
-    #[test]
-    fn test_tick_counter_strategy_reset() {
-        let mut strategy = TestTickCounterStrategy::new();
-
-        strategy.process_tick_direct(Decimal::from(100), Decimal::from(10));
-        assert_eq!(strategy.tick_count(), 1);
-
-        strategy.reset();
-        assert_eq!(strategy.tick_count(), 0);
-        assert_eq!(strategy.total_value(), Decimal::ZERO);
-    }
-
-    #[test]
-    fn test_tick_counter_strategy_trait() {
-        let strategy = TestTickCounterStrategy::new();
-
-        assert_eq!(strategy.name(), "Test Tick Counter");
-        assert!(strategy.is_ready(&BarsContext::new("TEST")));
-        assert_eq!(strategy.warmup_period(), 0);
-        assert_eq!(strategy.bar_data_mode(), BarDataMode::OnEachTick);
-    }
-
     #[tokio::test]
     async fn test_rust_runner() {
-        let runner = RustStrategyRunner::new(
-            "test_runner".to_string(),
-            Box::new(TestTickCounterStrategy::new()),
-            1000,
-        );
+        let runner = RustStrategyRunner::with_tick_counter("test_runner".to_string(), 1000);
 
         assert_eq!(runner.id(), "test_runner");
         assert_eq!(runner.strategy_type(), "rust");
@@ -276,12 +150,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_rust_runner_multiple_ticks() {
+    async fn test_rust_runner_with_custom_strategy() {
         let runner = RustStrategyRunner::new(
             "test_runner".to_string(),
             Box::new(TestTickCounterStrategy::new()),
             1000,
         );
+
+        assert_eq!(runner.id(), "test_runner");
+        assert_eq!(runner.strategy_type(), "rust");
+    }
+
+    #[tokio::test]
+    async fn test_rust_runner_multiple_ticks() {
+        let runner = RustStrategyRunner::with_tick_counter("test_runner".to_string(), 1000);
 
         let tick = create_test_tick();
         for _ in 0..100 {
@@ -293,11 +175,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rust_runner_latency_recording() {
-        let runner = RustStrategyRunner::new(
-            "test_runner".to_string(),
-            Box::new(TestTickCounterStrategy::new()),
-            1000,
-        );
+        let runner = RustStrategyRunner::with_tick_counter("test_runner".to_string(), 1000);
 
         // Create tick with recent timestamp
         let tick = NormalizedTick::with_details(

@@ -81,7 +81,7 @@ Data Emulator → data-manager (WebSocket) → IPC → trading-core → strategi
 
 **Purpose**: Library entry point with module exports and re-exports.
 
-Organizes the crate into 6 modules and re-exports commonly used types for ergonomic imports:
+Organizes the crate into 7 modules and re-exports commonly used types for ergonomic imports:
 
 ```rust
 pub use config::{DataGenConfig, EmulatorConfig, ...};
@@ -90,6 +90,7 @@ pub use generator::{TestDataBundle, TestDataGenerator, ...};
 pub use metrics::{LatencyStats, MetricsCollector, ...};
 pub use report::{generate_report, ReportFormat};
 pub use runner::{RustStrategyRunner, StrategyRunner, ...};
+pub use strategies::TestTickCounterStrategy;
 ```
 
 ---
@@ -265,19 +266,13 @@ Creates runner instances based on config (N Rust + M Python strategies).
 
 ### 9. `src/runner/rust_runner.rs`
 
-**Purpose**: Rust strategy runner with minimal test strategy.
-
-**`TestTickCounterStrategy`**:
-Implements `Strategy` trait from `trading-common`:
-- Counts every tick received
-- Accumulates total value (price × quantity)
-- Returns `Signal::Hold` always (no trading)
-- `bar_data_mode()` → `OnEachTick`
+**Purpose**: Rust strategy runner that wraps Strategy implementations.
 
 **`RustStrategyRunner`**:
 - Wraps `Strategy` in `parking_lot::Mutex` for interior mutability
 - Computes latency from `ts_recv` vs current time
 - Records metrics via `StrategyMetrics`
+- `with_tick_counter()` - Convenience constructor using `TestTickCounterStrategy`
 
 ---
 
@@ -292,7 +287,29 @@ Implements `Strategy` trait from `trading-common`:
 
 ---
 
-### 11. `tests/e2e_pipeline.rs`
+### 11. `src/strategies/`
+
+**Purpose**: Test strategy implementations (separate from runners).
+
+**Structure**:
+```
+src/strategies/
+├── mod.rs                  # Module exports
+└── test_tick_counter.rs    # TestTickCounterStrategy implementation
+```
+
+**`TestTickCounterStrategy`** (`test_tick_counter.rs`):
+Implements `Strategy` trait from `trading-common`:
+- Counts every tick received
+- Accumulates total value (price × quantity)
+- Returns `Signal::Hold` always (no trading)
+- `bar_data_mode()` → `OnEachTick`
+
+This mirrors the Python strategy structure in `strategies/test_tick_counter.py`.
+
+---
+
+### 12. `tests/e2e_pipeline.rs`
 
 **Purpose**: Full end-to-end integration tests.
 
@@ -318,7 +335,7 @@ Implements `Strategy` trait from `trading-common`:
 
 ---
 
-### 12. `tests/generator_tests.rs`
+### 13. `tests/generator_tests.rs`
 
 **Purpose**: Validates test data generator determinism and correctness.
 
@@ -336,7 +353,7 @@ Implements `Strategy` trait from `trading-common`:
 
 ---
 
-### 13. `tests/latency_tests.rs`
+### 14. `tests/latency_tests.rs`
 
 **Purpose**: Validates latency measurement accuracy.
 

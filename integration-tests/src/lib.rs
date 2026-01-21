@@ -73,6 +73,7 @@ pub mod generator;
 pub mod metrics;
 pub mod report;
 pub mod runner;
+pub mod strategies;
 
 // Re-export commonly used types
 pub use config::{
@@ -85,5 +86,6 @@ pub use metrics::{LatencyStats, MetricsCollector, StrategyMetrics, TestResults};
 pub use report::{generate_report, ReportFormat};
 pub use runner::{
     PythonStrategyRunner, RustStrategyRunner, StrategyRunner, StrategyRunnerFactory,
-    StrategyRunnerManager, TestTickCounterStrategy,
+    StrategyRunnerManager,
 };
+pub use strategies::TestTickCounterStrategy;
