@@ -2,18 +2,21 @@
 //!
 //! Receives market data from data-manager via shared memory IPC.
 //! This provides ultra-low latency data access for strategies.
+//!
+//! Uses `dbn::TradeMsg` (48 bytes) as the canonical IPC format.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use data_manager::schema::NormalizedTick;
+use dbn::TradeMsg;
 use data_manager::transport::ipc::SharedMemoryChannel;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use trading_common::data::types::TickData;
+use trading_common::data::TradeMsgExt;
 
 /// Error type for IPC data source
 #[derive(Debug, thiserror::Error)]
@@ -61,11 +64,9 @@ pub struct IpcDataSource {
 /// Per-symbol consumer
 struct SymbolConsumer {
     channel: SharedMemoryChannel,
-    /// Symbol (kept for identification/debugging)
-    #[allow(dead_code)]
+    /// Symbol (needed for TradeMsg to TickData conversion)
     symbol: String,
-    /// Exchange (kept for identification/debugging)
-    #[allow(dead_code)]
+    /// Exchange (needed for TradeMsg to TickData conversion)
     exchange: String,
 }
 
@@ -135,9 +136,9 @@ impl IpcDataSource {
                 warn!("Overflow detected for {}", key);
             }
 
-            // Drain available ticks
-            while let Ok(Some(normalized_tick)) = ipc_consumer.try_recv() {
-                let tick = Self::convert_tick(normalized_tick);
+            // Drain available ticks (now TradeMsg)
+            while let Ok(Some(trade_msg)) = ipc_consumer.try_recv() {
+                let tick = Self::convert_trade_msg(&trade_msg, &consumer.symbol);
                 ticks.push(tick);
                 self.stats.ticks_received.fetch_add(1, Ordering::Relaxed);
             }
@@ -158,8 +159,8 @@ impl IpcDataSource {
         let mut ipc_consumer = consumer.channel.consumer();
         let mut ticks = Vec::new();
 
-        while let Ok(Some(normalized_tick)) = ipc_consumer.try_recv() {
-            let tick = Self::convert_tick(normalized_tick);
+        while let Ok(Some(trade_msg)) = ipc_consumer.try_recv() {
+            let tick = Self::convert_trade_msg(&trade_msg, symbol);
             ticks.push(tick);
         }
 
@@ -197,8 +198,8 @@ impl IpcDataSource {
 
             while !shutdown.load(Ordering::Relaxed) {
                 match ipc_consumer.try_recv() {
-                    Ok(Some(normalized_tick)) => {
-                        let tick = Self::convert_tick(normalized_tick);
+                    Ok(Some(trade_msg)) => {
+                        let tick = convert_trade_msg_static(&trade_msg, &symbol);
                         stats.ticks_received.fetch_add(1, Ordering::Relaxed);
                         consecutive_empty = 0;
 
@@ -252,23 +253,34 @@ impl IpcDataSource {
         self.consumers.keys().cloned().collect()
     }
 
-    /// Convert NormalizedTick to TickData
-    fn convert_tick(tick: NormalizedTick) -> TickData {
-        use trading_common::data::types::TradeSide;
-
-        TickData::new(
-            tick.ts_event,
-            tick.symbol,
-            tick.price,
-            tick.size,
-            match tick.side {
-                data_manager::schema::TradeSide::Buy => TradeSide::Buy,
-                data_manager::schema::TradeSide::Sell => TradeSide::Sell,
-            },
-            tick.provider_trade_id.unwrap_or_default(),
-            tick.is_buyer_maker.unwrap_or(false),
-        )
+    /// Convert TradeMsg to TickData
+    ///
+    /// Requires the symbol name since TradeMsg only contains instrument_id
+    fn convert_trade_msg(msg: &TradeMsg, symbol: &str) -> TickData {
+        convert_trade_msg_static(msg, symbol)
     }
+}
+
+/// Convert TradeMsg to TickData (static function for async contexts)
+fn convert_trade_msg_static(msg: &TradeMsg, symbol: &str) -> TickData {
+    use trading_common::data::types::TradeSide;
+    use trading_common::data::TradeSideCompat;
+
+    let side = match msg.trade_side() {
+        TradeSideCompat::Buy => TradeSide::Buy,
+        TradeSideCompat::Sell => TradeSide::Sell,
+        TradeSideCompat::None => TradeSide::Sell, // Default to Sell for unknown
+    };
+
+    TickData::new(
+        msg.timestamp(),
+        symbol.to_string(),
+        msg.price_decimal(),
+        msg.size_decimal(),
+        side,
+        msg.sequence.to_string(),
+        msg.side as u8 as char == 'A', // Ask side = buyer is maker
+    )
 }
 
 impl Drop for IpcDataSource {
@@ -281,19 +293,20 @@ impl Drop for IpcDataSource {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use data_manager::schema::TradeSide as DmTradeSide;
     use data_manager::transport::ipc::SharedMemoryConfig;
     use rust_decimal_macros::dec;
+    use trading_common::data::{create_trade_msg_from_decimals, TradeSideCompat};
 
-    fn create_test_tick(symbol: &str, exchange: &str, seq: i64) -> NormalizedTick {
-        NormalizedTick::new(
-            Utc::now(),
-            symbol.to_string(),
-            exchange.to_string(),
+    fn create_test_msg(symbol: &str, exchange: &str, seq: u32) -> TradeMsg {
+        let now_nanos = Utc::now().timestamp_nanos_opt().unwrap() as u64;
+        create_trade_msg_from_decimals(
+            now_nanos,
+            now_nanos,
+            symbol,
+            exchange,
             dec!(5025.50),
             dec!(10),
-            DmTradeSide::Buy,
-            "test".to_string(),
+            TradeSideCompat::Buy,
             seq,
         )
     }
@@ -304,24 +317,22 @@ mod tests {
         let path_prefix = "/test_ipc_int_";
 
         // Create a shared memory channel (simulates data-manager)
-        // Use SharedMemoryChannel::create which generates the name as prefix+symbol_exchange
         let config = SharedMemoryConfig {
             path_prefix: path_prefix.to_string(),
             buffer_entries: 1024,
-            entry_size: std::mem::size_of::<data_manager::schema::CompactTick>(),
+            entry_size: std::mem::size_of::<TradeMsg>(),
         };
 
         let dm_channel = SharedMemoryChannel::create("ES", "CME", config).unwrap();
         let mut producer = dm_channel.producer();
 
-        // Send some ticks
-        for i in 0..100i64 {
-            let tick = create_test_tick("ES", "CME", i);
-            producer.send(&tick).unwrap();
+        // Send some TradeMsg (now 48 bytes each)
+        for i in 0..100u32 {
+            let msg = create_test_msg("ES", "CME", i);
+            producer.send(&msg).unwrap();
         }
 
         // Create IPC data source (simulates trading-core)
-        // Uses the same path prefix so it finds the same shared memory
         let ds_config = IpcDataSourceConfig {
             shm_path_prefix: path_prefix.to_string(),
             ..Default::default()
@@ -342,28 +353,20 @@ mod tests {
             100
         );
 
-        // Cleanup - construct the same name that create() would use
+        // Cleanup
         let shm_name = format!("{}ES_CME", path_prefix);
         SharedMemoryChannel::unlink(&shm_name).ok();
     }
 
     #[test]
-    fn test_tick_conversion() {
-        let normalized = NormalizedTick::new(
-            Utc::now(),
-            "ES".to_string(),
-            "CME".to_string(),
-            dec!(5025.50),
-            dec!(10),
-            DmTradeSide::Buy,
-            "test".to_string(),
-            42,
-        );
-
-        let tick = IpcDataSource::convert_tick(normalized);
+    fn test_trade_msg_conversion() {
+        let msg = create_test_msg("ES", "CME", 42);
+        let tick = convert_trade_msg_static(&msg, "ES");
 
         assert_eq!(tick.symbol, "ES");
-        assert_eq!(tick.price, dec!(5025.50));
+        // Price should be close to 5025.50 (may have small rounding)
+        assert!((tick.price - dec!(5025.50)).abs() < dec!(0.01));
         assert_eq!(tick.quantity, dec!(10));
+        assert_eq!(tick.trade_id, "42");
     }
 }

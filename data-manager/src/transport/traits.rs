@@ -1,8 +1,9 @@
 //! Transport trait definitions
+//!
+//! Uses `dbn::TradeMsg` as the canonical format for transport.
 
+use dbn::TradeMsg;
 use thiserror::Error;
-
-use crate::schema::NormalizedTick;
 
 /// Transport errors
 #[derive(Error, Debug)]
@@ -37,13 +38,15 @@ pub enum TransportError {
 
 pub type TransportResult<T> = Result<T, TransportError>;
 
-/// Transport trait for data distribution
+/// Transport trait for data distribution using DBN TradeMsg format
 pub trait Transport: Send + Sync {
-    /// Send a single tick to the transport
-    fn send_tick(&self, tick: &NormalizedTick) -> TransportResult<()>;
+    /// Send a single TradeMsg to the transport
+    ///
+    /// Symbol and exchange are needed to route to the correct channel
+    fn send_msg(&self, msg: &TradeMsg, symbol: &str, exchange: &str) -> TransportResult<()>;
 
-    /// Send a batch of ticks
-    fn send_batch(&self, ticks: &[NormalizedTick]) -> TransportResult<usize>;
+    /// Send a batch of TradeMsg to the same channel
+    fn send_batch(&self, msgs: &[TradeMsg], symbol: &str, exchange: &str) -> TransportResult<usize>;
 
     /// Check if the transport is ready
     fn is_ready(&self) -> bool;
@@ -67,16 +70,16 @@ pub struct TransportStats {
     pub buffer_utilization: f64,
 }
 
-/// Consumer handle for receiving data
+/// Consumer handle for receiving TradeMsg data
 pub trait Consumer: Send + Sync {
-    /// Receive a tick (non-blocking)
-    fn try_recv(&mut self) -> TransportResult<Option<NormalizedTick>>;
+    /// Receive a TradeMsg (non-blocking)
+    fn try_recv(&mut self) -> TransportResult<Option<TradeMsg>>;
 
-    /// Receive a tick (blocking)
-    fn recv(&mut self) -> TransportResult<NormalizedTick>;
+    /// Receive a TradeMsg (blocking)
+    fn recv(&mut self) -> TransportResult<TradeMsg>;
 
-    /// Receive a batch of ticks
-    fn recv_batch(&mut self, max_count: usize) -> TransportResult<Vec<NormalizedTick>>;
+    /// Receive a batch of TradeMsg
+    fn recv_batch(&mut self, max_count: usize) -> TransportResult<Vec<TradeMsg>>;
 
     /// Check if there are pending messages
     fn has_pending(&self) -> bool;

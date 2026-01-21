@@ -2,10 +2,14 @@
 //!
 //! These types represent the canonical format for all market data in the system.
 //! Provider-specific data is normalized to these types before storage or distribution.
+//!
+//! For IPC transport, NormalizedTick can be converted to dbn::TradeMsg (48 bytes).
 
 use chrono::{DateTime, Utc};
+use dbn::TradeMsg;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use trading_common::data::{create_trade_msg_from_decimals, TradeSideCompat};
 
 /// Trade side (buy or sell)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -47,6 +51,15 @@ impl std::fmt::Display for TradeSide {
         match self {
             TradeSide::Buy => write!(f, "BUY"),
             TradeSide::Sell => write!(f, "SELL"),
+        }
+    }
+}
+
+impl From<TradeSide> for TradeSideCompat {
+    fn from(side: TradeSide) -> Self {
+        match side {
+            TradeSide::Buy => TradeSideCompat::Buy,
+            TradeSide::Sell => TradeSideCompat::Sell,
         }
     }
 }
@@ -144,6 +157,26 @@ impl NormalizedTick {
     /// Get the full symbol identifier (symbol@exchange)
     pub fn full_symbol(&self) -> String {
         format!("{}@{}", self.symbol, self.exchange)
+    }
+
+    /// Convert to DBN TradeMsg format for IPC transport
+    ///
+    /// TradeMsg is a compact 48-byte representation suitable for
+    /// high-performance shared memory communication.
+    pub fn to_trade_msg(&self) -> TradeMsg {
+        let ts_event_nanos = self.ts_event.timestamp_nanos_opt().unwrap_or(0) as u64;
+        let ts_recv_nanos = self.ts_recv.timestamp_nanos_opt().unwrap_or(0) as u64;
+
+        create_trade_msg_from_decimals(
+            ts_event_nanos,
+            ts_recv_nanos,
+            &self.symbol,
+            &self.exchange,
+            self.price,
+            self.size,
+            self.side.into(),
+            self.sequence as u32,
+        )
     }
 }
 

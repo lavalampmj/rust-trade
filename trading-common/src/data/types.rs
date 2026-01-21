@@ -3,6 +3,11 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use super::dbn_types::{
+    create_trade_msg_from_decimals, symbol_to_instrument_id, TradeMsgExt, TradeSideCompat,
+    TradeMsg,
+};
+
 // =================================================================
 // Core data type: completely corresponds to the tick_data table structure
 // =================================================================
@@ -108,6 +113,106 @@ impl TradeSide {
             TradeSide::Buy => "BUY",
             TradeSide::Sell => "SELL",
         }
+    }
+
+    /// Convert to DBN-compatible TradeSideCompat
+    pub fn to_dbn_side(&self) -> TradeSideCompat {
+        match self {
+            TradeSide::Buy => TradeSideCompat::Buy,
+            TradeSide::Sell => TradeSideCompat::Sell,
+        }
+    }
+
+    /// Convert from DBN-compatible TradeSideCompat
+    pub fn from_dbn_side(side: TradeSideCompat) -> Self {
+        match side {
+            TradeSideCompat::Buy => TradeSide::Buy,
+            TradeSideCompat::Sell | TradeSideCompat::None => TradeSide::Sell,
+        }
+    }
+}
+
+// =================================================================
+// Conversion between TickData and TradeMsg (DBN format)
+// =================================================================
+
+impl TickData {
+    /// Convert TickData to TradeMsg (DBN format)
+    ///
+    /// Note: Some information is lost in this conversion:
+    /// - trade_id is not stored in TradeMsg
+    /// - is_buyer_maker is encoded in flags
+    /// - exchange defaults to "UNKNOWN" (can be overridden with to_trade_msg_with_exchange)
+    pub fn to_trade_msg(&self) -> TradeMsg {
+        self.to_trade_msg_with_exchange("UNKNOWN")
+    }
+
+    /// Convert TickData to TradeMsg with explicit exchange
+    pub fn to_trade_msg_with_exchange(&self, exchange: &str) -> TradeMsg {
+        let ts_nanos = self.timestamp.timestamp_nanos_opt().unwrap_or(0) as u64;
+        create_trade_msg_from_decimals(
+            ts_nanos,
+            ts_nanos, // Use same timestamp for recv
+            &self.symbol,
+            exchange,
+            self.price,
+            self.quantity,
+            self.side.to_dbn_side(),
+            // Use trade_id hash as sequence if it can be parsed, otherwise 0
+            self.trade_id.parse::<u32>().unwrap_or(0),
+        )
+    }
+
+    /// Create TickData from TradeMsg
+    ///
+    /// Requires symbol lookup since TradeMsg only contains instrument_id
+    pub fn from_trade_msg(msg: &TradeMsg, symbol: String) -> Self {
+        TickData {
+            timestamp: msg.timestamp(),
+            symbol,
+            price: msg.price_decimal(),
+            quantity: msg.size_decimal(),
+            side: TradeSide::from_dbn_side(msg.trade_side()),
+            trade_id: msg.sequence.to_string(),
+            is_buyer_maker: msg.side as u8 as char == 'A', // Ask side = buyer is maker
+        }
+    }
+}
+
+/// Symbol registry for TradeMsg <-> TickData conversion
+///
+/// Since TradeMsg uses instrument_id instead of symbol string,
+/// we need a way to look up symbols. This is a simple in-memory
+/// registry that can be populated during system initialization.
+#[derive(Debug, Clone, Default)]
+pub struct SymbolRegistry {
+    /// Maps instrument_id to (symbol, exchange) pairs
+    id_to_symbol: std::collections::HashMap<u32, (String, String)>,
+}
+
+impl SymbolRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a symbol/exchange pair and return its instrument_id
+    pub fn register(&mut self, symbol: &str, exchange: &str) -> u32 {
+        let id = symbol_to_instrument_id(symbol, exchange);
+        self.id_to_symbol
+            .insert(id, (symbol.to_string(), exchange.to_string()));
+        id
+    }
+
+    /// Look up symbol by instrument_id
+    pub fn get_symbol(&self, instrument_id: u32) -> Option<&(String, String)> {
+        self.id_to_symbol.get(&instrument_id)
+    }
+
+    /// Convert TradeMsg to TickData using this registry
+    pub fn trade_msg_to_tick_data(&self, msg: &TradeMsg) -> Option<TickData> {
+        self.id_to_symbol
+            .get(&msg.hd.instrument_id)
+            .map(|(symbol, _)| TickData::from_trade_msg(msg, symbol.clone()))
     }
 }
 

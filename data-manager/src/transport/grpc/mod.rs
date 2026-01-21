@@ -2,8 +2,11 @@
 //!
 //! This module will provide gRPC-based data distribution for
 //! cross-machine communication.
+//!
+//! Uses `dbn::TradeMsg` as the canonical message format.
 
-use crate::schema::NormalizedTick;
+use dbn::TradeMsg;
+
 use crate::transport::{Transport, TransportResult, TransportStats};
 
 /// Placeholder gRPC transport
@@ -39,12 +42,12 @@ impl GrpcTransport {
 }
 
 impl Transport for GrpcTransport {
-    fn send_tick(&self, _tick: &NormalizedTick) -> TransportResult<()> {
+    fn send_msg(&self, _msg: &TradeMsg, _symbol: &str, _exchange: &str) -> TransportResult<()> {
         // Placeholder
         Ok(())
     }
 
-    fn send_batch(&self, _ticks: &[NormalizedTick]) -> TransportResult<usize> {
+    fn send_batch(&self, _msgs: &[TradeMsg], _symbol: &str, _exchange: &str) -> TransportResult<usize> {
         // Placeholder
         Ok(0)
     }

@@ -2,15 +2,18 @@
 //!
 //! Creates and manages POSIX shared memory segments for IPC.
 //! Supports both in-process testing and real cross-process communication.
+//!
+//! Uses `dbn::TradeMsg` (48 bytes) as the canonical format for IPC.
+//! This is more efficient than the previous CompactTick (128 bytes).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use dbn::TradeMsg;
 use parking_lot::RwLock;
 use shared_memory::{Shmem, ShmemConf};
 use tracing::debug;
 
-use crate::schema::{CompactTick, NormalizedTick};
 use crate::transport::{Transport, TransportError, TransportResult, TransportStats};
 
 use super::ring_buffer::{RingBufferConsumer, RingBufferHeader, RingBufferProducer};
@@ -31,7 +34,7 @@ impl Default for SharedMemoryConfig {
         Self {
             path_prefix: "/data_manager_".to_string(),
             buffer_entries: 65536, // 64K entries
-            entry_size: std::mem::size_of::<CompactTick>(),
+            entry_size: std::mem::size_of::<TradeMsg>(), // 48 bytes per entry
         }
     }
 }
@@ -230,17 +233,16 @@ unsafe impl Send for IpcProducer {}
 unsafe impl Sync for IpcProducer {}
 
 impl IpcProducer {
-    /// Send a tick to the ring buffer
-    pub fn send(&mut self, tick: &NormalizedTick) -> TransportResult<()> {
-        let compact = CompactTick::from_normalized(tick);
-        self.producer.push(&compact)
+    /// Send a TradeMsg to the ring buffer
+    pub fn send(&mut self, msg: &TradeMsg) -> TransportResult<()> {
+        self.producer.push(msg)
     }
 
-    /// Send a batch of ticks
-    pub fn send_batch(&mut self, ticks: &[NormalizedTick]) -> TransportResult<usize> {
+    /// Send a batch of TradeMsg
+    pub fn send_batch(&mut self, msgs: &[TradeMsg]) -> TransportResult<usize> {
         let mut count = 0;
-        for tick in ticks {
-            self.send(tick)?;
+        for msg in msgs {
+            self.send(msg)?;
             count += 1;
         }
         Ok(count)
@@ -274,20 +276,17 @@ unsafe impl Send for IpcConsumer {}
 unsafe impl Sync for IpcConsumer {}
 
 impl IpcConsumer {
-    /// Try to receive a tick (non-blocking)
-    pub fn try_recv(&mut self) -> TransportResult<Option<NormalizedTick>> {
-        match self.consumer.try_pop() {
-            Some(compact) => Ok(Some(compact.to_normalized())),
-            None => Ok(None),
-        }
+    /// Try to receive a TradeMsg (non-blocking)
+    pub fn try_recv(&mut self) -> TransportResult<Option<TradeMsg>> {
+        Ok(self.consumer.try_pop())
     }
 
-    /// Receive a tick (blocking with spin-wait)
-    pub fn recv(&mut self) -> TransportResult<NormalizedTick> {
+    /// Receive a TradeMsg (blocking with spin-wait)
+    pub fn recv(&mut self) -> TransportResult<TradeMsg> {
         let mut backoff = 1u64;
         loop {
-            if let Some(compact) = self.consumer.try_pop() {
-                return Ok(compact.to_normalized());
+            if let Some(msg) = self.consumer.try_pop() {
+                return Ok(msg);
             }
 
             // Exponential backoff
@@ -296,10 +295,9 @@ impl IpcConsumer {
         }
     }
 
-    /// Receive a batch of ticks (non-blocking)
-    pub fn recv_batch(&mut self, max_count: usize) -> TransportResult<Vec<NormalizedTick>> {
-        let compact_ticks = self.consumer.pop_batch(max_count);
-        Ok(compact_ticks.iter().map(|c| c.to_normalized()).collect())
+    /// Receive a batch of TradeMsg (non-blocking)
+    pub fn recv_batch(&mut self, max_count: usize) -> TransportResult<Vec<TradeMsg>> {
+        Ok(self.consumer.pop_batch(max_count))
     }
 
     /// Check if data is available
@@ -364,12 +362,12 @@ impl SharedMemoryTransport {
         Ok(())
     }
 
-    /// Send a tick to the appropriate channel
-    fn send_to_channel(&self, tick: &NormalizedTick) -> TransportResult<()> {
-        let key = tick.full_symbol();
+    /// Send a TradeMsg to the appropriate channel
+    fn send_to_channel(&self, msg: &TradeMsg, symbol: &str, exchange: &str) -> TransportResult<()> {
+        let key = format!("{}@{}", symbol, exchange);
 
         // Ensure channel exists
-        self.get_or_create_channel(&tick.symbol, &tick.exchange)?;
+        self.get_or_create_channel(symbol, exchange)?;
 
         let channels = self.channels.read();
         let channel = channels
@@ -378,12 +376,12 @@ impl SharedMemoryTransport {
 
         // Send via producer
         let mut producer = channel.producer();
-        producer.send(tick)?;
+        producer.send(msg)?;
 
         // Update stats
         let mut stats = self.stats.write();
         stats.messages_sent += 1;
-        stats.bytes_sent += std::mem::size_of::<CompactTick>() as u64;
+        stats.bytes_sent += std::mem::size_of::<TradeMsg>() as u64;
 
         Ok(())
     }
@@ -414,14 +412,14 @@ impl SharedMemoryTransport {
 }
 
 impl Transport for SharedMemoryTransport {
-    fn send_tick(&self, tick: &NormalizedTick) -> TransportResult<()> {
-        self.send_to_channel(tick)
+    fn send_msg(&self, msg: &TradeMsg, symbol: &str, exchange: &str) -> TransportResult<()> {
+        self.send_to_channel(msg, symbol, exchange)
     }
 
-    fn send_batch(&self, ticks: &[NormalizedTick]) -> TransportResult<usize> {
+    fn send_batch(&self, msgs: &[TradeMsg], symbol: &str, exchange: &str) -> TransportResult<usize> {
         let mut count = 0;
-        for tick in ticks {
-            self.send_to_channel(tick)?;
+        for msg in msgs {
+            self.send_to_channel(msg, symbol, exchange)?;
             count += 1;
         }
         Ok(count)
@@ -448,19 +446,20 @@ impl Transport for SharedMemoryTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::TradeSide;
     use chrono::Utc;
     use rust_decimal_macros::dec;
+    use trading_common::data::{create_trade_msg_from_decimals, TradeSideCompat};
 
-    fn create_test_tick(symbol: &str, seq: i64) -> NormalizedTick {
-        NormalizedTick::new(
-            Utc::now(),
-            symbol.to_string(),
-            "CME".to_string(),
+    fn create_test_msg(symbol: &str, exchange: &str, seq: u32) -> TradeMsg {
+        let now_nanos = Utc::now().timestamp_nanos_opt().unwrap() as u64;
+        create_trade_msg_from_decimals(
+            now_nanos,
+            now_nanos,
+            symbol,
+            exchange,
             dec!(5025.50),
             dec!(10),
-            TradeSide::Buy,
-            "test".to_string(),
+            TradeSideCompat::Buy,
             seq,
         )
     }
@@ -470,7 +469,7 @@ mod tests {
         let config = SharedMemoryConfig {
             path_prefix: "/test_channel_basic_".to_string(),
             buffer_entries: 1024,
-            entry_size: std::mem::size_of::<CompactTick>(),
+            entry_size: std::mem::size_of::<TradeMsg>(),
         };
 
         let channel = SharedMemoryChannel::create("ES", "CME", config).unwrap();
@@ -478,12 +477,11 @@ mod tests {
         let mut consumer = channel.consumer();
 
         // Send and receive
-        let tick = create_test_tick("ES", 1);
-        producer.send(&tick).unwrap();
+        let msg = create_test_msg("ES", "CME", 1);
+        producer.send(&msg).unwrap();
 
         let received = consumer.try_recv().unwrap().unwrap();
         assert_eq!(received.sequence, 1);
-        assert_eq!(received.symbol, "ES");
     }
 
     #[test]
@@ -493,10 +491,10 @@ mod tests {
             ..Default::default()
         });
 
-        // Send ticks
+        // Send msgs
         for i in 0..100 {
-            let tick = create_test_tick("ES", i);
-            transport.send_tick(&tick).unwrap();
+            let msg = create_test_msg("ES", "CME", i);
+            transport.send_msg(&msg, "ES", "CME").unwrap();
         }
 
         // Check stats
@@ -516,9 +514,9 @@ mod tests {
             ..Default::default()
         });
 
-        transport.send_tick(&create_test_tick("ES", 1)).unwrap();
-        transport.send_tick(&create_test_tick("NQ", 1)).unwrap();
-        transport.send_tick(&create_test_tick("CL", 1)).unwrap();
+        transport.send_msg(&create_test_msg("ES", "CME", 1), "ES", "CME").unwrap();
+        transport.send_msg(&create_test_msg("NQ", "CME", 1), "NQ", "CME").unwrap();
+        transport.send_msg(&create_test_msg("CL", "NYMEX", 1), "CL", "NYMEX").unwrap();
 
         let symbols = transport.active_symbols();
         assert_eq!(symbols.len(), 3);

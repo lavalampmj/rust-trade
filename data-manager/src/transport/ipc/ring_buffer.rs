@@ -2,10 +2,15 @@
 //!
 //! Implements a single-producer single-consumer ring buffer using
 //! atomic operations for lock-free access.
+//!
+//! Uses `dbn::TradeMsg` (48 bytes) as the canonical entry format.
+//! This is more compact than the previous TradeMsg (128 bytes)
+//! and uses the industry-standard DBN format.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::schema::CompactTick;
+use dbn::TradeMsg;
+
 use crate::transport::TransportResult;
 
 /// Ring buffer header in shared memory
@@ -111,7 +116,7 @@ impl RingBufferProducer {
     ///
     /// Returns true if successful, false if buffer is full.
     /// When buffer is full, overwrites oldest entry (real-time priority).
-    pub fn push(&mut self, tick: &CompactTick) -> TransportResult<()> {
+    pub fn push(&mut self, tick: &TradeMsg) -> TransportResult<()> {
         unsafe {
             let header = &*self.header;
             let capacity = header.capacity;
@@ -131,9 +136,10 @@ impl RingBufferProducer {
             let index = (write_pos % capacity) as usize;
             let offset = index * entry_size;
 
-            // Write data
-            let dest = self.data.add(offset) as *mut CompactTick;
-            std::ptr::write_volatile(dest, *tick);
+            // Write data - copy bytes directly (TradeMsg is repr(C))
+            let dest = self.data.add(offset);
+            let src = tick as *const TradeMsg as *const u8;
+            std::ptr::copy_nonoverlapping(src, dest, entry_size);
 
             // Memory fence before updating write position
             std::sync::atomic::fence(Ordering::Release);
@@ -146,7 +152,7 @@ impl RingBufferProducer {
     }
 
     /// Push multiple ticks
-    pub fn push_batch(&mut self, ticks: &[CompactTick]) -> TransportResult<usize> {
+    pub fn push_batch(&mut self, ticks: &[TradeMsg]) -> TransportResult<usize> {
         let mut count = 0;
         for tick in ticks {
             self.push(tick)?;
@@ -204,7 +210,7 @@ impl RingBufferConsumer {
     }
 
     /// Try to pop a tick from the buffer (non-blocking)
-    pub fn try_pop(&mut self) -> Option<CompactTick> {
+    pub fn try_pop(&mut self) -> Option<TradeMsg> {
         unsafe {
             let header = &*self.header;
             let capacity = header.capacity;
@@ -223,7 +229,7 @@ impl RingBufferConsumer {
             let offset = index * entry_size;
 
             // Read data
-            let src = self.data.add(offset) as *const CompactTick;
+            let src = self.data.add(offset) as *const TradeMsg;
             let tick = std::ptr::read_volatile(src);
 
             // Memory fence before updating read position
@@ -237,7 +243,7 @@ impl RingBufferConsumer {
     }
 
     /// Pop multiple ticks (non-blocking)
-    pub fn pop_batch(&mut self, max_count: usize) -> Vec<CompactTick> {
+    pub fn pop_batch(&mut self, max_count: usize) -> Vec<TradeMsg> {
         let mut ticks = Vec::with_capacity(max_count);
         for _ in 0..max_count {
             match self.try_pop() {
@@ -267,22 +273,22 @@ impl RingBufferConsumer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{NormalizedTick, TradeSide};
-    use rust_decimal_macros::dec;
     use chrono::Utc;
+    use rust_decimal_macros::dec;
+    use trading_common::data::{create_trade_msg_from_decimals, TradeSideCompat};
 
-    fn create_test_tick(seq: i64) -> CompactTick {
-        let tick = NormalizedTick::new(
-            Utc::now(),
-            "ES".to_string(),
-            "CME".to_string(),
+    fn create_test_tick(seq: i64) -> TradeMsg {
+        let now_nanos = Utc::now().timestamp_nanos_opt().unwrap() as u64;
+        create_trade_msg_from_decimals(
+            now_nanos,
+            now_nanos,
+            "ES",
+            "CME",
             dec!(5025.50),
             dec!(10),
-            TradeSide::Buy,
-            "test".to_string(),
-            seq,
-        );
-        CompactTick::from_normalized(&tick)
+            TradeSideCompat::Buy,
+            seq as u32,
+        )
     }
 
     #[test]
@@ -294,7 +300,7 @@ mod tests {
     fn test_ring_buffer_basic() {
         // Allocate buffer
         let capacity = 16u64;
-        let entry_size = std::mem::size_of::<CompactTick>() as u64;
+        let entry_size = std::mem::size_of::<TradeMsg>() as u64;
         let data_size = (capacity as usize) * (entry_size as usize);
 
         let mut memory = vec![0u8; RingBufferHeader::SIZE + data_size];
@@ -323,7 +329,7 @@ mod tests {
     #[test]
     fn test_ring_buffer_overflow() {
         let capacity = 4u64;
-        let entry_size = std::mem::size_of::<CompactTick>() as u64;
+        let entry_size = std::mem::size_of::<TradeMsg>() as u64;
         let data_size = (capacity as usize) * (entry_size as usize);
 
         let mut memory = vec![0u8; RingBufferHeader::SIZE + data_size];
