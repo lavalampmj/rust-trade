@@ -401,15 +401,19 @@ mod tests {
     use std::str::FromStr;
 
     fn create_tick(price: &str, timestamp: DateTime<Utc>) -> TickData {
-        TickData {
+        TickData::with_details(
             timestamp,
-            symbol: "BTCUSDT".to_string(),
-            price: Decimal::from_str(price).unwrap(),
-            quantity: Decimal::from_str("1.0").unwrap(),
-            side: trading_common::data::types::TradeSide::Buy,
-            trade_id: "test".to_string(),
-            is_buyer_maker: false,
-        }
+            timestamp,
+            "BTCUSDT".to_string(),
+            "TEST".to_string(),
+            Decimal::from_str(price).unwrap(),
+            Decimal::from_str("1.0").unwrap(),
+            trading_common::data::types::TradeSide::Buy,
+            "TEST".to_string(),
+            "test".to_string(),
+            false,
+            0,
+        )
     }
 
     #[test]
