@@ -854,6 +854,16 @@ impl SyncOrderManager {
 mod tests {
     use super::*;
     use rust_decimal_macros::dec;
+    use tokio::task::JoinHandle;
+
+    /// Helper to join all handles (replacement for futures::future::join_all)
+    async fn tokio_join_all<T>(handles: Vec<JoinHandle<T>>) -> Vec<Result<T, tokio::task::JoinError>> {
+        let mut results = Vec::with_capacity(handles.len());
+        for handle in handles {
+            results.push(handle.await);
+        }
+        results
+    }
 
     #[tokio::test]
     async fn test_submit_order() {
@@ -1139,5 +1149,1047 @@ mod tests {
 
         let open_orders = manager.get_open_orders();
         assert_eq!(open_orders.len(), 1);
+    }
+
+    // === Integration Tests ===
+
+    #[tokio::test]
+    async fn test_full_order_lifecycle_integration() {
+        // Test complete order flow: initialized -> submitted -> accepted -> partial fill -> complete fill
+        let manager = OrderManager::with_defaults();
+        let account_id = AccountId::new("integration-test-account");
+
+        // Create multiple orders
+        let btc_buy = Order::limit("BTCUSDT", OrderSide::Buy, dec!(2.0), dec!(50000))
+            .with_strategy_id(StrategyId::new("scalping-strategy"))
+            .build()
+            .unwrap();
+        let btc_sell = Order::limit("BTCUSDT", OrderSide::Sell, dec!(1.5), dec!(52000))
+            .with_strategy_id(StrategyId::new("scalping-strategy"))
+            .build()
+            .unwrap();
+        let eth_buy = Order::market("ETHUSDT", OrderSide::Buy, dec!(10.0))
+            .with_strategy_id(StrategyId::new("momentum-strategy"))
+            .build()
+            .unwrap();
+
+        // Submit all orders
+        let btc_buy_id = manager.submit_order(btc_buy).await.unwrap();
+        let btc_sell_id = manager.submit_order(btc_sell).await.unwrap();
+        let eth_buy_id = manager.submit_order(eth_buy).await.unwrap();
+
+        // Verify initial state
+        assert_eq!(manager.open_order_count().await, 3);
+        assert_eq!(manager.order_count_for_symbol("BTCUSDT").await, 2);
+        assert_eq!(manager.order_count_for_symbol("ETHUSDT").await, 1);
+
+        // Move orders through lifecycle
+        for id in [&btc_buy_id, &btc_sell_id, &eth_buy_id] {
+            manager.mark_submitted(id, account_id.clone()).await.unwrap();
+        }
+
+        // Accept orders with venue IDs
+        manager.mark_accepted(&btc_buy_id, VenueOrderId::new("BTC-BUY-001"), account_id.clone()).await.unwrap();
+        manager.mark_accepted(&btc_sell_id, VenueOrderId::new("BTC-SELL-001"), account_id.clone()).await.unwrap();
+        manager.mark_accepted(&eth_buy_id, VenueOrderId::new("ETH-BUY-001"), account_id.clone()).await.unwrap();
+
+        // Verify venue ID lookup works
+        let order_by_venue = manager.get_order_by_venue_id(&VenueOrderId::new("BTC-BUY-001")).await;
+        assert!(order_by_venue.is_some());
+        assert_eq!(order_by_venue.unwrap().client_order_id, btc_buy_id);
+
+        // Partial fill BTC buy
+        manager.apply_fill(
+            &btc_buy_id,
+            VenueOrderId::new("BTC-BUY-001"),
+            account_id.clone(),
+            TradeId::generate(),
+            dec!(1.0),
+            dec!(49999),
+            dec!(0.1),
+            "USDT".to_string(),
+            LiquiditySide::Maker,
+        ).await.unwrap();
+
+        let btc_buy_order = manager.get_order(&btc_buy_id).await.unwrap();
+        assert_eq!(btc_buy_order.status, OrderStatus::PartiallyFilled);
+        assert_eq!(btc_buy_order.filled_qty, dec!(1.0));
+        assert_eq!(btc_buy_order.leaves_qty, dec!(1.0));
+
+        // Complete BTC buy fill
+        manager.apply_fill(
+            &btc_buy_id,
+            VenueOrderId::new("BTC-BUY-001"),
+            account_id.clone(),
+            TradeId::generate(),
+            dec!(1.0),
+            dec!(50001),
+            dec!(0.1),
+            "USDT".to_string(),
+            LiquiditySide::Taker,
+        ).await.unwrap();
+
+        let btc_buy_order = manager.get_order(&btc_buy_id).await.unwrap();
+        assert_eq!(btc_buy_order.status, OrderStatus::Filled);
+        assert!(btc_buy_order.is_closed());
+
+        // Fill ETH order completely in one shot
+        manager.apply_fill(
+            &eth_buy_id,
+            VenueOrderId::new("ETH-BUY-001"),
+            account_id.clone(),
+            TradeId::generate(),
+            dec!(10.0),
+            dec!(3500),
+            dec!(0.5),
+            "USDT".to_string(),
+            LiquiditySide::Taker,
+        ).await.unwrap();
+
+        // Cancel BTC sell order
+        manager.cancel_order(&btc_sell_id, account_id.clone()).await.unwrap();
+        let btc_sell_order = manager.get_order(&btc_sell_id).await.unwrap();
+        assert_eq!(btc_sell_order.status, OrderStatus::Canceled);
+
+        // Final stats verification
+        let stats = manager.get_stats().await;
+        assert_eq!(stats.total_orders, 3);
+        assert_eq!(stats.open_orders, 0);
+        assert_eq!(stats.filled_orders, 2);
+        assert_eq!(stats.canceled_orders, 1);
+        assert_eq!(stats.total_filled_qty, dec!(12.0)); // 2.0 + 10.0
+        assert_eq!(stats.total_commission, dec!(0.7)); // 0.1 + 0.1 + 0.5
+
+        // Verify event history
+        let btc_buy_events = manager.get_order_events(&btc_buy_id).await;
+        assert_eq!(btc_buy_events.len(), 5); // Init, Submit, Accept, PartialFill, Fill
+    }
+
+    #[tokio::test]
+    async fn test_event_callback_integration() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let manager = OrderManager::with_defaults();
+        let event_count = Arc::new(AtomicUsize::new(0));
+        let event_count_clone = event_count.clone();
+
+        // Register callback
+        manager.on_event(Box::new(move |_event| {
+            event_count_clone.fetch_add(1, Ordering::SeqCst);
+        })).await;
+
+        // Submit and process order
+        let order = Order::market("BTCUSDT", OrderSide::Buy, dec!(1.0))
+            .build()
+            .unwrap();
+        let client_id = manager.submit_order(order).await.unwrap();
+        let account_id = AccountId::new("callback-test");
+
+        manager.mark_submitted(&client_id, account_id.clone()).await.unwrap();
+        manager.mark_accepted(&client_id, VenueOrderId::new("v1"), account_id.clone()).await.unwrap();
+        manager.apply_fill(
+            &client_id,
+            VenueOrderId::new("v1"),
+            account_id,
+            TradeId::generate(),
+            dec!(1.0),
+            dec!(50000),
+            dec!(0.1),
+            "USDT".to_string(),
+            LiquiditySide::Taker,
+        ).await.unwrap();
+
+        // Should have received 4 events: Init, Submit, Accept, Fill
+        assert_eq!(event_count.load(Ordering::SeqCst), 4);
+    }
+
+    #[tokio::test]
+    async fn test_order_rejection_flow() {
+        let manager = OrderManager::with_defaults();
+        let account_id = AccountId::new("reject-test");
+
+        let order = Order::limit("BTCUSDT", OrderSide::Buy, dec!(1.0), dec!(50000))
+            .build()
+            .unwrap();
+        let client_id = manager.submit_order(order).await.unwrap();
+
+        manager.mark_submitted(&client_id, account_id.clone()).await.unwrap();
+        manager.mark_rejected(&client_id, account_id, "Insufficient funds").await.unwrap();
+
+        let order = manager.get_order(&client_id).await.unwrap();
+        assert_eq!(order.status, OrderStatus::Rejected);
+        assert!(order.is_closed());
+
+        let stats = manager.get_stats().await;
+        assert_eq!(stats.rejected_orders, 1);
+    }
+
+    #[tokio::test]
+    async fn test_order_denial_flow() {
+        let manager = OrderManager::with_defaults();
+
+        let order = Order::market("BTCUSDT", OrderSide::Buy, dec!(1000000.0)) // Very large order
+            .build()
+            .unwrap();
+        let client_id = manager.submit_order(order).await.unwrap();
+
+        manager.mark_denied(&client_id, "Order size exceeds risk limit").await.unwrap();
+
+        let order = manager.get_order(&client_id).await.unwrap();
+        assert_eq!(order.status, OrderStatus::Denied);
+        assert!(order.is_closed());
+
+        let stats = manager.get_stats().await;
+        assert_eq!(stats.rejected_orders, 1); // Denied counts as rejected
+    }
+
+    #[tokio::test]
+    async fn test_order_expiration_flow() {
+        let manager = OrderManager::with_defaults();
+        let account_id = AccountId::new("expire-test");
+
+        let order = Order::limit("BTCUSDT", OrderSide::Buy, dec!(1.0), dec!(40000))
+            .build()
+            .unwrap();
+        let client_id = manager.submit_order(order).await.unwrap();
+
+        manager.mark_submitted(&client_id, account_id.clone()).await.unwrap();
+        manager.mark_accepted(&client_id, VenueOrderId::new("v1"), account_id.clone()).await.unwrap();
+        manager.expire_order(&client_id, account_id).await.unwrap();
+
+        let order = manager.get_order(&client_id).await.unwrap();
+        assert_eq!(order.status, OrderStatus::Expired);
+        assert!(order.is_closed());
+    }
+
+    #[tokio::test]
+    async fn test_stop_order_trigger_flow() {
+        let manager = OrderManager::with_defaults();
+        let account_id = AccountId::new("trigger-test");
+
+        let order = Order::stop("BTCUSDT", OrderSide::Sell, dec!(1.0), dec!(48000))
+            .build()
+            .unwrap();
+        let client_id = manager.submit_order(order).await.unwrap();
+
+        manager.mark_submitted(&client_id, account_id.clone()).await.unwrap();
+        manager.mark_accepted(&client_id, VenueOrderId::new("v1"), account_id.clone()).await.unwrap();
+
+        // Trigger the stop order (price reached trigger level)
+        manager.mark_triggered(&client_id, account_id.clone()).await.unwrap();
+
+        let order = manager.get_order(&client_id).await.unwrap();
+        assert_eq!(order.status, OrderStatus::Triggered);
+
+        // Now fill the triggered order
+        manager.apply_fill(
+            &client_id,
+            VenueOrderId::new("v1"),
+            account_id,
+            TradeId::generate(),
+            dec!(1.0),
+            dec!(47900),
+            dec!(0.1),
+            "USDT".to_string(),
+            LiquiditySide::Taker,
+        ).await.unwrap();
+
+        let order = manager.get_order(&client_id).await.unwrap();
+        assert_eq!(order.status, OrderStatus::Filled);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_all_orders() {
+        let manager = OrderManager::with_defaults();
+        let account_id = AccountId::new("cancel-all-test");
+
+        // Submit multiple orders
+        for (i, symbol) in ["BTCUSDT", "ETHUSDT", "LTCUSDT"].iter().enumerate() {
+            let order = Order::limit(*symbol, OrderSide::Buy, dec!(1.0), dec!(100))
+                .build()
+                .unwrap();
+            let client_id = manager.submit_order(order).await.unwrap();
+            manager.mark_submitted(&client_id, account_id.clone()).await.unwrap();
+            manager.mark_accepted(&client_id, VenueOrderId::new(format!("venue-{}", i)), account_id.clone()).await.unwrap();
+        }
+
+        assert_eq!(manager.open_order_count().await, 3);
+
+        let canceled = manager.cancel_all_orders(account_id).await.unwrap();
+        assert_eq!(canceled.len(), 3);
+        assert_eq!(manager.open_order_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_orders_for_symbol() {
+        let manager = OrderManager::with_defaults();
+        let account_id = AccountId::new("cancel-symbol-test");
+
+        // Submit 2 BTC orders and 1 ETH order
+        for i in 0..2 {
+            let order = Order::limit("BTCUSDT", OrderSide::Buy, dec!(1.0), dec!(100))
+                .build()
+                .unwrap();
+            let client_id = manager.submit_order(order).await.unwrap();
+            manager.mark_submitted(&client_id, account_id.clone()).await.unwrap();
+            manager.mark_accepted(&client_id, VenueOrderId::new(format!("btc-venue-{}", i)), account_id.clone()).await.unwrap();
+        }
+
+        let eth_order = Order::limit("ETHUSDT", OrderSide::Buy, dec!(1.0), dec!(100))
+            .build()
+            .unwrap();
+        let eth_id = manager.submit_order(eth_order).await.unwrap();
+        manager.mark_submitted(&eth_id, account_id.clone()).await.unwrap();
+        manager.mark_accepted(&eth_id, VenueOrderId::new("eth-venue-1"), account_id.clone()).await.unwrap();
+
+        assert_eq!(manager.open_order_count().await, 3);
+
+        let canceled = manager.cancel_orders_for_symbol("BTCUSDT", account_id).await.unwrap();
+        assert_eq!(canceled.len(), 2);
+        assert_eq!(manager.open_order_count().await, 1);
+
+        // ETH order should still be open
+        let eth_order = manager.get_order(&eth_id).await.unwrap();
+        assert!(eth_order.is_open());
+    }
+
+    #[tokio::test]
+    async fn test_get_orders_by_strategy() {
+        let manager = OrderManager::with_defaults();
+
+        let scalp_order = Order::market("BTCUSDT", OrderSide::Buy, dec!(1.0))
+            .with_strategy_id(StrategyId::new("scalping"))
+            .build()
+            .unwrap();
+        let momentum_order = Order::market("ETHUSDT", OrderSide::Buy, dec!(2.0))
+            .with_strategy_id(StrategyId::new("momentum"))
+            .build()
+            .unwrap();
+
+        manager.submit_order(scalp_order).await.unwrap();
+        manager.submit_order(momentum_order).await.unwrap();
+
+        let scalp_orders = manager.get_orders_for_strategy(&StrategyId::new("scalping")).await;
+        assert_eq!(scalp_orders.len(), 1);
+        assert_eq!(scalp_orders[0].symbol(), "BTCUSDT");
+
+        let momentum_orders = manager.get_orders_for_strategy(&StrategyId::new("momentum")).await;
+        assert_eq!(momentum_orders.len(), 1);
+        assert_eq!(momentum_orders[0].symbol(), "ETHUSDT");
+    }
+
+    #[tokio::test]
+    async fn test_get_orders_by_instrument() {
+        let manager = OrderManager::with_defaults();
+
+        // Submit orders for different instruments
+        for _ in 0..3 {
+            let order = Order::market("BTCUSDT", OrderSide::Buy, dec!(1.0))
+                .build()
+                .unwrap();
+            manager.submit_order(order).await.unwrap();
+        }
+
+        // Default venue is "DEFAULT" when not specified
+        let instrument_id = InstrumentId::new("BTCUSDT", "DEFAULT");
+        let orders = manager.get_orders_for_instrument(&instrument_id).await;
+        assert_eq!(orders.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_get_total_filled_by_side() {
+        let manager = OrderManager::with_defaults();
+        let account_id = AccountId::new("side-test");
+
+        // Create and fill buy orders
+        let buy_order = Order::market("BTCUSDT", OrderSide::Buy, dec!(2.0))
+            .build()
+            .unwrap();
+        let buy_id = manager.submit_order(buy_order).await.unwrap();
+        manager.mark_submitted(&buy_id, account_id.clone()).await.unwrap();
+        manager.mark_accepted(&buy_id, VenueOrderId::new("b1"), account_id.clone()).await.unwrap();
+        manager.apply_fill(&buy_id, VenueOrderId::new("b1"), account_id.clone(),
+            TradeId::generate(), dec!(2.0), dec!(50000), dec!(0.1), "USDT".to_string(),
+            LiquiditySide::Taker).await.unwrap();
+
+        // Create and fill sell order
+        let sell_order = Order::market("BTCUSDT", OrderSide::Sell, dec!(1.0))
+            .build()
+            .unwrap();
+        let sell_id = manager.submit_order(sell_order).await.unwrap();
+        manager.mark_submitted(&sell_id, account_id.clone()).await.unwrap();
+        manager.mark_accepted(&sell_id, VenueOrderId::new("s1"), account_id.clone()).await.unwrap();
+        manager.apply_fill(&sell_id, VenueOrderId::new("s1"), account_id,
+            TradeId::generate(), dec!(1.0), dec!(51000), dec!(0.1), "USDT".to_string(),
+            LiquiditySide::Taker).await.unwrap();
+
+        let buy_filled = manager.get_total_filled_for_symbol("BTCUSDT", OrderSide::Buy).await;
+        let sell_filled = manager.get_total_filled_for_symbol("BTCUSDT", OrderSide::Sell).await;
+
+        assert_eq!(buy_filled, dec!(2.0));
+        assert_eq!(sell_filled, dec!(1.0));
+    }
+
+    #[tokio::test]
+    async fn test_clear_closed_orders() {
+        let manager = OrderManager::with_defaults();
+        let account_id = AccountId::new("clear-test");
+
+        // Create and fill an order (closed)
+        let filled_order = Order::market("BTCUSDT", OrderSide::Buy, dec!(1.0))
+            .build()
+            .unwrap();
+        let filled_id = manager.submit_order(filled_order).await.unwrap();
+        manager.mark_submitted(&filled_id, account_id.clone()).await.unwrap();
+        manager.mark_accepted(&filled_id, VenueOrderId::new("v1"), account_id.clone()).await.unwrap();
+        manager.apply_fill(&filled_id, VenueOrderId::new("v1"), account_id.clone(),
+            TradeId::generate(), dec!(1.0), dec!(50000), dec!(0.1), "USDT".to_string(),
+            LiquiditySide::Taker).await.unwrap();
+
+        // Create an open order
+        let open_order = Order::limit("ETHUSDT", OrderSide::Buy, dec!(1.0), dec!(3000))
+            .build()
+            .unwrap();
+        let open_id = manager.submit_order(open_order).await.unwrap();
+        manager.mark_submitted(&open_id, account_id.clone()).await.unwrap();
+        manager.mark_accepted(&open_id, VenueOrderId::new("v2"), account_id).await.unwrap();
+
+        assert_eq!(manager.get_all_orders().await.len(), 2);
+
+        manager.clear_closed_orders().await;
+
+        let remaining = manager.get_all_orders().await;
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].symbol(), "ETHUSDT");
+
+        // Verify closed order is gone
+        assert!(manager.get_order(&filled_id).await.is_none());
+        // Events should also be cleared
+        assert!(manager.get_order_events(&filled_id).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_reset() {
+        let manager = OrderManager::with_defaults();
+        let account_id = AccountId::new("reset-test");
+
+        // Create some orders
+        for i in 0..5 {
+            let order = Order::market("BTCUSDT", OrderSide::Buy, dec!(1.0))
+                .build()
+                .unwrap();
+            let client_id = manager.submit_order(order).await.unwrap();
+            manager.mark_submitted(&client_id, account_id.clone()).await.unwrap();
+            manager.mark_accepted(&client_id, VenueOrderId::new(format!("reset-venue-{}", i)), account_id.clone()).await.unwrap();
+        }
+
+        assert_eq!(manager.get_all_orders().await.len(), 5);
+
+        manager.reset().await;
+
+        assert_eq!(manager.get_all_orders().await.len(), 0);
+        assert_eq!(manager.open_order_count().await, 0);
+        let stats = manager.get_stats().await;
+        assert_eq!(stats.total_orders, 0);
+    }
+
+    #[tokio::test]
+    async fn test_max_orders_per_symbol() {
+        let config = OrderManagerConfig {
+            max_orders_per_symbol: 2,
+            ..Default::default()
+        };
+        let manager = OrderManager::new(config);
+
+        // Submit 2 orders for BTCUSDT - should work
+        for _ in 0..2 {
+            let order = Order::limit("BTCUSDT", OrderSide::Buy, dec!(1.0), dec!(50000))
+                .build()
+                .unwrap();
+            manager.submit_order(order).await.unwrap();
+        }
+
+        // Third order for BTCUSDT should fail
+        let order = Order::limit("BTCUSDT", OrderSide::Sell, dec!(1.0), dec!(51000))
+            .build()
+            .unwrap();
+        let result = manager.submit_order(order).await;
+        assert!(matches!(result, Err(OrderManagerError::SubmissionDenied(_))));
+
+        // But order for different symbol should work
+        let eth_order = Order::limit("ETHUSDT", OrderSide::Buy, dec!(1.0), dec!(3000))
+            .build()
+            .unwrap();
+        assert!(manager.submit_order(eth_order).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_duplicate_order_id_rejected() {
+        let config = OrderManagerConfig {
+            allow_duplicate_ids: false,
+            ..Default::default()
+        };
+        let manager = OrderManager::new(config);
+
+        let client_order_id = ClientOrderId::new("duplicate-id");
+
+        let order1 = Order::market("BTCUSDT", OrderSide::Buy, dec!(1.0))
+            .with_client_order_id(client_order_id.clone())
+            .build()
+            .unwrap();
+
+        manager.submit_order(order1).await.unwrap();
+
+        // Second order with same ID should fail
+        let order2 = Order::market("ETHUSDT", OrderSide::Sell, dec!(2.0))
+            .with_client_order_id(client_order_id)
+            .build()
+            .unwrap();
+
+        let result = manager.submit_order(order2).await;
+        assert!(matches!(result, Err(OrderManagerError::DuplicateOrderId(_))));
+    }
+
+    #[tokio::test]
+    async fn test_order_not_found_errors() {
+        let manager = OrderManager::with_defaults();
+        let fake_id = ClientOrderId::new("nonexistent");
+        let account_id = AccountId::new("test");
+
+        // All operations should return OrderNotFound
+        assert!(matches!(
+            manager.mark_submitted(&fake_id, account_id.clone()).await,
+            Err(OrderManagerError::OrderNotFound(_))
+        ));
+
+        assert!(matches!(
+            manager.mark_accepted(&fake_id, VenueOrderId::new("v"), account_id.clone()).await,
+            Err(OrderManagerError::OrderNotFound(_))
+        ));
+
+        assert!(matches!(
+            manager.mark_rejected(&fake_id, account_id.clone(), "reason").await,
+            Err(OrderManagerError::OrderNotFound(_))
+        ));
+
+        assert!(matches!(
+            manager.cancel_order(&fake_id, account_id).await,
+            Err(OrderManagerError::OrderNotFound(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_get_orders_by_status() {
+        let manager = OrderManager::with_defaults();
+        let account_id = AccountId::new("status-test");
+
+        // Create orders in different states
+        let init_order = Order::market("BTCUSDT", OrderSide::Buy, dec!(1.0))
+            .build()
+            .unwrap();
+        manager.submit_order(init_order).await.unwrap();
+
+        let submitted_order = Order::market("ETHUSDT", OrderSide::Buy, dec!(1.0))
+            .build()
+            .unwrap();
+        let submitted_id = manager.submit_order(submitted_order).await.unwrap();
+        manager.mark_submitted(&submitted_id, account_id.clone()).await.unwrap();
+
+        let accepted_order = Order::limit("LTCUSDT", OrderSide::Buy, dec!(1.0), dec!(100))
+            .build()
+            .unwrap();
+        let accepted_id = manager.submit_order(accepted_order).await.unwrap();
+        manager.mark_submitted(&accepted_id, account_id.clone()).await.unwrap();
+        manager.mark_accepted(&accepted_id, VenueOrderId::new("v1"), account_id).await.unwrap();
+
+        let initialized = manager.get_orders_by_status(OrderStatus::Initialized).await;
+        assert_eq!(initialized.len(), 1);
+
+        let submitted = manager.get_orders_by_status(OrderStatus::Submitted).await;
+        assert_eq!(submitted.len(), 1);
+
+        let accepted = manager.get_orders_by_status(OrderStatus::Accepted).await;
+        assert_eq!(accepted.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_open_vs_closed_orders() {
+        let manager = OrderManager::with_defaults();
+        let account_id = AccountId::new("open-close-test");
+
+        // Create an open order
+        let open_order = Order::limit("BTCUSDT", OrderSide::Buy, dec!(1.0), dec!(50000))
+            .build()
+            .unwrap();
+        let open_id = manager.submit_order(open_order).await.unwrap();
+        manager.mark_submitted(&open_id, account_id.clone()).await.unwrap();
+        manager.mark_accepted(&open_id, VenueOrderId::new("v1"), account_id.clone()).await.unwrap();
+
+        // Create a closed (filled) order
+        let filled_order = Order::market("ETHUSDT", OrderSide::Buy, dec!(1.0))
+            .build()
+            .unwrap();
+        let filled_id = manager.submit_order(filled_order).await.unwrap();
+        manager.mark_submitted(&filled_id, account_id.clone()).await.unwrap();
+        manager.mark_accepted(&filled_id, VenueOrderId::new("v2"), account_id.clone()).await.unwrap();
+        manager.apply_fill(&filled_id, VenueOrderId::new("v2"), account_id,
+            TradeId::generate(), dec!(1.0), dec!(3000), dec!(0.1), "USDT".to_string(),
+            LiquiditySide::Taker).await.unwrap();
+
+        let open_orders = manager.get_open_orders().await;
+        assert_eq!(open_orders.len(), 1);
+        assert_eq!(open_orders[0].symbol(), "BTCUSDT");
+
+        let closed_orders = manager.get_closed_orders().await;
+        assert_eq!(closed_orders.len(), 1);
+        assert_eq!(closed_orders[0].symbol(), "ETHUSDT");
+
+        let open_symbol_orders = manager.get_open_orders_for_symbol("BTCUSDT").await;
+        assert_eq!(open_symbol_orders.len(), 1);
+
+        let open_eth_orders = manager.get_open_orders_for_symbol("ETHUSDT").await;
+        assert!(open_eth_orders.is_empty());
+    }
+
+    // === Concurrency Tests ===
+
+    #[tokio::test]
+    async fn test_concurrent_order_submission() {
+        let manager = Arc::new(OrderManager::with_defaults());
+        let mut handles = Vec::new();
+
+        // Submit 100 orders concurrently
+        for i in 0..100 {
+            let manager_clone = manager.clone();
+            let symbol = if i % 3 == 0 {
+                "BTCUSDT"
+            } else if i % 3 == 1 {
+                "ETHUSDT"
+            } else {
+                "LTCUSDT"
+            };
+
+            handles.push(tokio::spawn(async move {
+                let order = Order::market(symbol, OrderSide::Buy, dec!(0.1))
+                    .build()
+                    .unwrap();
+                manager_clone.submit_order(order).await
+            }));
+        }
+
+        // Wait for all submissions
+        let results: Vec<_> = tokio_join_all(handles).await;
+
+        // All should succeed
+        let successful = results.iter().filter(|r| r.is_ok() && r.as_ref().unwrap().is_ok()).count();
+        assert_eq!(successful, 100);
+
+        // Verify order counts
+        assert_eq!(manager.get_all_orders().await.len(), 100);
+        assert_eq!(manager.open_order_count().await, 100);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_order_lifecycle() {
+        let manager = Arc::new(OrderManager::with_defaults());
+        let account_id = AccountId::new("concurrent-test");
+        let mut order_ids = Vec::new();
+
+        // First, submit a batch of orders sequentially to get their IDs
+        for i in 0..50 {
+            let order = Order::limit("BTCUSDT", OrderSide::Buy, dec!(1.0), dec!(50000))
+                .build()
+                .unwrap();
+            let client_id = manager.submit_order(order).await.unwrap();
+            order_ids.push((i, client_id));
+        }
+
+        // Now process them concurrently through their lifecycle
+        let mut handles = Vec::new();
+        for (i, client_id) in order_ids {
+            let manager_clone = manager.clone();
+            let account_id_clone = account_id.clone();
+            let client_id_clone = client_id.clone();
+
+            handles.push(tokio::spawn(async move {
+                // Submit
+                manager_clone
+                    .mark_submitted(&client_id_clone, account_id_clone.clone())
+                    .await?;
+
+                // Accept with unique venue ID
+                manager_clone
+                    .mark_accepted(
+                        &client_id_clone,
+                        VenueOrderId::new(format!("venue-{}", i)),
+                        account_id_clone.clone(),
+                    )
+                    .await?;
+
+                // Fill
+                manager_clone
+                    .apply_fill(
+                        &client_id_clone,
+                        VenueOrderId::new(format!("venue-{}", i)),
+                        account_id_clone,
+                        TradeId::generate(),
+                        dec!(1.0),
+                        dec!(50000),
+                        dec!(0.1),
+                        "USDT".to_string(),
+                        LiquiditySide::Taker,
+                    )
+                    .await?;
+
+                Ok::<_, OrderManagerError>(())
+            }));
+        }
+
+        // Wait for all
+        let results: Vec<_> = tokio_join_all(handles).await;
+
+        // All should succeed
+        for result in results {
+            assert!(result.is_ok(), "Task panicked: {:?}", result);
+            assert!(result.unwrap().is_ok(), "Order lifecycle failed");
+        }
+
+        // Verify all orders are filled
+        assert_eq!(manager.open_order_count().await, 0);
+        let stats = manager.get_stats().await;
+        assert_eq!(stats.filled_orders, 50);
+        assert_eq!(stats.total_filled_qty, dec!(50.0)); // 50 orders * 1.0 qty
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_cancel_all() {
+        let manager = Arc::new(OrderManager::with_defaults());
+        let account_id = AccountId::new("cancel-test");
+
+        // Submit and accept orders
+        for i in 0..20 {
+            let order = Order::limit("BTCUSDT", OrderSide::Buy, dec!(1.0), dec!(50000))
+                .build()
+                .unwrap();
+            let client_id = manager.submit_order(order).await.unwrap();
+            manager
+                .mark_submitted(&client_id, account_id.clone())
+                .await
+                .unwrap();
+            manager
+                .mark_accepted(
+                    &client_id,
+                    VenueOrderId::new(format!("v-{}", i)),
+                    account_id.clone(),
+                )
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(manager.open_order_count().await, 20);
+
+        // Concurrently try to cancel all from multiple tasks
+        let mut handles = Vec::new();
+        for _ in 0..5 {
+            let manager_clone = manager.clone();
+            let account_id_clone = account_id.clone();
+            handles.push(tokio::spawn(async move {
+                manager_clone.cancel_all_orders(account_id_clone).await
+            }));
+        }
+
+        let results: Vec<_> = tokio_join_all(handles).await;
+
+        // At least one should have canceled some orders
+        let total_canceled: usize = results
+            .iter()
+            .filter_map(|r| r.as_ref().ok())
+            .filter_map(|r| r.as_ref().ok())
+            .map(|ids| ids.len())
+            .sum();
+
+        // Due to concurrent cancellation, total should be 20 (each order canceled once)
+        assert_eq!(total_canceled, 20);
+
+        // All orders should be canceled
+        assert_eq!(manager.open_order_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_mixed_operations() {
+        let manager = Arc::new(OrderManager::with_defaults());
+        let account_id = AccountId::new("mixed-test");
+        let mut handles = Vec::new();
+
+        // Task 1: Submit orders
+        {
+            let manager_clone = manager.clone();
+            handles.push(tokio::spawn(async move {
+                for _ in 0..30 {
+                    let order = Order::market("BTCUSDT", OrderSide::Buy, dec!(0.1))
+                        .build()
+                        .unwrap();
+                    let _ = manager_clone.submit_order(order).await;
+                }
+            }));
+        }
+
+        // Task 2: Query orders repeatedly
+        {
+            let manager_clone = manager.clone();
+            handles.push(tokio::spawn(async move {
+                for _ in 0..50 {
+                    let _ = manager_clone.get_all_orders().await;
+                    let _ = manager_clone.get_open_orders().await;
+                    let _ = manager_clone.get_stats().await;
+                    tokio::task::yield_now().await;
+                }
+            }));
+        }
+
+        // Task 3: Submit different orders
+        {
+            let manager_clone = manager.clone();
+            let account_id_clone = account_id.clone();
+            handles.push(tokio::spawn(async move {
+                for i in 0..20 {
+                    let order = Order::limit("ETHUSDT", OrderSide::Sell, dec!(1.0), dec!(3000))
+                        .build()
+                        .unwrap();
+                    if let Ok(client_id) = manager_clone.submit_order(order).await {
+                        let _ = manager_clone
+                            .mark_submitted(&client_id, account_id_clone.clone())
+                            .await;
+                        let _ = manager_clone
+                            .mark_accepted(
+                                &client_id,
+                                VenueOrderId::new(format!("eth-{}", i)),
+                                account_id_clone.clone(),
+                            )
+                            .await;
+                    }
+                }
+            }));
+        }
+
+        // Wait for all tasks
+        let results: Vec<_> = tokio_join_all(handles).await;
+
+        // No panics should occur
+        for result in results {
+            assert!(result.is_ok(), "Task panicked: {:?}", result);
+        }
+
+        // Manager should still be in consistent state
+        let all_orders = manager.get_all_orders().await;
+        let stats = manager.get_stats().await;
+        assert_eq!(all_orders.len(), stats.total_orders);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_event_callbacks() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let manager = Arc::new(OrderManager::with_defaults());
+        let event_count = Arc::new(AtomicUsize::new(0));
+        let event_count_clone = event_count.clone();
+
+        // Register callback
+        manager
+            .on_event(Box::new(move |_event| {
+                event_count_clone.fetch_add(1, Ordering::SeqCst);
+            }))
+            .await;
+
+        let account_id = AccountId::new("callback-test");
+
+        // Submit orders concurrently
+        let mut handles = Vec::new();
+        for i in 0..10 {
+            let manager_clone = manager.clone();
+            let account_id_clone = account_id.clone();
+            handles.push(tokio::spawn(async move {
+                let order = Order::market("BTCUSDT", OrderSide::Buy, dec!(0.1))
+                    .build()
+                    .unwrap();
+                let client_id = manager_clone.submit_order(order).await.unwrap();
+                manager_clone
+                    .mark_submitted(&client_id, account_id_clone.clone())
+                    .await
+                    .unwrap();
+                manager_clone
+                    .mark_accepted(
+                        &client_id,
+                        VenueOrderId::new(format!("v-{}", i)),
+                        account_id_clone.clone(),
+                    )
+                    .await
+                    .unwrap();
+                manager_clone
+                    .apply_fill(
+                        &client_id,
+                        VenueOrderId::new(format!("v-{}", i)),
+                        account_id_clone,
+                        TradeId::generate(),
+                        dec!(0.1),
+                        dec!(50000),
+                        dec!(0.01),
+                        "USDT".to_string(),
+                        LiquiditySide::Taker,
+                    )
+                    .await
+                    .unwrap();
+            }));
+        }
+
+        tokio_join_all(handles).await;
+
+        // Each order should generate 4 events: Init, Submit, Accept, Fill
+        // 10 orders * 4 events = 40 events
+        assert_eq!(event_count.load(Ordering::SeqCst), 40);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_stats_consistency() {
+        let manager = Arc::new(OrderManager::with_defaults());
+        let account_id = AccountId::new("stats-test");
+
+        // Pre-populate with some orders
+        for i in 0..10 {
+            let order = Order::market("BTCUSDT", OrderSide::Buy, dec!(1.0))
+                .build()
+                .unwrap();
+            let client_id = manager.submit_order(order).await.unwrap();
+            manager
+                .mark_submitted(&client_id, account_id.clone())
+                .await
+                .unwrap();
+            manager
+                .mark_accepted(
+                    &client_id,
+                    VenueOrderId::new(format!("v-{}", i)),
+                    account_id.clone(),
+                )
+                .await
+                .unwrap();
+        }
+
+        // Concurrently: fill some, cancel some, add more
+        let mut handles = Vec::new();
+
+        // Fill orders 0-4
+        for i in 0..5 {
+            let manager_clone = manager.clone();
+            let account_id_clone = account_id.clone();
+            handles.push(tokio::spawn(async move {
+                let orders = manager_clone.get_open_orders().await;
+                if let Some(order) = orders.get(0) {
+                    let _ = manager_clone
+                        .apply_fill(
+                            &order.client_order_id,
+                            VenueOrderId::new(format!("v-{}", i)),
+                            account_id_clone,
+                            TradeId::generate(),
+                            dec!(1.0),
+                            dec!(50000),
+                            dec!(0.1),
+                            "USDT".to_string(),
+                            LiquiditySide::Taker,
+                        )
+                        .await;
+                }
+            }));
+        }
+
+        // Cancel remaining
+        for _ in 0..5 {
+            let manager_clone = manager.clone();
+            let account_id_clone = account_id.clone();
+            handles.push(tokio::spawn(async move {
+                let orders = manager_clone.get_open_orders().await;
+                if let Some(order) = orders.get(0) {
+                    let _ = manager_clone
+                        .cancel_order(&order.client_order_id, account_id_clone)
+                        .await;
+                }
+            }));
+        }
+
+        tokio_join_all(handles).await;
+
+        // Verify stats are consistent
+        let stats = manager.get_stats().await;
+        let all_orders = manager.get_all_orders().await;
+        let open_orders = manager.get_open_orders().await;
+        let closed_orders = manager.get_closed_orders().await;
+
+        // Total should match
+        assert_eq!(stats.total_orders, all_orders.len());
+        // Open + closed should equal total
+        assert_eq!(open_orders.len() + closed_orders.len(), all_orders.len());
+        // Filled + canceled should equal closed
+        assert_eq!(
+            stats.filled_orders + stats.canceled_orders,
+            closed_orders.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_reset() {
+        let manager = Arc::new(OrderManager::with_defaults());
+        let account_id = AccountId::new("reset-test");
+
+        // Submit orders
+        for i in 0..50 {
+            let order = Order::market("BTCUSDT", OrderSide::Buy, dec!(1.0))
+                .build()
+                .unwrap();
+            let client_id = manager.submit_order(order).await.unwrap();
+            manager
+                .mark_submitted(&client_id, account_id.clone())
+                .await
+                .unwrap();
+            manager
+                .mark_accepted(
+                    &client_id,
+                    VenueOrderId::new(format!("v-{}", i)),
+                    account_id.clone(),
+                )
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(manager.get_all_orders().await.len(), 50);
+
+        // Concurrently: reset + query + submit
+        let mut handles = Vec::new();
+
+        // Reset
+        {
+            let manager_clone = manager.clone();
+            handles.push(tokio::spawn(async move {
+                manager_clone.reset().await;
+            }));
+        }
+
+        // Query (should not panic)
+        {
+            let manager_clone = manager.clone();
+            handles.push(tokio::spawn(async move {
+                for _ in 0..10 {
+                    let _ = manager_clone.get_all_orders().await;
+                    let _ = manager_clone.get_stats().await;
+                    tokio::task::yield_now().await;
+                }
+            }));
+        }
+
+        tokio_join_all(handles).await;
+
+        // After reset, manager should be empty or have only newly added orders
+        // The exact state depends on race condition timing, but should be consistent
+        let final_orders = manager.get_all_orders().await;
+        let final_stats = manager.get_stats().await;
+        assert_eq!(final_orders.len(), final_stats.total_orders);
     }
 }

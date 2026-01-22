@@ -1,8 +1,8 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
+use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use crate::data::types::{BarData, BarDataMode, BarType, Timeframe, TradeSide};
 use crate::orders::{
     ClientOrderId, Order, OrderCanceled, OrderFilled, OrderRejected, OrderSide, TimeInForce,
@@ -13,6 +13,81 @@ use crate::series::MaximumBarsLookBack;
 use super::base::{Strategy, Signal};
 use rust_decimal::Decimal;
 use std::str::FromStr;
+
+/// Error types that can occur in the Python bridge
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PythonBridgeError {
+    /// Error converting data between Rust and Python
+    ConversionError(String),
+    /// Error calling Python method
+    MethodCallError(String),
+    /// Python strategy raised an exception
+    PythonException(String),
+    /// Strategy is disabled due to too many errors
+    CircuitBreakerOpen,
+    /// GIL acquisition timeout
+    GilTimeout,
+}
+
+impl std::fmt::Display for PythonBridgeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PythonBridgeError::ConversionError(msg) => write!(f, "Conversion error: {}", msg),
+            PythonBridgeError::MethodCallError(msg) => write!(f, "Method call error: {}", msg),
+            PythonBridgeError::PythonException(msg) => write!(f, "Python exception: {}", msg),
+            PythonBridgeError::CircuitBreakerOpen => write!(f, "Circuit breaker open - strategy disabled"),
+            PythonBridgeError::GilTimeout => write!(f, "GIL acquisition timeout"),
+        }
+    }
+}
+
+impl std::error::Error for PythonBridgeError {}
+
+/// Callback type for error notifications
+pub type ErrorCallback = Box<dyn Fn(&PythonBridgeError, &str) + Send + Sync>;
+
+/// Configuration for error recovery behavior
+#[derive(Debug, Clone)]
+pub struct ErrorRecoveryConfig {
+    /// Maximum consecutive errors before circuit breaker opens
+    pub max_consecutive_errors: u32,
+    /// Whether to automatically reset error count on success
+    pub reset_on_success: bool,
+    /// Whether to log errors to stderr
+    pub log_errors: bool,
+    /// Whether circuit breaker is enabled
+    pub circuit_breaker_enabled: bool,
+}
+
+impl Default for ErrorRecoveryConfig {
+    fn default() -> Self {
+        Self {
+            max_consecutive_errors: 10,
+            reset_on_success: true,
+            log_errors: true,
+            circuit_breaker_enabled: true,
+        }
+    }
+}
+
+/// Error statistics for monitoring
+#[derive(Debug, Clone, Default)]
+pub struct ErrorStats {
+    /// Total errors since creation
+    pub total_errors: u64,
+    /// Consecutive errors (resets on success)
+    pub consecutive_errors: u32,
+    /// Conversion errors
+    pub conversion_errors: u64,
+    /// Method call errors
+    pub method_errors: u64,
+    /// Python exceptions
+    pub python_exceptions: u64,
+    /// Last error message
+    pub last_error: Option<String>,
+    /// Timestamp of last error
+    pub last_error_time: Option<chrono::DateTime<chrono::Utc>>,
+}
 
 /// Wrapper around Python strategy instance
 pub struct PythonStrategy {
@@ -30,6 +105,18 @@ pub struct PythonStrategy {
     call_count: Arc<AtomicU64>,
     /// Peak execution time in microseconds
     peak_execution_us: Arc<AtomicU64>,
+
+    // Error recovery (thread-safe)
+    /// Error recovery configuration
+    error_config: ErrorRecoveryConfig,
+    /// Error statistics
+    error_stats: Arc<RwLock<ErrorStats>>,
+    /// Consecutive error count (atomic for fast access)
+    consecutive_errors: Arc<AtomicU64>,
+    /// Circuit breaker state (true = open/disabled)
+    circuit_open: Arc<AtomicBool>,
+    /// Error callback (optional)
+    error_callback: Arc<RwLock<Option<ErrorCallback>>>,
 }
 
 impl std::fmt::Debug for PythonStrategy {
@@ -39,6 +126,8 @@ impl std::fmt::Debug for PythonStrategy {
             .field("cpu_time_us", &self.cpu_time_us.load(Ordering::Relaxed))
             .field("call_count", &self.call_count.load(Ordering::Relaxed))
             .field("peak_execution_us", &self.peak_execution_us.load(Ordering::Relaxed))
+            .field("consecutive_errors", &self.consecutive_errors.load(Ordering::Relaxed))
+            .field("circuit_open", &self.circuit_open.load(Ordering::Relaxed))
             .finish_non_exhaustive()
     }
 }
@@ -174,8 +263,108 @@ impl PythonStrategy {
                 cpu_time_us: Arc::new(AtomicU64::new(0)),
                 call_count: Arc::new(AtomicU64::new(0)),
                 peak_execution_us: Arc::new(AtomicU64::new(0)),
+                error_config: ErrorRecoveryConfig::default(),
+                error_stats: Arc::new(RwLock::new(ErrorStats::default())),
+                consecutive_errors: Arc::new(AtomicU64::new(0)),
+                circuit_open: Arc::new(AtomicBool::new(false)),
+                error_callback: Arc::new(RwLock::new(None)),
             })
         })
+    }
+
+    /// Create a new PythonStrategy with custom error recovery config
+    pub fn from_file_with_config(
+        path: &str,
+        class_name: &str,
+        error_config: ErrorRecoveryConfig,
+    ) -> Result<Self, String> {
+        let mut strategy = Self::from_file(path, class_name)?;
+        strategy.error_config = error_config;
+        Ok(strategy)
+    }
+
+    /// Set the error callback for monitoring
+    pub fn set_error_callback(&self, callback: ErrorCallback) {
+        if let Ok(mut cb) = self.error_callback.write() {
+            *cb = Some(callback);
+        }
+    }
+
+    /// Get current error statistics
+    pub fn get_error_stats(&self) -> ErrorStats {
+        self.error_stats.read().map(|s| s.clone()).unwrap_or_default()
+    }
+
+    /// Check if circuit breaker is open (strategy disabled)
+    pub fn is_circuit_open(&self) -> bool {
+        self.circuit_open.load(Ordering::Relaxed)
+    }
+
+    /// Manually reset the circuit breaker
+    pub fn reset_circuit_breaker(&self) {
+        self.circuit_open.store(false, Ordering::Relaxed);
+        self.consecutive_errors.store(0, Ordering::Relaxed);
+        if let Ok(mut stats) = self.error_stats.write() {
+            stats.consecutive_errors = 0;
+        }
+    }
+
+    /// Record an error and potentially open circuit breaker
+    fn record_error(&self, error: PythonBridgeError, context: &str) {
+        // Update statistics
+        let consecutive = self.consecutive_errors.fetch_add(1, Ordering::Relaxed) + 1;
+
+        if let Ok(mut stats) = self.error_stats.write() {
+            stats.total_errors += 1;
+            stats.consecutive_errors = consecutive as u32;
+            stats.last_error = Some(error.to_string());
+            stats.last_error_time = Some(chrono::Utc::now());
+
+            match &error {
+                PythonBridgeError::ConversionError(_) => stats.conversion_errors += 1,
+                PythonBridgeError::MethodCallError(_) | PythonBridgeError::PythonException(_) => {
+                    stats.method_errors += 1;
+                }
+                _ => {}
+            }
+        }
+
+        // Log if enabled
+        if self.error_config.log_errors {
+            eprintln!("[PythonBridge] {} error in {}: {}", self.cached_name, context, error);
+        }
+
+        // Notify callback
+        if let Ok(callback) = self.error_callback.read() {
+            if let Some(ref cb) = *callback {
+                cb(&error, context);
+            }
+        }
+
+        // Check circuit breaker threshold
+        if self.error_config.circuit_breaker_enabled
+            && consecutive as u32 >= self.error_config.max_consecutive_errors
+        {
+            self.circuit_open.store(true, Ordering::Relaxed);
+            if self.error_config.log_errors {
+                eprintln!(
+                    "[PythonBridge] Circuit breaker OPEN for {} after {} consecutive errors",
+                    self.cached_name, consecutive
+                );
+            }
+        }
+    }
+
+    /// Record a successful operation (resets consecutive error count)
+    fn record_success(&self) {
+        if self.error_config.reset_on_success {
+            let prev = self.consecutive_errors.swap(0, Ordering::Relaxed);
+            if prev > 0 {
+                if let Ok(mut stats) = self.error_stats.write() {
+                    stats.consecutive_errors = 0;
+                }
+            }
+        }
     }
 
     /// Get peak execution time in microseconds
@@ -213,6 +402,30 @@ impl PythonStrategy {
         self.cpu_time_us.store(0, Ordering::Relaxed);
         self.call_count.store(0, Ordering::Relaxed);
         self.peak_execution_us.store(0, Ordering::Relaxed);
+    }
+
+    /// Get consecutive error count (test only)
+    pub fn get_consecutive_errors(&self) -> u64 {
+        self.consecutive_errors.load(Ordering::Relaxed)
+    }
+
+    /// Simulate an error for testing (test only)
+    pub fn simulate_error(&self, error: PythonBridgeError, context: &str) {
+        self.record_error(error, context);
+    }
+
+    /// Set error config for testing (test only)
+    pub fn set_error_config(&mut self, config: ErrorRecoveryConfig) {
+        self.error_config = config;
+    }
+
+    /// Reset error tracking (test only)
+    pub fn reset_error_stats(&self) {
+        self.consecutive_errors.store(0, Ordering::Relaxed);
+        self.circuit_open.store(false, Ordering::Relaxed);
+        if let Ok(mut stats) = self.error_stats.write() {
+            *stats = ErrorStats::default();
+        }
     }
 }
 
@@ -422,8 +635,14 @@ impl Strategy for PythonStrategy {
         // Note: Python strategies use their own Python BarsContext
         // The Rust _bars parameter is ignored; we pass Python BarsContext instead
 
+        // Check circuit breaker first
+        if self.circuit_open.load(Ordering::Relaxed) {
+            return Signal::Hold;
+        }
+
         // Start timing
         let start = std::time::Instant::now();
+        let mut had_error = false;
 
         let signal = Python::with_gil(|py| {
             let instance = self.py_instance.lock().unwrap();
@@ -435,14 +654,22 @@ impl Strategy for PythonStrategy {
             let bar_dict = match bar_data_to_pydict(py, bar_data) {
                 Ok(d) => d,
                 Err(e) => {
-                    eprintln!("Failed to convert BarData to Python: {}", e);
+                    had_error = true;
+                    self.record_error(
+                        PythonBridgeError::ConversionError(e.to_string()),
+                        "on_bar_data/bar_data_to_pydict",
+                    );
                     return Signal::Hold;
                 }
             };
 
             // Update Python BarsContext BEFORE calling strategy
             if let Err(e) = py_bars_bound.call_method1("on_bar_update", (&bar_dict,)) {
-                eprintln!("Failed to update Python BarsContext: {}", e);
+                had_error = true;
+                self.record_error(
+                    PythonBridgeError::MethodCallError(e.to_string()),
+                    "on_bar_data/on_bar_update",
+                );
                 return Signal::Hold;
             }
 
@@ -452,17 +679,30 @@ impl Strategy for PythonStrategy {
                     match pydict_to_signal(&result) {
                         Ok(signal) => signal,
                         Err(e) => {
-                            eprintln!("Failed to convert Python signal to Rust: {}", e);
+                            had_error = true;
+                            self.record_error(
+                                PythonBridgeError::ConversionError(e.to_string()),
+                                "on_bar_data/pydict_to_signal",
+                            );
                             Signal::Hold
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("Python on_bar_data error: {}", e);
+                    had_error = true;
+                    self.record_error(
+                        PythonBridgeError::PythonException(e.to_string()),
+                        "on_bar_data",
+                    );
                     Signal::Hold
                 }
             }
         });
+
+        // Record success if no errors
+        if !had_error {
+            self.record_success();
+        }
 
         // Record execution time
         let elapsed_us = start.elapsed().as_micros() as u64;
@@ -821,3 +1061,1087 @@ impl Strategy for PythonStrategy {
 // 3. Cached fields are immutable after construction
 unsafe impl Send for PythonStrategy {}
 unsafe impl Sync for PythonStrategy {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::types::{BarMetadata, OHLCData, TickData};
+    use chrono::Utc;
+    use rust_decimal_macros::dec;
+
+    // ========================================================================
+    // parse_timeframe tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_timeframe_valid() {
+        assert_eq!(parse_timeframe("1m"), Some(Timeframe::OneMinute));
+        assert_eq!(parse_timeframe("5m"), Some(Timeframe::FiveMinutes));
+        assert_eq!(parse_timeframe("15m"), Some(Timeframe::FifteenMinutes));
+        assert_eq!(parse_timeframe("30m"), Some(Timeframe::ThirtyMinutes));
+        assert_eq!(parse_timeframe("1h"), Some(Timeframe::OneHour));
+        assert_eq!(parse_timeframe("4h"), Some(Timeframe::FourHours));
+        assert_eq!(parse_timeframe("1d"), Some(Timeframe::OneDay));
+        assert_eq!(parse_timeframe("1w"), Some(Timeframe::OneWeek));
+    }
+
+    #[test]
+    fn test_parse_timeframe_invalid() {
+        assert_eq!(parse_timeframe(""), None);
+        assert_eq!(parse_timeframe("invalid"), None);
+        assert_eq!(parse_timeframe("2m"), None);
+        assert_eq!(parse_timeframe("1M"), None); // Case sensitive
+        assert_eq!(parse_timeframe("1H"), None);
+        assert_eq!(parse_timeframe("1D"), None);
+    }
+
+    // ========================================================================
+    // pydict_to_signal tests (require Python GIL)
+    // ========================================================================
+
+    #[test]
+    fn test_pydict_to_signal_buy() {
+        Python::with_gil(|py| {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("type", "Buy").unwrap();
+            dict.set_item("symbol", "BTCUSDT").unwrap();
+            dict.set_item("quantity", "1.5").unwrap();
+
+            let signal = pydict_to_signal(dict.as_any()).unwrap();
+            match signal {
+                Signal::Buy { symbol, quantity } => {
+                    assert_eq!(symbol, "BTCUSDT");
+                    assert_eq!(quantity, dec!(1.5));
+                }
+                _ => panic!("Expected Buy signal"),
+            }
+        });
+    }
+
+    #[test]
+    fn test_pydict_to_signal_sell() {
+        Python::with_gil(|py| {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("type", "Sell").unwrap();
+            dict.set_item("symbol", "ETHUSDT").unwrap();
+            dict.set_item("quantity", "10.0").unwrap();
+
+            let signal = pydict_to_signal(dict.as_any()).unwrap();
+            match signal {
+                Signal::Sell { symbol, quantity } => {
+                    assert_eq!(symbol, "ETHUSDT");
+                    assert_eq!(quantity, dec!(10.0));
+                }
+                _ => panic!("Expected Sell signal"),
+            }
+        });
+    }
+
+    #[test]
+    fn test_pydict_to_signal_hold() {
+        Python::with_gil(|py| {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("type", "Hold").unwrap();
+
+            let signal = pydict_to_signal(dict.as_any()).unwrap();
+            assert!(matches!(signal, Signal::Hold));
+        });
+    }
+
+    #[test]
+    fn test_pydict_to_signal_missing_type() {
+        Python::with_gil(|py| {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("symbol", "BTCUSDT").unwrap();
+
+            let result = pydict_to_signal(dict.as_any());
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn test_pydict_to_signal_missing_symbol() {
+        Python::with_gil(|py| {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("type", "Buy").unwrap();
+            dict.set_item("quantity", "1.0").unwrap();
+
+            let result = pydict_to_signal(dict.as_any());
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn test_pydict_to_signal_missing_quantity() {
+        Python::with_gil(|py| {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("type", "Buy").unwrap();
+            dict.set_item("symbol", "BTCUSDT").unwrap();
+
+            let result = pydict_to_signal(dict.as_any());
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn test_pydict_to_signal_invalid_quantity() {
+        Python::with_gil(|py| {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("type", "Buy").unwrap();
+            dict.set_item("symbol", "BTCUSDT").unwrap();
+            dict.set_item("quantity", "not_a_number").unwrap();
+
+            let result = pydict_to_signal(dict.as_any());
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn test_pydict_to_signal_unknown_type() {
+        Python::with_gil(|py| {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("type", "Unknown").unwrap();
+            dict.set_item("symbol", "BTCUSDT").unwrap();
+            dict.set_item("quantity", "1.0").unwrap();
+
+            let result = pydict_to_signal(dict.as_any());
+            assert!(result.is_err());
+        });
+    }
+
+    // ========================================================================
+    // pydict_to_order tests (require Python GIL)
+    // ========================================================================
+
+    #[test]
+    fn test_pydict_to_order_market() {
+        Python::with_gil(|py| {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("symbol", "BTCUSDT").unwrap();
+            dict.set_item("order_side", "Buy").unwrap();
+            dict.set_item("order_type", "Market").unwrap();
+            dict.set_item("quantity", "0.5").unwrap();
+
+            let order = pydict_to_order(&dict).unwrap();
+            assert_eq!(order.instrument_id.symbol, "BTCUSDT");
+            assert_eq!(order.side, OrderSide::Buy);
+            assert_eq!(order.quantity, dec!(0.5));
+            assert_eq!(order.time_in_force, TimeInForce::GTC);
+        });
+    }
+
+    #[test]
+    fn test_pydict_to_order_limit() {
+        Python::with_gil(|py| {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("symbol", "ETHUSDT").unwrap();
+            dict.set_item("order_side", "Sell").unwrap();
+            dict.set_item("order_type", "Limit").unwrap();
+            dict.set_item("quantity", "2.0").unwrap();
+            dict.set_item("price", "3500.00").unwrap();
+
+            let order = pydict_to_order(&dict).unwrap();
+            assert_eq!(order.instrument_id.symbol, "ETHUSDT");
+            assert_eq!(order.side, OrderSide::Sell);
+            assert_eq!(order.quantity, dec!(2.0));
+            assert_eq!(order.price, Some(dec!(3500.00)));
+        });
+    }
+
+    #[test]
+    fn test_pydict_to_order_limit_missing_price() {
+        Python::with_gil(|py| {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("symbol", "BTCUSDT").unwrap();
+            dict.set_item("order_side", "Buy").unwrap();
+            dict.set_item("order_type", "Limit").unwrap();
+            dict.set_item("quantity", "1.0").unwrap();
+            // Missing price
+
+            let result = pydict_to_order(&dict);
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn test_pydict_to_order_stop() {
+        Python::with_gil(|py| {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("symbol", "BTCUSDT").unwrap();
+            dict.set_item("order_side", "Sell").unwrap();
+            dict.set_item("order_type", "Stop").unwrap();
+            dict.set_item("quantity", "1.0").unwrap();
+            dict.set_item("stop_price", "45000.00").unwrap();
+
+            let order = pydict_to_order(&dict).unwrap();
+            assert_eq!(order.instrument_id.symbol, "BTCUSDT");
+            assert_eq!(order.side, OrderSide::Sell);
+            assert_eq!(order.trigger_price, Some(dec!(45000.00)));
+        });
+    }
+
+    #[test]
+    fn test_pydict_to_order_stop_market() {
+        Python::with_gil(|py| {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("symbol", "BTCUSDT").unwrap();
+            dict.set_item("order_side", "Buy").unwrap();
+            dict.set_item("order_type", "StopMarket").unwrap();
+            dict.set_item("quantity", "0.1").unwrap();
+            dict.set_item("stop_price", "50000.00").unwrap();
+
+            let order = pydict_to_order(&dict).unwrap();
+            assert_eq!(order.trigger_price, Some(dec!(50000.00)));
+        });
+    }
+
+    #[test]
+    fn test_pydict_to_order_stop_missing_trigger() {
+        Python::with_gil(|py| {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("symbol", "BTCUSDT").unwrap();
+            dict.set_item("order_side", "Sell").unwrap();
+            dict.set_item("order_type", "Stop").unwrap();
+            dict.set_item("quantity", "1.0").unwrap();
+            // Missing stop_price
+
+            let result = pydict_to_order(&dict);
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn test_pydict_to_order_stop_limit() {
+        Python::with_gil(|py| {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("symbol", "BTCUSDT").unwrap();
+            dict.set_item("order_side", "Sell").unwrap();
+            dict.set_item("order_type", "StopLimit").unwrap();
+            dict.set_item("quantity", "1.0").unwrap();
+            dict.set_item("price", "44500.00").unwrap();
+            dict.set_item("stop_price", "45000.00").unwrap();
+
+            let order = pydict_to_order(&dict).unwrap();
+            assert_eq!(order.price, Some(dec!(44500.00)));
+            assert_eq!(order.trigger_price, Some(dec!(45000.00)));
+        });
+    }
+
+    #[test]
+    fn test_pydict_to_order_time_in_force_variants() {
+        Python::with_gil(|py| {
+            // Note: GTD requires expire_time so we test it separately
+            for (tif_str, expected) in [
+                ("GTC", TimeInForce::GTC),
+                ("IOC", TimeInForce::IOC),
+                ("FOK", TimeInForce::FOK),
+                ("DAY", TimeInForce::Day),
+            ] {
+                let dict = PyDict::new_bound(py);
+                dict.set_item("symbol", "BTCUSDT").unwrap();
+                dict.set_item("order_side", "Buy").unwrap();
+                dict.set_item("order_type", "Market").unwrap();
+                dict.set_item("quantity", "1.0").unwrap();
+                dict.set_item("time_in_force", tif_str).unwrap();
+
+                let order = pydict_to_order(&dict).unwrap();
+                assert_eq!(order.time_in_force, expected, "Failed for TIF: {}", tif_str);
+            }
+        });
+    }
+
+    #[test]
+    fn test_pydict_to_order_unknown_time_in_force_defaults_to_gtc() {
+        Python::with_gil(|py| {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("symbol", "BTCUSDT").unwrap();
+            dict.set_item("order_side", "Buy").unwrap();
+            dict.set_item("order_type", "Market").unwrap();
+            dict.set_item("quantity", "1.0").unwrap();
+            dict.set_item("time_in_force", "UNKNOWN").unwrap();
+
+            let order = pydict_to_order(&dict).unwrap();
+            assert_eq!(order.time_in_force, TimeInForce::GTC);
+        });
+    }
+
+    #[test]
+    fn test_pydict_to_order_with_client_order_id() {
+        Python::with_gil(|py| {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("symbol", "BTCUSDT").unwrap();
+            dict.set_item("order_side", "Buy").unwrap();
+            dict.set_item("order_type", "Market").unwrap();
+            dict.set_item("quantity", "1.0").unwrap();
+            dict.set_item("client_order_id", "my-custom-id-123").unwrap();
+
+            let order = pydict_to_order(&dict).unwrap();
+            assert_eq!(order.client_order_id.as_str(), "my-custom-id-123");
+        });
+    }
+
+    #[test]
+    fn test_pydict_to_order_invalid_side() {
+        Python::with_gil(|py| {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("symbol", "BTCUSDT").unwrap();
+            dict.set_item("order_side", "Invalid").unwrap();
+            dict.set_item("order_type", "Market").unwrap();
+            dict.set_item("quantity", "1.0").unwrap();
+
+            let result = pydict_to_order(&dict);
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn test_pydict_to_order_unsupported_type() {
+        Python::with_gil(|py| {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("symbol", "BTCUSDT").unwrap();
+            dict.set_item("order_side", "Buy").unwrap();
+            dict.set_item("order_type", "TrailingStop").unwrap();
+            dict.set_item("quantity", "1.0").unwrap();
+
+            let result = pydict_to_order(&dict);
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn test_pydict_to_order_missing_required_fields() {
+        Python::with_gil(|py| {
+            // Missing symbol
+            let dict = PyDict::new_bound(py);
+            dict.set_item("order_side", "Buy").unwrap();
+            dict.set_item("order_type", "Market").unwrap();
+            dict.set_item("quantity", "1.0").unwrap();
+            assert!(pydict_to_order(&dict).is_err());
+
+            // Missing order_side
+            let dict = PyDict::new_bound(py);
+            dict.set_item("symbol", "BTCUSDT").unwrap();
+            dict.set_item("order_type", "Market").unwrap();
+            dict.set_item("quantity", "1.0").unwrap();
+            assert!(pydict_to_order(&dict).is_err());
+
+            // Missing order_type
+            let dict = PyDict::new_bound(py);
+            dict.set_item("symbol", "BTCUSDT").unwrap();
+            dict.set_item("order_side", "Buy").unwrap();
+            dict.set_item("quantity", "1.0").unwrap();
+            assert!(pydict_to_order(&dict).is_err());
+
+            // Missing quantity
+            let dict = PyDict::new_bound(py);
+            dict.set_item("symbol", "BTCUSDT").unwrap();
+            dict.set_item("order_side", "Buy").unwrap();
+            dict.set_item("order_type", "Market").unwrap();
+            assert!(pydict_to_order(&dict).is_err());
+        });
+    }
+
+    // ========================================================================
+    // bar_data_to_pydict tests
+    // ========================================================================
+
+    fn create_test_bar_data() -> BarData {
+        let ohlc = OHLCData {
+            timestamp: Utc::now(),
+            symbol: "BTCUSDT".to_string(),
+            timeframe: Timeframe::OneMinute,
+            open: dec!(50000.0),
+            high: dec!(50100.0),
+            low: dec!(49900.0),
+            close: dec!(50050.0),
+            volume: dec!(100.5),
+            trade_count: 150,
+        };
+
+        let metadata = BarMetadata {
+            bar_type: BarType::TimeBased(Timeframe::OneMinute),
+            is_first_tick_of_bar: true,
+            is_bar_closed: false,
+            tick_count_in_bar: 10,
+            is_synthetic: false,
+            generation_timestamp: Utc::now(),
+        };
+
+        BarData {
+            current_tick: None,
+            ohlc_bar: ohlc,
+            metadata,
+        }
+    }
+
+    fn create_test_bar_data_with_tick() -> BarData {
+        let mut bar_data = create_test_bar_data();
+        bar_data.current_tick = Some(TickData {
+            symbol: "BTCUSDT".to_string(),
+            timestamp: Utc::now(),
+            ts_recv: Utc::now(),
+            exchange: "BINANCE".to_string(),
+            price: dec!(50050.0),
+            quantity: dec!(0.5),
+            side: TradeSide::Buy,
+            provider: "BINANCE".to_string(),
+            trade_id: "trade-123".to_string(),
+            is_buyer_maker: false,
+            sequence: 1,
+            raw_dbn: None,
+        });
+        bar_data
+    }
+
+    #[test]
+    fn test_bar_data_to_pydict_basic() {
+        Python::with_gil(|py| {
+            let bar_data = create_test_bar_data();
+            let dict = bar_data_to_pydict(py, &bar_data).unwrap();
+
+            // Check OHLC fields
+            assert_eq!(dict.get_item("symbol").unwrap().unwrap().extract::<String>().unwrap(), "BTCUSDT");
+            assert_eq!(dict.get_item("open").unwrap().unwrap().extract::<String>().unwrap(), "50000.0");
+            assert_eq!(dict.get_item("high").unwrap().unwrap().extract::<String>().unwrap(), "50100.0");
+            assert_eq!(dict.get_item("low").unwrap().unwrap().extract::<String>().unwrap(), "49900.0");
+            assert_eq!(dict.get_item("close").unwrap().unwrap().extract::<String>().unwrap(), "50050.0");
+            assert_eq!(dict.get_item("volume").unwrap().unwrap().extract::<String>().unwrap(), "100.5");
+            assert_eq!(dict.get_item("trade_count").unwrap().unwrap().extract::<u64>().unwrap(), 150);
+
+            // Check metadata fields
+            assert_eq!(dict.get_item("is_first_tick_of_bar").unwrap().unwrap().extract::<bool>().unwrap(), true);
+            assert_eq!(dict.get_item("is_bar_closed").unwrap().unwrap().extract::<bool>().unwrap(), false);
+            assert_eq!(dict.get_item("is_synthetic").unwrap().unwrap().extract::<bool>().unwrap(), false);
+            assert_eq!(dict.get_item("tick_count_in_bar").unwrap().unwrap().extract::<u64>().unwrap(), 10);
+
+            // Check current_tick is None
+            assert!(dict.get_item("current_tick").unwrap().unwrap().is_none());
+        });
+    }
+
+    #[test]
+    fn test_bar_data_to_pydict_with_tick() {
+        Python::with_gil(|py| {
+            let bar_data = create_test_bar_data_with_tick();
+            let dict = bar_data_to_pydict(py, &bar_data).unwrap();
+
+            // Check current_tick is present
+            let tick_item = dict.get_item("current_tick").unwrap().unwrap();
+            assert!(!tick_item.is_none());
+
+            let tick_dict = tick_item.downcast::<PyDict>().unwrap();
+            assert_eq!(tick_dict.get_item("price").unwrap().unwrap().extract::<String>().unwrap(), "50050.0");
+            assert_eq!(tick_dict.get_item("quantity").unwrap().unwrap().extract::<String>().unwrap(), "0.5");
+            assert_eq!(tick_dict.get_item("side").unwrap().unwrap().extract::<String>().unwrap(), "Buy");
+            assert_eq!(tick_dict.get_item("trade_id").unwrap().unwrap().extract::<String>().unwrap(), "trade-123");
+        });
+    }
+
+    #[test]
+    fn test_bar_data_to_pydict_sell_side_tick() {
+        Python::with_gil(|py| {
+            let mut bar_data = create_test_bar_data_with_tick();
+            if let Some(ref mut tick) = bar_data.current_tick {
+                tick.side = TradeSide::Sell;
+            }
+
+            let dict = bar_data_to_pydict(py, &bar_data).unwrap();
+            let tick_item = dict.get_item("current_tick").unwrap().unwrap();
+            let tick_dict = tick_item.downcast::<PyDict>().unwrap();
+            assert_eq!(tick_dict.get_item("side").unwrap().unwrap().extract::<String>().unwrap(), "Sell");
+        });
+    }
+
+    // ========================================================================
+    // PythonStrategy integration tests
+    // ========================================================================
+
+    #[test]
+    fn test_python_strategy_load_sma_example() {
+        // This test requires the example_sma.py file to exist
+        let strategy_path = "strategies/examples/example_sma.py";
+        if !std::path::Path::new(strategy_path).exists() {
+            eprintln!("Skipping test: {} not found", strategy_path);
+            return;
+        }
+
+        let result = PythonStrategy::from_file(strategy_path, "SMAStrategy");
+        match result {
+            Ok(strategy) => {
+                assert_eq!(strategy.name(), "SMA Crossover Strategy");
+            }
+            Err(e) => {
+                // May fail if RestrictedPython not installed
+                if e.contains("RestrictedPython") {
+                    eprintln!("Skipping test: RestrictedPython not installed");
+                    return;
+                }
+                panic!("Failed to load strategy: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_python_strategy_load_nonexistent_file() {
+        let result = PythonStrategy::from_file("nonexistent/path/strategy.py", "Strategy");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Failed to read strategy file"));
+    }
+
+    #[test]
+    fn test_python_strategy_load_nonexistent_class() {
+        let strategy_path = "strategies/examples/example_sma.py";
+        if !std::path::Path::new(strategy_path).exists() {
+            eprintln!("Skipping test: {} not found", strategy_path);
+            return;
+        }
+
+        let result = PythonStrategy::from_file(strategy_path, "NonExistentClass");
+        match result {
+            Err(e) => {
+                // Should fail with class not found or RestrictedPython not installed
+                if !e.contains("RestrictedPython") {
+                    assert!(e.contains("not found") || e.contains("NonExistentClass"));
+                }
+            }
+            Ok(_) => panic!("Should have failed to load non-existent class"),
+        }
+    }
+
+    #[test]
+    fn test_python_strategy_metrics_tracking() {
+        let strategy_path = "strategies/examples/example_sma.py";
+        if !std::path::Path::new(strategy_path).exists() {
+            eprintln!("Skipping test: {} not found", strategy_path);
+            return;
+        }
+
+        let result = PythonStrategy::from_file(strategy_path, "SMAStrategy");
+        match result {
+            Ok(strategy) => {
+                // Initial metrics should be zero
+                assert_eq!(strategy.get_cpu_time_us(), 0);
+                assert_eq!(strategy.get_call_count(), 0);
+                assert_eq!(strategy.get_peak_execution_us(), 0);
+                assert_eq!(strategy.get_avg_execution_us(), 0);
+            }
+            Err(e) => {
+                if e.contains("RestrictedPython") {
+                    eprintln!("Skipping test: RestrictedPython not installed");
+                    return;
+                }
+                panic!("Failed to load strategy: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_python_strategy_bar_data_mode_default() {
+        let strategy_path = "strategies/examples/example_sma.py";
+        if !std::path::Path::new(strategy_path).exists() {
+            eprintln!("Skipping test: {} not found", strategy_path);
+            return;
+        }
+
+        let result = PythonStrategy::from_file(strategy_path, "SMAStrategy");
+        match result {
+            Ok(strategy) => {
+                // SMA strategy uses OnCloseBar
+                let mode = strategy.bar_data_mode();
+                assert_eq!(mode, BarDataMode::OnCloseBar);
+            }
+            Err(e) => {
+                if e.contains("RestrictedPython") {
+                    eprintln!("Skipping test: RestrictedPython not installed");
+                    return;
+                }
+                panic!("Failed to load strategy: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_python_strategy_warmup_period() {
+        let strategy_path = "strategies/examples/example_sma.py";
+        if !std::path::Path::new(strategy_path).exists() {
+            eprintln!("Skipping test: {} not found", strategy_path);
+            return;
+        }
+
+        let result = PythonStrategy::from_file(strategy_path, "SMAStrategy");
+        match result {
+            Ok(strategy) => {
+                // SMA strategy should have warmup period of long_period (default 20)
+                let warmup = strategy.warmup_period();
+                assert!(warmup > 0, "Warmup period should be > 0, got {}", warmup);
+            }
+            Err(e) => {
+                if e.contains("RestrictedPython") {
+                    eprintln!("Skipping test: RestrictedPython not installed");
+                    return;
+                }
+                panic!("Failed to load strategy: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_python_strategy_initialize_with_params() {
+        let strategy_path = "strategies/examples/example_sma.py";
+        if !std::path::Path::new(strategy_path).exists() {
+            eprintln!("Skipping test: {} not found", strategy_path);
+            return;
+        }
+
+        let result = PythonStrategy::from_file(strategy_path, "SMAStrategy");
+        match result {
+            Ok(mut strategy) => {
+                let mut params = HashMap::new();
+                params.insert("short_period".to_string(), "10".to_string());
+                params.insert("long_period".to_string(), "30".to_string());
+
+                let init_result = strategy.initialize(params);
+                assert!(init_result.is_ok(), "Initialize should succeed: {:?}", init_result);
+            }
+            Err(e) => {
+                if e.contains("RestrictedPython") {
+                    eprintln!("Skipping test: RestrictedPython not installed");
+                    return;
+                }
+                panic!("Failed to load strategy: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_python_strategy_uses_order_management_default() {
+        let strategy_path = "strategies/examples/example_sma.py";
+        if !std::path::Path::new(strategy_path).exists() {
+            eprintln!("Skipping test: {} not found", strategy_path);
+            return;
+        }
+
+        let result = PythonStrategy::from_file(strategy_path, "SMAStrategy");
+        match result {
+            Ok(strategy) => {
+                // Default should be false
+                assert!(!strategy.uses_order_management());
+            }
+            Err(e) => {
+                if e.contains("RestrictedPython") {
+                    eprintln!("Skipping test: RestrictedPython not installed");
+                    return;
+                }
+                panic!("Failed to load strategy: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_python_strategy_on_bar_data_execution() {
+        let strategy_path = "strategies/examples/example_sma.py";
+        if !std::path::Path::new(strategy_path).exists() {
+            eprintln!("Skipping test: {} not found", strategy_path);
+            return;
+        }
+
+        let result = PythonStrategy::from_file(strategy_path, "SMAStrategy");
+        match result {
+            Ok(mut strategy) => {
+                let bar_data = create_test_bar_data();
+                let mut bars_context = BarsContext::new("BTCUSDT");
+
+                // Execute on_bar_data
+                let signal = strategy.on_bar_data(&bar_data, &mut bars_context);
+
+                // Should return Hold (not enough data for SMA)
+                assert!(matches!(signal, Signal::Hold));
+
+                // Metrics should be updated
+                assert!(strategy.get_call_count() >= 1);
+                assert!(strategy.get_cpu_time_us() > 0);
+            }
+            Err(e) => {
+                if e.contains("RestrictedPython") {
+                    eprintln!("Skipping test: RestrictedPython not installed");
+                    return;
+                }
+                panic!("Failed to load strategy: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_python_strategy_reset() {
+        let strategy_path = "strategies/examples/example_sma.py";
+        if !std::path::Path::new(strategy_path).exists() {
+            eprintln!("Skipping test: {} not found", strategy_path);
+            return;
+        }
+
+        let result = PythonStrategy::from_file(strategy_path, "SMAStrategy");
+        match result {
+            Ok(mut strategy) => {
+                // Reset should not panic
+                strategy.reset();
+            }
+            Err(e) => {
+                if e.contains("RestrictedPython") {
+                    eprintln!("Skipping test: RestrictedPython not installed");
+                    return;
+                }
+                panic!("Failed to load strategy: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_python_strategy_preferred_bar_type() {
+        let strategy_path = "strategies/examples/example_sma.py";
+        if !std::path::Path::new(strategy_path).exists() {
+            eprintln!("Skipping test: {} not found", strategy_path);
+            return;
+        }
+
+        let result = PythonStrategy::from_file(strategy_path, "SMAStrategy");
+        match result {
+            Ok(strategy) => {
+                let bar_type = strategy.preferred_bar_type();
+                // SMA strategy uses 1-minute bars
+                assert!(matches!(bar_type, BarType::TimeBased(Timeframe::OneMinute)));
+            }
+            Err(e) => {
+                if e.contains("RestrictedPython") {
+                    eprintln!("Skipping test: RestrictedPython not installed");
+                    return;
+                }
+                panic!("Failed to load strategy: {}", e);
+            }
+        }
+    }
+
+    // ========================================================================
+    // Error Recovery Tests
+    // ========================================================================
+
+    #[test]
+    fn test_error_recovery_config_default() {
+        let config = ErrorRecoveryConfig::default();
+        assert_eq!(config.max_consecutive_errors, 10);
+        assert!(config.reset_on_success);
+        assert!(config.log_errors);
+        assert!(config.circuit_breaker_enabled);
+    }
+
+    #[test]
+    fn test_error_stats_default() {
+        let stats = ErrorStats::default();
+        assert_eq!(stats.total_errors, 0);
+        assert_eq!(stats.consecutive_errors, 0);
+        assert_eq!(stats.conversion_errors, 0);
+        assert_eq!(stats.method_errors, 0);
+        assert!(stats.last_error.is_none());
+        assert!(stats.last_error_time.is_none());
+    }
+
+    #[test]
+    fn test_python_bridge_error_display() {
+        let err1 = PythonBridgeError::ConversionError("test".to_string());
+        assert!(err1.to_string().contains("Conversion error"));
+
+        let err2 = PythonBridgeError::MethodCallError("method failed".to_string());
+        assert!(err2.to_string().contains("Method call error"));
+
+        let err3 = PythonBridgeError::PythonException("exception".to_string());
+        assert!(err3.to_string().contains("Python exception"));
+
+        let err4 = PythonBridgeError::CircuitBreakerOpen;
+        assert!(err4.to_string().contains("Circuit breaker"));
+
+        let err5 = PythonBridgeError::GilTimeout;
+        assert!(err5.to_string().contains("GIL"));
+    }
+
+    #[test]
+    fn test_error_recovery_circuit_breaker() {
+        let strategy_path = "strategies/examples/example_sma.py";
+        if !std::path::Path::new(strategy_path).exists() {
+            eprintln!("Skipping test: {} not found", strategy_path);
+            return;
+        }
+
+        let result = PythonStrategy::from_file(strategy_path, "SMAStrategy");
+        match result {
+            Ok(mut strategy) => {
+                // Configure for quick circuit breaker trigger
+                strategy.set_error_config(ErrorRecoveryConfig {
+                    max_consecutive_errors: 3,
+                    reset_on_success: true,
+                    log_errors: false, // Don't spam test output
+                    circuit_breaker_enabled: true,
+                });
+
+                // Verify circuit is closed initially
+                assert!(!strategy.is_circuit_open());
+                assert_eq!(strategy.get_consecutive_errors(), 0);
+
+                // Simulate errors
+                strategy.simulate_error(
+                    PythonBridgeError::ConversionError("test error 1".to_string()),
+                    "test",
+                );
+                assert_eq!(strategy.get_consecutive_errors(), 1);
+                assert!(!strategy.is_circuit_open());
+
+                strategy.simulate_error(
+                    PythonBridgeError::MethodCallError("test error 2".to_string()),
+                    "test",
+                );
+                assert_eq!(strategy.get_consecutive_errors(), 2);
+                assert!(!strategy.is_circuit_open());
+
+                // Third error should open circuit
+                strategy.simulate_error(
+                    PythonBridgeError::PythonException("test error 3".to_string()),
+                    "test",
+                );
+                assert_eq!(strategy.get_consecutive_errors(), 3);
+                assert!(strategy.is_circuit_open());
+
+                // Verify error stats
+                let stats = strategy.get_error_stats();
+                assert_eq!(stats.total_errors, 3);
+                assert_eq!(stats.consecutive_errors, 3);
+                assert!(stats.last_error.is_some());
+                assert!(stats.last_error_time.is_some());
+            }
+            Err(e) => {
+                if e.contains("RestrictedPython") {
+                    eprintln!("Skipping test: RestrictedPython not installed");
+                    return;
+                }
+                panic!("Failed to load strategy: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_error_recovery_reset_on_success() {
+        let strategy_path = "strategies/examples/example_sma.py";
+        if !std::path::Path::new(strategy_path).exists() {
+            eprintln!("Skipping test: {} not found", strategy_path);
+            return;
+        }
+
+        let result = PythonStrategy::from_file(strategy_path, "SMAStrategy");
+        match result {
+            Ok(mut strategy) => {
+                strategy.set_error_config(ErrorRecoveryConfig {
+                    max_consecutive_errors: 10,
+                    reset_on_success: true,
+                    log_errors: false,
+                    circuit_breaker_enabled: true,
+                });
+
+                // Simulate some errors
+                strategy.simulate_error(
+                    PythonBridgeError::ConversionError("error 1".to_string()),
+                    "test",
+                );
+                strategy.simulate_error(
+                    PythonBridgeError::ConversionError("error 2".to_string()),
+                    "test",
+                );
+                assert_eq!(strategy.get_consecutive_errors(), 2);
+
+                // Execute successful bar data (will reset consecutive count)
+                let bar_data = create_test_bar_data();
+                let mut bars_context = BarsContext::new("BTCUSDT");
+                let _signal = strategy.on_bar_data(&bar_data, &mut bars_context);
+
+                // Consecutive errors should reset (on success)
+                assert_eq!(strategy.get_consecutive_errors(), 0);
+
+                // But total errors remain
+                let stats = strategy.get_error_stats();
+                assert_eq!(stats.total_errors, 2);
+            }
+            Err(e) => {
+                if e.contains("RestrictedPython") {
+                    eprintln!("Skipping test: RestrictedPython not installed");
+                    return;
+                }
+                panic!("Failed to load strategy: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_error_recovery_circuit_breaker_reset() {
+        let strategy_path = "strategies/examples/example_sma.py";
+        if !std::path::Path::new(strategy_path).exists() {
+            eprintln!("Skipping test: {} not found", strategy_path);
+            return;
+        }
+
+        let result = PythonStrategy::from_file(strategy_path, "SMAStrategy");
+        match result {
+            Ok(mut strategy) => {
+                strategy.set_error_config(ErrorRecoveryConfig {
+                    max_consecutive_errors: 2,
+                    reset_on_success: true,
+                    log_errors: false,
+                    circuit_breaker_enabled: true,
+                });
+
+                // Trigger circuit breaker
+                strategy.simulate_error(PythonBridgeError::PythonException("err1".to_string()), "test");
+                strategy.simulate_error(PythonBridgeError::PythonException("err2".to_string()), "test");
+                assert!(strategy.is_circuit_open());
+
+                // Manually reset circuit breaker
+                strategy.reset_circuit_breaker();
+                assert!(!strategy.is_circuit_open());
+                assert_eq!(strategy.get_consecutive_errors(), 0);
+            }
+            Err(e) => {
+                if e.contains("RestrictedPython") {
+                    eprintln!("Skipping test: RestrictedPython not installed");
+                    return;
+                }
+                panic!("Failed to load strategy: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_error_recovery_callback() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let strategy_path = "strategies/examples/example_sma.py";
+        if !std::path::Path::new(strategy_path).exists() {
+            eprintln!("Skipping test: {} not found", strategy_path);
+            return;
+        }
+
+        let result = PythonStrategy::from_file(strategy_path, "SMAStrategy");
+        match result {
+            Ok(mut strategy) => {
+                strategy.set_error_config(ErrorRecoveryConfig {
+                    max_consecutive_errors: 10,
+                    reset_on_success: true,
+                    log_errors: false,
+                    circuit_breaker_enabled: false,
+                });
+
+                // Set up callback to count errors
+                let error_count = Arc::new(AtomicUsize::new(0));
+                let error_count_clone = error_count.clone();
+
+                strategy.set_error_callback(Box::new(move |_error, _context| {
+                    error_count_clone.fetch_add(1, Ordering::SeqCst);
+                }));
+
+                // Simulate errors
+                strategy.simulate_error(PythonBridgeError::ConversionError("test".to_string()), "test");
+                strategy.simulate_error(PythonBridgeError::MethodCallError("test".to_string()), "test");
+
+                // Callback should have been called twice
+                assert_eq!(error_count.load(Ordering::SeqCst), 2);
+            }
+            Err(e) => {
+                if e.contains("RestrictedPython") {
+                    eprintln!("Skipping test: RestrictedPython not installed");
+                    return;
+                }
+                panic!("Failed to load strategy: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_error_recovery_circuit_breaker_disables_on_bar_data() {
+        let strategy_path = "strategies/examples/example_sma.py";
+        if !std::path::Path::new(strategy_path).exists() {
+            eprintln!("Skipping test: {} not found", strategy_path);
+            return;
+        }
+
+        let result = PythonStrategy::from_file(strategy_path, "SMAStrategy");
+        match result {
+            Ok(mut strategy) => {
+                strategy.set_error_config(ErrorRecoveryConfig {
+                    max_consecutive_errors: 2,
+                    reset_on_success: true,
+                    log_errors: false,
+                    circuit_breaker_enabled: true,
+                });
+
+                // Trigger circuit breaker
+                strategy.simulate_error(PythonBridgeError::PythonException("err1".to_string()), "test");
+                strategy.simulate_error(PythonBridgeError::PythonException("err2".to_string()), "test");
+                assert!(strategy.is_circuit_open());
+
+                // on_bar_data should return Hold without calling Python
+                let bar_data = create_test_bar_data();
+                let mut bars_context = BarsContext::new("BTCUSDT");
+                let signal = strategy.on_bar_data(&bar_data, &mut bars_context);
+                assert!(matches!(signal, Signal::Hold));
+
+                // Call count should still be 0 (circuit breaker prevented call)
+                assert_eq!(strategy.get_call_count(), 0);
+            }
+            Err(e) => {
+                if e.contains("RestrictedPython") {
+                    eprintln!("Skipping test: RestrictedPython not installed");
+                    return;
+                }
+                panic!("Failed to load strategy: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_error_stats_reset() {
+        let strategy_path = "strategies/examples/example_sma.py";
+        if !std::path::Path::new(strategy_path).exists() {
+            eprintln!("Skipping test: {} not found", strategy_path);
+            return;
+        }
+
+        let result = PythonStrategy::from_file(strategy_path, "SMAStrategy");
+        match result {
+            Ok(mut strategy) => {
+                strategy.set_error_config(ErrorRecoveryConfig {
+                    max_consecutive_errors: 10,
+                    reset_on_success: false, // Don't reset on success
+                    log_errors: false,
+                    circuit_breaker_enabled: false,
+                });
+
+                // Accumulate some errors
+                strategy.simulate_error(PythonBridgeError::ConversionError("err".to_string()), "test");
+                strategy.simulate_error(PythonBridgeError::ConversionError("err".to_string()), "test");
+                strategy.simulate_error(PythonBridgeError::ConversionError("err".to_string()), "test");
+
+                let stats = strategy.get_error_stats();
+                assert_eq!(stats.total_errors, 3);
+
+                // Reset error stats
+                strategy.reset_error_stats();
+
+                let stats = strategy.get_error_stats();
+                assert_eq!(stats.total_errors, 0);
+                assert_eq!(stats.consecutive_errors, 0);
+                assert!(!strategy.is_circuit_open());
+            }
+            Err(e) => {
+                if e.contains("RestrictedPython") {
+                    eprintln!("Skipping test: RestrictedPython not installed");
+                    return;
+                }
+                panic!("Failed to load strategy: {}", e);
+            }
+        }
+    }
+}

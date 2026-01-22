@@ -1281,4 +1281,400 @@ mod tests {
         assert_eq!(event_any.implied_status(), OrderStatus::Accepted);
         assert!(!event_any.is_terminal());
     }
+
+    #[test]
+    fn test_order_denied_event() {
+        let event = OrderDenied::new(
+            ClientOrderId::new("order-123"),
+            "Insufficient margin",
+        );
+
+        assert_eq!(event.client_order_id.as_str(), "order-123");
+        assert_eq!(event.reason, "Insufficient margin");
+        assert!(event.instrument_id().is_none());
+        assert!(event.venue_order_id().is_none());
+    }
+
+    #[test]
+    fn test_order_submitted_event() {
+        let event = OrderSubmitted::new(
+            ClientOrderId::new("order-456"),
+            AccountId::new("account-1"),
+        );
+
+        assert_eq!(event.client_order_id.as_str(), "order-456");
+        assert_eq!(event.account_id.as_str(), "account-1");
+        assert!(event.instrument_id().is_none());
+        assert!(event.venue_order_id().is_none());
+
+        // Test conversion to OrderEventAny
+        let event_any: OrderEventAny = event.into();
+        assert_eq!(event_any.implied_status(), OrderStatus::Submitted);
+        assert!(!event_any.is_terminal());
+    }
+
+    #[test]
+    fn test_order_rejected_event() {
+        let event = OrderRejected::new(
+            ClientOrderId::new("order-789"),
+            AccountId::new("account-2"),
+            "Invalid quantity",
+        );
+
+        assert_eq!(event.client_order_id.as_str(), "order-789");
+        assert_eq!(event.account_id.as_str(), "account-2");
+        assert_eq!(event.reason, "Invalid quantity");
+
+        // Test conversion to OrderEventAny
+        let event_any: OrderEventAny = event.into();
+        assert_eq!(event_any.implied_status(), OrderStatus::Rejected);
+        assert!(event_any.is_terminal());
+    }
+
+    #[test]
+    fn test_order_pending_cancel_event() {
+        let event = OrderPendingCancel::new(
+            ClientOrderId::new("order-100"),
+            Some(VenueOrderId::new("venue-100")),
+            AccountId::new("account-1"),
+        );
+
+        assert_eq!(event.client_order_id.as_str(), "order-100");
+        assert_eq!(event.venue_order_id().map(|v| v.as_str()), Some("venue-100"));
+        assert_eq!(event.account_id.as_str(), "account-1");
+
+        // Test conversion to OrderEventAny
+        let event_any: OrderEventAny = event.into();
+        assert_eq!(event_any.implied_status(), OrderStatus::PendingCancel);
+        assert!(!event_any.is_terminal());
+    }
+
+    #[test]
+    fn test_order_pending_cancel_without_venue_id() {
+        let event = OrderPendingCancel::new(
+            ClientOrderId::new("order-101"),
+            None,
+            AccountId::new("account-1"),
+        );
+
+        assert!(event.venue_order_id().is_none());
+    }
+
+    #[test]
+    fn test_order_canceled_event() {
+        let event = OrderCanceled::new(
+            ClientOrderId::new("order-200"),
+            Some(VenueOrderId::new("venue-200")),
+            AccountId::new("account-1"),
+        );
+
+        assert_eq!(event.client_order_id.as_str(), "order-200");
+        assert_eq!(event.venue_order_id().map(|v| v.as_str()), Some("venue-200"));
+
+        // Test conversion to OrderEventAny
+        let event_any: OrderEventAny = event.into();
+        assert_eq!(event_any.implied_status(), OrderStatus::Canceled);
+        assert!(event_any.is_terminal());
+    }
+
+    #[test]
+    fn test_order_cancel_rejected_event() {
+        let event = OrderCancelRejected::new(
+            ClientOrderId::new("order-300"),
+            Some(VenueOrderId::new("venue-300")),
+            AccountId::new("account-1"),
+            "Order already filled",
+        );
+
+        assert_eq!(event.client_order_id.as_str(), "order-300");
+        assert_eq!(event.reason, "Order already filled");
+
+        // Test conversion to OrderEventAny (cancel reject keeps Accepted status)
+        let event_any: OrderEventAny = event.into();
+        assert_eq!(event_any.implied_status(), OrderStatus::Accepted);
+        assert!(!event_any.is_terminal());
+    }
+
+    #[test]
+    fn test_order_pending_update_event() {
+        let event = OrderPendingUpdate::new(
+            ClientOrderId::new("order-400"),
+            Some(VenueOrderId::new("venue-400")),
+            AccountId::new("account-1"),
+            Some(dec!(51000)),     // new price
+            Some(dec!(50500)),     // new trigger price
+            Some(dec!(2.0)),       // new quantity
+        );
+
+        assert_eq!(event.client_order_id.as_str(), "order-400");
+        assert_eq!(event.price, Some(dec!(51000)));
+        assert_eq!(event.trigger_price, Some(dec!(50500)));
+        assert_eq!(event.quantity, Some(dec!(2.0)));
+
+        // Test conversion to OrderEventAny
+        let event_any: OrderEventAny = event.into();
+        assert_eq!(event_any.implied_status(), OrderStatus::PendingUpdate);
+        assert!(!event_any.is_terminal());
+    }
+
+    #[test]
+    fn test_order_pending_update_partial() {
+        // Test with only price update (no trigger or quantity)
+        let event = OrderPendingUpdate::new(
+            ClientOrderId::new("order-401"),
+            None,
+            AccountId::new("account-1"),
+            Some(dec!(52000)),
+            None,
+            None,
+        );
+
+        assert_eq!(event.price, Some(dec!(52000)));
+        assert!(event.trigger_price.is_none());
+        assert!(event.quantity.is_none());
+    }
+
+    #[test]
+    fn test_order_updated_event() {
+        let event = OrderUpdated::new(
+            ClientOrderId::new("order-500"),
+            Some(VenueOrderId::new("venue-500")),
+            AccountId::new("account-1"),
+            Some(dec!(53000)),     // updated price
+            None,                   // no trigger price change
+            dec!(1.5),             // updated quantity
+        );
+
+        assert_eq!(event.client_order_id.as_str(), "order-500");
+        assert_eq!(event.price, Some(dec!(53000)));
+        assert!(event.trigger_price.is_none());
+        assert_eq!(event.quantity, dec!(1.5));
+
+        // Test conversion to OrderEventAny
+        let event_any: OrderEventAny = event.into();
+        assert_eq!(event_any.implied_status(), OrderStatus::Accepted);
+        assert!(!event_any.is_terminal());
+    }
+
+    #[test]
+    fn test_order_modify_rejected_event() {
+        let event = OrderModifyRejected::new(
+            ClientOrderId::new("order-600"),
+            Some(VenueOrderId::new("venue-600")),
+            AccountId::new("account-1"),
+            "Price outside trading range",
+        );
+
+        assert_eq!(event.client_order_id.as_str(), "order-600");
+        assert_eq!(event.reason, "Price outside trading range");
+
+        // Test conversion to OrderEventAny
+        let event_any: OrderEventAny = event.into();
+        assert_eq!(event_any.implied_status(), OrderStatus::Accepted);
+        assert!(!event_any.is_terminal());
+    }
+
+    #[test]
+    fn test_order_triggered_event() {
+        let event = OrderTriggered::new(
+            ClientOrderId::new("order-700"),
+            Some(VenueOrderId::new("venue-700")),
+            AccountId::new("account-1"),
+        );
+
+        assert_eq!(event.client_order_id.as_str(), "order-700");
+        assert_eq!(event.venue_order_id().map(|v| v.as_str()), Some("venue-700"));
+
+        // Test conversion to OrderEventAny
+        let event_any: OrderEventAny = event.into();
+        assert_eq!(event_any.implied_status(), OrderStatus::Triggered);
+        assert!(!event_any.is_terminal());
+    }
+
+    #[test]
+    fn test_order_expired_event() {
+        let event = OrderExpired::new(
+            ClientOrderId::new("order-800"),
+            Some(VenueOrderId::new("venue-800")),
+            AccountId::new("account-1"),
+        );
+
+        assert_eq!(event.client_order_id.as_str(), "order-800");
+        assert_eq!(event.venue_order_id().map(|v| v.as_str()), Some("venue-800"));
+
+        // Test conversion to OrderEventAny
+        let event_any: OrderEventAny = event.into();
+        assert_eq!(event_any.implied_status(), OrderStatus::Expired);
+        assert!(event_any.is_terminal());
+    }
+
+    #[test]
+    fn test_order_filled_is_last_fill() {
+        // Test complete fill (leaves_qty = 0)
+        let complete_fill = OrderFilled::new(
+            ClientOrderId::new("order-901"),
+            VenueOrderId::new("venue-901"),
+            AccountId::new("account-1"),
+            InstrumentId::new("BTCUSDT", "BINANCE"),
+            TradeId::generate(),
+            StrategyId::new("test-strategy"),
+            OrderSide::Buy,
+            OrderType::Market,
+            dec!(1.0),          // last_qty
+            dec!(50000),        // last_px
+            dec!(1.0),          // cum_qty
+            dec!(0),            // leaves_qty = 0 (complete)
+            "USDT".to_string(),
+            dec!(0.1),
+            "USDT".to_string(),
+            LiquiditySide::Taker,
+        );
+
+        assert!(complete_fill.is_last_fill());
+        assert_eq!(complete_fill.notional(), dec!(50000));
+
+        // Test conversion to OrderEventAny
+        let event_any: OrderEventAny = complete_fill.into();
+        assert_eq!(event_any.implied_status(), OrderStatus::Filled);
+        assert!(event_any.is_terminal());
+    }
+
+    #[test]
+    fn test_order_filled_partial() {
+        // Test partial fill (leaves_qty > 0)
+        let partial_fill = OrderFilled::new(
+            ClientOrderId::new("order-902"),
+            VenueOrderId::new("venue-902"),
+            AccountId::new("account-1"),
+            InstrumentId::new("ETHUSDT", "BINANCE"),
+            TradeId::generate(),
+            StrategyId::new("test-strategy"),
+            OrderSide::Sell,
+            OrderType::Limit,
+            dec!(0.3),          // last_qty
+            dec!(3000),         // last_px
+            dec!(0.3),          // cum_qty
+            dec!(0.7),          // leaves_qty > 0 (partial)
+            "USDT".to_string(),
+            dec!(0.03),
+            "USDT".to_string(),
+            LiquiditySide::Maker,
+        );
+
+        assert!(!partial_fill.is_last_fill());
+        assert_eq!(partial_fill.notional(), dec!(900)); // 0.3 * 3000
+
+        // Test conversion - partial fill implies PartiallyFilled status
+        let event_any: OrderEventAny = partial_fill.into();
+        assert_eq!(event_any.implied_status(), OrderStatus::PartiallyFilled);
+        assert!(!event_any.is_terminal());
+    }
+
+    #[test]
+    fn test_order_filled_with_position_id() {
+        let fill = OrderFilled::new(
+            ClientOrderId::new("order-903"),
+            VenueOrderId::new("venue-903"),
+            AccountId::new("account-1"),
+            InstrumentId::new("BTCUSDT", "BINANCE"),
+            TradeId::generate(),
+            StrategyId::new("test-strategy"),
+            OrderSide::Buy,
+            OrderType::Market,
+            dec!(0.5),
+            dec!(45000),
+            dec!(0.5),
+            dec!(0),
+            "USDT".to_string(),
+            dec!(0.05),
+            "USDT".to_string(),
+            LiquiditySide::Taker,
+        ).with_position_id(PositionId::new("position-123"));
+
+        assert_eq!(fill.position_id.as_ref().map(|p| p.as_str()), Some("position-123"));
+    }
+
+    #[test]
+    fn test_event_id_generation() {
+        let id1 = EventId::new();
+        let id2 = EventId::new();
+
+        // Each event ID should be unique
+        assert_ne!(id1, id2);
+
+        // Display should work
+        let display = format!("{}", id1);
+        assert!(!display.is_empty());
+    }
+
+    #[test]
+    fn test_order_event_trait_timestamps() {
+        let submitted = OrderSubmitted::new(
+            ClientOrderId::new("test"),
+            AccountId::new("acc-1"),
+        );
+
+        // ts_event and ts_init should be very close (both set to now())
+        let diff = (submitted.ts_event() - submitted.ts_init()).num_milliseconds().abs();
+        assert!(diff < 10, "Timestamps should be within 10ms of each other");
+    }
+
+    #[test]
+    fn test_all_terminal_states() {
+        // Test all terminal status events
+        let terminal_events: Vec<OrderEventAny> = vec![
+            OrderDenied::new(ClientOrderId::new("1"), "denied").into(),
+            OrderRejected::new(ClientOrderId::new("2"), AccountId::new("a"), "rejected").into(),
+            OrderCanceled::new(ClientOrderId::new("3"), None, AccountId::new("a")).into(),
+            OrderExpired::new(ClientOrderId::new("4"), None, AccountId::new("a")).into(),
+            OrderFilled::new(
+                ClientOrderId::new("5"),
+                VenueOrderId::new("v5"),
+                AccountId::new("a"),
+                InstrumentId::new("BTC", "BINANCE"),
+                TradeId::generate(),
+                StrategyId::new("s"),
+                OrderSide::Buy,
+                OrderType::Market,
+                dec!(1), dec!(100), dec!(1), dec!(0),
+                "USD".into(), dec!(0), "USD".into(),
+                LiquiditySide::Taker,
+            ).into(),
+        ];
+
+        for event in terminal_events {
+            assert!(event.is_terminal(), "Event {:?} should be terminal", event.implied_status());
+        }
+    }
+
+    #[test]
+    fn test_all_non_terminal_states() {
+        // Test all non-terminal status events
+        let non_terminal_events: Vec<OrderEventAny> = vec![
+            OrderSubmitted::new(ClientOrderId::new("1"), AccountId::new("a")).into(),
+            OrderAccepted::new(ClientOrderId::new("2"), VenueOrderId::new("v"), AccountId::new("a")).into(),
+            OrderPendingCancel::new(ClientOrderId::new("3"), None, AccountId::new("a")).into(),
+            OrderPendingUpdate::new(ClientOrderId::new("4"), None, AccountId::new("a"), None, None, None).into(),
+            OrderTriggered::new(ClientOrderId::new("5"), None, AccountId::new("a")).into(),
+            OrderUpdated::new(ClientOrderId::new("6"), None, AccountId::new("a"), None, None, dec!(1)).into(),
+            // Partial fill is not terminal
+            OrderFilled::new(
+                ClientOrderId::new("7"),
+                VenueOrderId::new("v7"),
+                AccountId::new("a"),
+                InstrumentId::new("BTC", "BINANCE"),
+                TradeId::generate(),
+                StrategyId::new("s"),
+                OrderSide::Buy,
+                OrderType::Market,
+                dec!(0.5), dec!(100), dec!(0.5), dec!(0.5), // leaves_qty > 0
+                "USD".into(), dec!(0), "USD".into(),
+                LiquiditySide::Taker,
+            ).into(),
+        ];
+
+        for event in non_terminal_events {
+            assert!(!event.is_terminal(), "Event {:?} should NOT be terminal", event.implied_status());
+        }
+    }
 }
