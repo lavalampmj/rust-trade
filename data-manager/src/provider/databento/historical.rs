@@ -8,7 +8,7 @@
 use tracing::{debug, info};
 
 use crate::provider::{HistoricalRequest, ProviderResult};
-use crate::schema::NormalizedTick;
+use trading_common::data::types::TickData;
 
 use super::normalizer::DatabentoNormalizer;
 
@@ -62,7 +62,7 @@ impl HistoricalFetcher {
         &mut self,
         request: &HistoricalRequest,
         dataset: &str,
-    ) -> ProviderResult<Vec<NormalizedTick>> {
+    ) -> ProviderResult<Vec<TickData>> {
         info!(
             "Fetching historical ticks: dataset={}, symbols={:?}, start={}, end={}",
             dataset, request.symbols, request.start, request.end
@@ -103,11 +103,11 @@ pub struct TickIterator {
     // - The normalizer
     // - Buffer for prefetched records
     current_index: usize,
-    ticks: Vec<NormalizedTick>,
+    ticks: Vec<TickData>,
 }
 
 impl TickIterator {
-    pub fn new(ticks: Vec<NormalizedTick>) -> Self {
+    pub fn new(ticks: Vec<TickData>) -> Self {
         Self {
             current_index: 0,
             ticks,
@@ -116,7 +116,7 @@ impl TickIterator {
 }
 
 impl Iterator for TickIterator {
-    type Item = ProviderResult<NormalizedTick>;
+    type Item = ProviderResult<TickData>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_index < self.ticks.len() {

@@ -286,6 +286,7 @@ impl TickDataRepository {
                     trade_id: row.get::<Option<String>, _>("provider_trade_id").unwrap_or_default(),
                     is_buyer_maker: row.get::<Option<bool>, _>("is_buyer_maker").unwrap_or(false),
                     sequence: row.get("sequence"),
+                    raw_dbn: row.try_get::<Option<Vec<u8>>, _>("raw_dbn").ok().flatten(),
                 })
             })
             .collect();
@@ -420,6 +421,7 @@ impl TickDataRepository {
                     trade_id: row.get::<Option<String>, _>("provider_trade_id").unwrap_or_default(),
                     is_buyer_maker: row.get::<Option<bool>, _>("is_buyer_maker").unwrap_or(false),
                     sequence: row.get("sequence"),
+                    raw_dbn: row.try_get::<Option<Vec<u8>>, _>("raw_dbn").ok().flatten(),
                 })
             })
             .collect();
@@ -481,6 +483,7 @@ impl TickDataRepository {
                     trade_id: row.get::<Option<String>, _>("provider_trade_id").unwrap_or_default(),
                     is_buyer_maker: row.get::<Option<bool>, _>("is_buyer_maker").unwrap_or(false),
                     sequence: row.get("sequence"),
+                    raw_dbn: row.try_get::<Option<Vec<u8>>, _>("raw_dbn").ok().flatten(),
                 })
             })
             .collect();
@@ -954,6 +957,7 @@ impl TickDataRepository {
                     trade_id: row.get::<Option<String>, _>("provider_trade_id").unwrap_or_default(),
                     is_buyer_maker: row.get::<Option<bool>, _>("is_buyer_maker").unwrap_or(false),
                     sequence: row.get("sequence"),
+                    raw_dbn: row.try_get::<Option<Vec<u8>>, _>("raw_dbn").ok().flatten(),
                 })
             })
             .collect();
@@ -1005,6 +1009,7 @@ impl TickDataRepository {
                     trade_id: row.get::<Option<String>, _>("provider_trade_id").unwrap_or_default(),
                     is_buyer_maker: row.get::<Option<bool>, _>("is_buyer_maker").unwrap_or(false),
                     sequence: row.get("sequence"),
+                    raw_dbn: row.try_get::<Option<Vec<u8>>, _>("raw_dbn").ok().flatten(),
                 })
             })
             .collect();

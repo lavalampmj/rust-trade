@@ -249,11 +249,11 @@ impl TestDataEmulator {
                 }
             };
 
-            // Convert to NormalizedTick with timestamp rewriting
+            // Convert to NormalizedTick with timestamp rewriting, then to TickData
             let (normalized, _ts_in_delta) = self.trade_msg_to_normalized_tick(tick, &symbol);
 
-            // Send through transport layer
-            if transport.send(StreamEvent::Tick(normalized)).await.is_ok() {
+            // Send through transport layer (convert NormalizedTick to TickData)
+            if transport.send(StreamEvent::Tick(normalized.into())).await.is_ok() {
                 self.metrics.inc_sent();
             } else {
                 self.metrics.inc_dropped();

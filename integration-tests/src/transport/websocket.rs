@@ -364,12 +364,12 @@ impl WebSocketClient {
         match msg {
             TransportMessage::Tick(payload) => {
                 received_count.fetch_add(1, Ordering::SeqCst);
-                callback(StreamEvent::Tick(payload.tick));
+                callback(StreamEvent::Tick(payload.tick.into()));
             }
             TransportMessage::Batch(batch) => {
                 for payload in batch {
                     received_count.fetch_add(1, Ordering::SeqCst);
-                    callback(StreamEvent::Tick(payload.tick));
+                    callback(StreamEvent::Tick(payload.tick.into()));
                 }
             }
             TransportMessage::Status(status) => {
@@ -503,7 +503,7 @@ impl TickTransport for WebSocketTransport {
         match event {
             StreamEvent::Tick(tick) => {
                 let payload = TickPayload {
-                    tick,
+                    tick: tick.into(), // Convert TickData to NormalizedTick for transport
                     ts_in_delta: 0, // TODO: could embed here if needed
                 };
 
@@ -529,11 +529,11 @@ impl TickTransport for WebSocketTransport {
                     .send(TransportMessage::Status(StatusPayload::Error(e)))?;
             }
             StreamEvent::TickBatch(ticks) => {
-                // Convert batch to payloads
+                // Convert batch to payloads (TickData -> NormalizedTick for transport)
                 let batch: Vec<TickPayload> = ticks
                     .into_iter()
                     .map(|tick| TickPayload {
-                        tick,
+                        tick: tick.into(),
                         ts_in_delta: 0,
                     })
                     .collect();

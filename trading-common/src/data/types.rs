@@ -59,6 +59,10 @@ pub struct TickData {
     /// Sequence number for ordering
     #[serde(default)]
     pub sequence: i64,
+
+    /// Raw DBN message bytes for archival (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_dbn: Option<Vec<u8>>,
 }
 
 fn default_exchange() -> String {
@@ -92,6 +96,7 @@ impl TickData {
             trade_id,
             is_buyer_maker,
             sequence: 0,
+            raw_dbn: None,
         }
     }
 
@@ -121,6 +126,38 @@ impl TickData {
             trade_id,
             is_buyer_maker,
             sequence,
+            raw_dbn: None,
+        }
+    }
+
+    /// Create TickData with raw DBN bytes for archival
+    pub fn with_raw_dbn(
+        timestamp: DateTime<Utc>,
+        ts_recv: DateTime<Utc>,
+        symbol: String,
+        exchange: String,
+        price: Decimal,
+        quantity: Decimal,
+        side: TradeSide,
+        provider: String,
+        trade_id: String,
+        is_buyer_maker: bool,
+        sequence: i64,
+        raw_dbn: Vec<u8>,
+    ) -> Self {
+        Self {
+            timestamp,
+            ts_recv,
+            symbol,
+            exchange,
+            price,
+            quantity,
+            side,
+            provider,
+            trade_id,
+            is_buyer_maker,
+            sequence,
+            raw_dbn: Some(raw_dbn),
         }
     }
 
@@ -260,7 +297,13 @@ impl TickData {
             trade_id: msg.sequence.to_string(),
             is_buyer_maker: msg.side as u8 as char == 'A', // Ask side = buyer is maker
             sequence: msg.sequence as i64,
+            raw_dbn: None,
         }
+    }
+
+    /// Get the full symbol identifier (symbol@exchange)
+    pub fn full_symbol(&self) -> String {
+        format!("{}@{}", self.symbol, self.exchange)
     }
 }
 
@@ -901,6 +944,7 @@ mod tests {
             trade_id: format!("trade_{}", timestamp_offset_secs),
             is_buyer_maker: false,
             sequence: timestamp_offset_secs,
+            raw_dbn: None,
         }
     }
 
@@ -1070,6 +1114,7 @@ mod tests {
                 trade_id: "1".to_string(),
                 is_buyer_maker: false,
                 sequence: 1,
+                raw_dbn: None,
             },
             TickData {
                 timestamp: base_time + Duration::seconds(10),
@@ -1083,6 +1128,7 @@ mod tests {
                 trade_id: "2".to_string(),
                 is_buyer_maker: false,
                 sequence: 2,
+                raw_dbn: None,
             },
             TickData {
                 timestamp: base_time + Duration::seconds(20),
@@ -1096,6 +1142,7 @@ mod tests {
                 trade_id: "3".to_string(),
                 is_buyer_maker: false,
                 sequence: 3,
+                raw_dbn: None,
             },
         ];
 

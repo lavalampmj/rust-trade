@@ -349,35 +349,12 @@ impl<P: HistoricalDataProvider + Send + Sync + 'static> BackfillService for Back
             (symbol, "CME") // Default
         };
 
-        // Fetch existing ticks
-        let existing_ticks = self
+        // Fetch existing ticks (already TickData format)
+        let ticks = self
             .repository
             .get_ticks(sym, exchange, start, end, None)
             .await
             .map_err(|e| BackfillError::Database(e.to_string()))?;
-
-        // Convert to trading-common TickData format for gap detection
-        let ticks: Vec<trading_common::data::types::TickData> = existing_ticks
-            .iter()
-            .map(|t| {
-                trading_common::data::types::TickData::with_details(
-                    t.ts_event,
-                    t.ts_recv,
-                    t.symbol.clone(),
-                    t.exchange.clone(),
-                    t.price,
-                    t.size,
-                    match t.side {
-                        crate::schema::TradeSide::Buy => trading_common::data::types::TradeSide::Buy,
-                        crate::schema::TradeSide::Sell => trading_common::data::types::TradeSide::Sell,
-                    },
-                    t.provider.clone(),
-                    t.provider_trade_id.clone().unwrap_or_else(|| format!("{}_{}", t.symbol, t.ts_event.timestamp_nanos_opt().unwrap_or(0))),
-                    t.is_buyer_maker.unwrap_or(false),
-                    t.sequence,
-                )
-            })
-            .collect();
 
         // Detect gaps
         let config = GapDetectionConfig {

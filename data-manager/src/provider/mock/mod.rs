@@ -13,8 +13,9 @@ use crate::provider::{
     HistoricalRequest, LiveStreamProvider, LiveSubscription, ProviderError, ProviderInfo,
     ProviderResult, StreamCallback, StreamEvent, SubscriptionStatus,
 };
-use crate::schema::{NormalizedOHLC, NormalizedTick, TradeSide};
+use crate::schema::NormalizedOHLC;
 use crate::symbol::SymbolSpec;
+use trading_common::data::types::{TickData, TradeSide};
 
 /// Mock data provider for testing
 pub struct MockProvider {
@@ -62,7 +63,7 @@ impl MockProvider {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
         limit: Option<usize>,
-    ) -> Vec<NormalizedTick> {
+    ) -> Vec<TickData> {
         let duration = end - start;
         let num_ticks = limit.unwrap_or(self.ticks_per_symbol).min(self.ticks_per_symbol);
         let interval = duration / num_ticks as i32;
@@ -81,7 +82,7 @@ impl MockProvider {
             };
             current_price = current_price + delta;
 
-            let tick = NormalizedTick::with_details(
+            let tick = TickData::with_details(
                 timestamp,
                 timestamp,
                 symbol.symbol.clone(),
@@ -90,8 +91,8 @@ impl MockProvider {
                 Decimal::from(i % 100 + 1), // size 1-100
                 if i % 2 == 0 { TradeSide::Buy } else { TradeSide::Sell },
                 "mock".to_string(),
-                Some(format!("mock_trade_{}", i)),
-                Some(i % 2 == 0),
+                format!("mock_trade_{}", i),
+                i % 2 == 0,
                 i as i64,
             );
             ticks.push(tick);
@@ -147,7 +148,7 @@ impl HistoricalDataProvider for MockProvider {
     async fn fetch_ticks(
         &self,
         request: &HistoricalRequest,
-    ) -> ProviderResult<Box<dyn Iterator<Item = ProviderResult<NormalizedTick>> + Send>> {
+    ) -> ProviderResult<Box<dyn Iterator<Item = ProviderResult<TickData>> + Send>> {
         if !self.connected {
             return Err(ProviderError::NotConnected);
         }
@@ -159,7 +160,7 @@ impl HistoricalDataProvider for MockProvider {
         }
 
         // Sort by timestamp
-        all_ticks.sort_by_key(|t| t.ts_event);
+        all_ticks.sort_by_key(|t| t.timestamp);
 
         Ok(Box::new(all_ticks.into_iter().map(Ok)))
     }
@@ -180,12 +181,12 @@ impl HistoricalDataProvider for MockProvider {
             let mut bar_ticks = Vec::new();
 
             for tick in ticks {
-                if tick.ts_event >= current_bar_start + bar_duration {
+                if tick.timestamp >= current_bar_start + bar_duration {
                     if !bar_ticks.is_empty() {
                         let ohlc = create_ohlc_from_ticks(&bar_ticks, current_bar_start);
                         ohlc_bars.push(ohlc);
                     }
-                    current_bar_start = tick.ts_event;
+                    current_bar_start = tick.timestamp;
                     bar_ticks.clear();
                 }
                 bar_ticks.push(tick);
@@ -246,19 +247,23 @@ impl LiveStreamProvider for MockProvider {
                 }
                 _ = interval.tick() => {
                     for symbol in &subscription.symbols {
-                        let tick = NormalizedTick::new(
-                            Utc::now(),
+                        let now = Utc::now();
+                        let tick = TickData::with_details(
+                            now,
+                            now,
                             symbol.symbol.clone(),
                             symbol.exchange.clone(),
                             self.base_price,
                             Decimal::from(10),
                             if sequence % 2 == 0 { TradeSide::Buy } else { TradeSide::Sell },
                             "mock".to_string(),
+                            format!("mock_{}", sequence),
+                            sequence % 2 == 0,
                             sequence,
                         );
                         callback(StreamEvent::Tick(tick));
                         self.subscription_status.messages_received += 1;
-                        self.subscription_status.last_message = Some(Utc::now());
+                        self.subscription_status.last_message = Some(now);
                         sequence += 1;
                     }
                 }
@@ -279,12 +284,12 @@ impl LiveStreamProvider for MockProvider {
     }
 }
 
-fn create_ohlc_from_ticks(ticks: &[NormalizedTick], timestamp: DateTime<Utc>) -> NormalizedOHLC {
+fn create_ohlc_from_ticks(ticks: &[TickData], timestamp: DateTime<Utc>) -> NormalizedOHLC {
     let open = ticks.first().map(|t| t.price).unwrap_or(Decimal::ZERO);
     let close = ticks.last().map(|t| t.price).unwrap_or(Decimal::ZERO);
     let high = ticks.iter().map(|t| t.price).max().unwrap_or(Decimal::ZERO);
     let low = ticks.iter().map(|t| t.price).min().unwrap_or(Decimal::ZERO);
-    let volume = ticks.iter().map(|t| t.size).sum();
+    let volume = ticks.iter().map(|t| t.quantity).sum();
 
     NormalizedOHLC::new(
         timestamp,

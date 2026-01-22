@@ -10,8 +10,9 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::broadcast;
 
-use crate::schema::{NormalizedOHLC, NormalizedTick};
+use crate::schema::NormalizedOHLC;
 use crate::symbol::SymbolSpec;
+use trading_common::data::types::TickData;
 
 /// Provider error types
 #[derive(Error, Debug)]
@@ -174,9 +175,9 @@ pub type StreamCallback = Arc<dyn Fn(StreamEvent) + Send + Sync>;
 #[derive(Debug, Clone)]
 pub enum StreamEvent {
     /// New tick/trade data
-    Tick(NormalizedTick),
+    Tick(TickData),
     /// Batch of ticks
-    TickBatch(Vec<NormalizedTick>),
+    TickBatch(Vec<TickData>),
     /// Connection status change
     Status(ConnectionStatus),
     /// Error occurred
@@ -219,7 +220,7 @@ pub trait HistoricalDataProvider: DataProvider {
     async fn fetch_ticks(
         &self,
         request: &HistoricalRequest,
-    ) -> ProviderResult<Box<dyn Iterator<Item = ProviderResult<NormalizedTick>> + Send>>;
+    ) -> ProviderResult<Box<dyn Iterator<Item = ProviderResult<TickData>> + Send>>;
 
     /// Fetch OHLC bar data
     async fn fetch_ohlc(&self, request: &HistoricalRequest) -> ProviderResult<Vec<NormalizedOHLC>>;

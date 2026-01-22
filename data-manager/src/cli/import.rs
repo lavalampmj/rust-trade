@@ -11,8 +11,8 @@ use std::str::FromStr;
 use tracing::{error, info, warn};
 
 use crate::config::Settings;
-use crate::schema::{NormalizedTick, TradeSide};
 use crate::storage::MarketDataRepository;
+use trading_common::data::types::{TickData, TradeSide};
 
 /// Arguments for the import command
 #[derive(Args)]
@@ -152,7 +152,7 @@ async fn import_csv(args: &ImportArgs, repository: Option<&MarketDataRepository>
     Ok(())
 }
 
-/// Parse a CSV line into a NormalizedTick
+/// Parse a CSV line into a TickData
 ///
 /// Expected format: timestamp,symbol,price,size,side
 /// or with symbol from args: timestamp,price,size,side
@@ -161,7 +161,7 @@ fn parse_csv_line(
     exchange: &str,
     default_symbol: Option<&str>,
     sequence: i64,
-) -> Result<NormalizedTick> {
+) -> Result<TickData> {
     let fields: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
 
     let (timestamp_str, symbol, price_str, size_str, side_str) = if default_symbol.is_some() {
@@ -189,20 +189,23 @@ fn parse_csv_line(
 
     // Parse price and size
     let price = Decimal::from_str(price_str)?;
-    let size = Decimal::from_str(size_str)?;
+    let quantity = Decimal::from_str(size_str)?;
 
     // Parse side
-    let side = TradeSide::from_str(side_str)
+    let side = TradeSide::from_db_str(side_str)
         .ok_or_else(|| anyhow::anyhow!("Invalid side: {}", side_str))?;
 
-    Ok(NormalizedTick::new(
+    Ok(TickData::with_details(
+        timestamp,
         timestamp,
         symbol.to_string(),
         exchange.to_string(),
         price,
-        size,
+        quantity,
         side,
         "import".to_string(),
+        format!("import_{}", sequence),
+        false,
         sequence,
     ))
 }

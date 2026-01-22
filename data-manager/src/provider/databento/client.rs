@@ -11,8 +11,9 @@ use crate::provider::{
     HistoricalRequest, LiveStreamProvider, LiveSubscription, ProviderError, ProviderInfo,
     ProviderResult, StreamCallback, StreamEvent, SubscriptionStatus,
 };
-use crate::schema::{NormalizedOHLC, NormalizedTick};
+use crate::schema::NormalizedOHLC;
 use crate::symbol::SymbolSpec;
+use trading_common::data::types::TickData;
 
 use super::normalizer::DatabentoNormalizer;
 
@@ -176,7 +177,7 @@ impl HistoricalDataProvider for DatabentoClient {
     async fn fetch_ticks(
         &self,
         request: &HistoricalRequest,
-    ) -> ProviderResult<Box<dyn Iterator<Item = ProviderResult<NormalizedTick>> + Send>> {
+    ) -> ProviderResult<Box<dyn Iterator<Item = ProviderResult<TickData>> + Send>> {
         if !self.connected {
             return Err(ProviderError::NotConnected);
         }

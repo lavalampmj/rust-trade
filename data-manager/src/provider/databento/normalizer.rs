@@ -1,12 +1,13 @@
 //! Databento message normalizer
 //!
-//! Converts Databento-specific message types to the normalized schema.
+//! Converts Databento-specific message types to TickData.
 
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 
 use crate::provider::ProviderError;
-use crate::schema::{NormalizedOHLC, NormalizedTick, TradeSide};
+use crate::schema::NormalizedOHLC;
+use trading_common::data::types::{TickData, TradeSide};
 
 /// Normalizer for Databento messages
 #[derive(Debug, Clone)]
@@ -57,29 +58,29 @@ impl DatabentoNormalizer {
         size_scale: u32,    // size decimal places
         side: char,         // 'B' or 'S'
         trade_id: Option<&str>,
-    ) -> Result<NormalizedTick, ProviderError> {
+    ) -> Result<TickData, ProviderError> {
         let ts_event_dt = Self::nanos_to_datetime(ts_event);
         let ts_recv_dt = Self::nanos_to_datetime(ts_recv);
         let price_dec = Self::price_to_decimal(price, price_scale);
-        let size_dec = Self::price_to_decimal(size, size_scale);
+        let quantity_dec = Self::price_to_decimal(size, size_scale);
 
-        let side = TradeSide::from_char(side).ok_or_else(|| {
+        let side = TradeSide::from_db_char(side).ok_or_else(|| {
             ProviderError::Parse(format!("Invalid trade side: {}", side))
         })?;
 
         let sequence = self.next_sequence();
 
-        Ok(NormalizedTick::with_details(
+        Ok(TickData::with_details(
             ts_event_dt,
             ts_recv_dt,
             symbol.to_string(),
             exchange.to_string(),
             price_dec,
-            size_dec,
+            quantity_dec,
             side,
             "databento".to_string(),
-            trade_id.map(|s| s.to_string()),
-            None, // is_buyer_maker not directly available
+            trade_id.map(|s| s.to_string()).unwrap_or_default(),
+            false, // is_buyer_maker not directly available from Databento
             sequence,
         ))
     }
@@ -185,9 +186,9 @@ mod tests {
         assert_eq!(tick.symbol, "ESH4");
         assert_eq!(tick.exchange, "CME");
         assert_eq!(tick.price, dec!(5025.50));
-        assert_eq!(tick.size, dec!(10));
+        assert_eq!(tick.quantity, dec!(10));
         assert_eq!(tick.side, TradeSide::Buy);
-        assert_eq!(tick.provider_trade_id, Some("trade123".to_string()));
+        assert_eq!(tick.trade_id, "trade123");
     }
 
     #[test]

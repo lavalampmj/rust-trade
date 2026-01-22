@@ -12,7 +12,7 @@ use tracing::debug;
 use uuid::Uuid;
 
 use crate::config::DatabaseSettings;
-use crate::schema::{NormalizedTick, TradeSide};
+use trading_common::data::types::{TickData, TradeSide};
 
 /// Repository errors
 #[derive(Error, Debug)]
@@ -62,7 +62,7 @@ impl MarketDataRepository {
     }
 
     /// Insert a single tick
-    pub async fn insert_tick(&self, tick: &NormalizedTick) -> RepositoryResult<()> {
+    pub async fn insert_tick(&self, tick: &TickData) -> RepositoryResult<()> {
         sqlx::query(
             r#"
             INSERT INTO market_ticks (
@@ -72,15 +72,15 @@ impl MarketDataRepository {
             ON CONFLICT DO NOTHING
             "#,
         )
-        .bind(tick.ts_event)
+        .bind(tick.timestamp)
         .bind(tick.ts_recv)
         .bind(&tick.symbol)
         .bind(&tick.exchange)
         .bind(tick.price)
-        .bind(tick.size)
-        .bind(tick.side.as_char().to_string())
+        .bind(tick.quantity)
+        .bind(tick.side.as_db_char().to_string())
         .bind(&tick.provider)
-        .bind(&tick.provider_trade_id)
+        .bind(&tick.trade_id)
         .bind(tick.is_buyer_maker)
         .bind(&tick.raw_dbn)
         .bind(tick.sequence)
@@ -91,7 +91,7 @@ impl MarketDataRepository {
     }
 
     /// Batch insert ticks
-    pub async fn batch_insert_ticks(&self, ticks: &[NormalizedTick]) -> RepositoryResult<usize> {
+    pub async fn batch_insert_ticks(&self, ticks: &[TickData]) -> RepositoryResult<usize> {
         if ticks.is_empty() {
             return Ok(0);
         }
@@ -109,7 +109,7 @@ impl MarketDataRepository {
     }
 
     /// Insert a batch of ticks using COPY
-    async fn insert_tick_batch(&self, ticks: &[NormalizedTick]) -> RepositoryResult<usize> {
+    async fn insert_tick_batch(&self, ticks: &[TickData]) -> RepositoryResult<usize> {
         // Build bulk insert query
         let mut query = String::from(
             r#"
@@ -152,15 +152,15 @@ impl MarketDataRepository {
 
         for tick in ticks {
             sqlx_query = sqlx_query
-                .bind(tick.ts_event)
+                .bind(tick.timestamp)
                 .bind(tick.ts_recv)
                 .bind(&tick.symbol)
                 .bind(&tick.exchange)
                 .bind(tick.price)
-                .bind(tick.size)
-                .bind(tick.side.as_char().to_string())
+                .bind(tick.quantity)
+                .bind(tick.side.as_db_char().to_string())
                 .bind(&tick.provider)
-                .bind(&tick.provider_trade_id)
+                .bind(&tick.trade_id)
                 .bind(tick.is_buyer_maker)
                 .bind(tick.sequence);
         }
@@ -177,7 +177,7 @@ impl MarketDataRepository {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
         limit: Option<i64>,
-    ) -> RepositoryResult<Vec<NormalizedTick>> {
+    ) -> RepositoryResult<Vec<TickData>> {
         let limit = limit.unwrap_or(100_000);
 
         let rows = sqlx::query(
@@ -199,14 +199,14 @@ impl MarketDataRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let ticks: Vec<NormalizedTick> = rows
+        let ticks: Vec<TickData> = rows
             .iter()
             .map(|row| {
                 let side_str: String = row.get("side");
-                let side = TradeSide::from_char(side_str.chars().next().unwrap_or('B'))
+                let side = TradeSide::from_db_char(side_str.chars().next().unwrap_or('B'))
                     .unwrap_or(TradeSide::Buy);
 
-                NormalizedTick::with_details(
+                TickData::with_details(
                     row.get("ts_event"),
                     row.get("ts_recv"),
                     row.get("symbol"),
@@ -230,7 +230,7 @@ impl MarketDataRepository {
         &self,
         symbol: &str,
         exchange: &str,
-    ) -> RepositoryResult<Option<NormalizedTick>> {
+    ) -> RepositoryResult<Option<TickData>> {
         let ticks = self
             .get_ticks(
                 symbol,

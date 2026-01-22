@@ -10,8 +10,8 @@ use tracing::{debug, error, info, warn};
 use crate::config::Settings;
 use crate::provider::binance::{BinanceProvider, BinanceSettings as BinanceProviderSettings};
 use crate::provider::{DataProvider, LiveStreamProvider, LiveSubscription, StreamEvent};
-use crate::schema::NormalizedTick;
 use crate::storage::{MarketDataRepository, TimescaleOperations};
+use trading_common::data::types::TickData;
 use crate::symbol::SymbolSpec;
 use crate::transport::ipc::{SharedMemoryConfig, SharedMemoryTransport};
 use crate::transport::Transport;
@@ -287,14 +287,14 @@ async fn run_binance_provider(
 }
 
 /// Publish tick to IPC transport
-fn publish_to_ipc(transport: &SharedMemoryTransport, tick: &NormalizedTick) -> Result<()> {
-    let msg = tick.to_trade_msg();
+fn publish_to_ipc(transport: &SharedMemoryTransport, tick: &TickData) -> Result<()> {
+    let msg = tick.to_trade_msg_with_exchange(&tick.exchange);
     transport.send_msg(&msg, &tick.symbol, &tick.exchange)?;
     Ok(())
 }
 
 /// Persist tick to database
-async fn persist_tick(repo: &MarketDataRepository, tick: &NormalizedTick) -> Result<()> {
+async fn persist_tick(repo: &MarketDataRepository, tick: &TickData) -> Result<()> {
     repo.insert_tick(tick).await?;
     Ok(())
 }

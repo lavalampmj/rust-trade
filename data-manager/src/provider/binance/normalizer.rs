@@ -1,6 +1,6 @@
 //! Binance message normalizer
 //!
-//! Converts Binance-specific message formats to normalized tick data.
+//! Converts Binance-specific message formats to TickData.
 
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
@@ -8,7 +8,7 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use crate::provider::ProviderError;
-use crate::schema::{NormalizedTick, TradeSide};
+use trading_common::data::types::{TickData, TradeSide};
 
 use super::types::BinanceTradeMessage;
 
@@ -26,8 +26,8 @@ impl BinanceNormalizer {
         }
     }
 
-    /// Normalize a Binance trade message to NormalizedTick
-    pub fn normalize(&self, msg: BinanceTradeMessage) -> Result<NormalizedTick, ProviderError> {
+    /// Normalize a Binance trade message to TickData
+    pub fn normalize(&self, msg: BinanceTradeMessage) -> Result<TickData, ProviderError> {
         // Parse timestamp
         let ts_event = DateTime::from_timestamp_millis(msg.trade_time as i64)
             .ok_or_else(|| ProviderError::Parse("Invalid timestamp".to_string()))?;
@@ -37,14 +37,14 @@ impl BinanceNormalizer {
             .map_err(|e| ProviderError::Parse(format!("Invalid price '{}': {}", msg.price, e)))?;
 
         // Parse quantity
-        let size = Decimal::from_str(&msg.quantity)
+        let quantity = Decimal::from_str(&msg.quantity)
             .map_err(|e| ProviderError::Parse(format!("Invalid quantity '{}': {}", msg.quantity, e)))?;
 
         // Validate values
         if price <= Decimal::ZERO {
             return Err(ProviderError::Parse("Price must be positive".to_string()));
         }
-        if size <= Decimal::ZERO {
+        if quantity <= Decimal::ZERO {
             return Err(ProviderError::Parse("Quantity must be positive".to_string()));
         }
 
@@ -60,17 +60,17 @@ impl BinanceNormalizer {
         // Get next sequence number
         let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
 
-        Ok(NormalizedTick::with_details(
+        Ok(TickData::with_details(
             ts_event,
             Utc::now(),
             msg.symbol,
             "BINANCE".to_string(),
             price,
-            size,
+            quantity,
             side,
             "binance".to_string(),
-            Some(msg.trade_id.to_string()),
-            Some(msg.is_buyer_maker),
+            msg.trade_id.to_string(),
+            msg.is_buyer_maker,
             sequence,
         ))
     }
@@ -153,11 +153,11 @@ mod tests {
         assert_eq!(tick.symbol, "BTCUSDT");
         assert_eq!(tick.exchange, "BINANCE");
         assert_eq!(tick.price, dec!(50000.00));
-        assert_eq!(tick.size, dec!(0.001));
+        assert_eq!(tick.quantity, dec!(0.001));
         assert_eq!(tick.side, TradeSide::Buy);
         assert_eq!(tick.provider, "binance");
-        assert_eq!(tick.provider_trade_id, Some("12345".to_string()));
-        assert_eq!(tick.is_buyer_maker, Some(false));
+        assert_eq!(tick.trade_id, "12345");
+        assert!(!tick.is_buyer_maker);
         assert_eq!(tick.sequence, 0);
     }
 
@@ -176,7 +176,7 @@ mod tests {
 
         let tick = normalizer.normalize(msg).unwrap();
         assert_eq!(tick.side, TradeSide::Sell);
-        assert_eq!(tick.is_buyer_maker, Some(true));
+        assert!(tick.is_buyer_maker);
     }
 
     #[test]
