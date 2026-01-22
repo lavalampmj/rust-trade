@@ -140,7 +140,7 @@ impl BacktestEngine {
             // Execute strategy with BarsContext
             let mut signal = self.strategy.on_bar_data(&bar_data, &mut self.bars_context);
 
-            // Suppress signals if strategy reports not ready (QuantConnect Lean-style warmup)
+            // Suppress signals if strategy reports not ready (warmup period)
             // This provides a framework-level safety net even if strategy forgets to check
             if !self.strategy.is_ready(&self.bars_context) {
                 match signal {

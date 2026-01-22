@@ -37,7 +37,7 @@ class Series(Generic[T]):
     - series[1] returns the previous value
     - series[n] returns the value n bars ago
 
-    Warmup System (QuantConnect Lean-style):
+    Warmup System:
     - Each series tracks a `warmup_period` indicating samples needed before ready
     - Use `is_ready` property to check if enough samples have been collected
     - Allows indicators to propagate their ready state up the call chain
@@ -80,7 +80,6 @@ class Series(Generic[T]):
         Check if series has enough samples to be ready.
 
         Returns True when count() >= warmup_period.
-        This implements the QuantConnect Lean-style is_ready pattern.
         """
         return self.count() >= self._warmup_period
 
@@ -505,7 +504,7 @@ class BaseStrategy(ABC):
         pass
 
     # ========================================================================
-    # Warmup / Ready State (QuantConnect Lean-style)
+    # Warmup / Ready State
     # ========================================================================
 
     @abstractmethod
@@ -514,7 +513,6 @@ class BaseStrategy(ABC):
         Check if strategy has enough data to generate valid signals.
 
         **REQUIRED** - must implement to combine your indicators' ready states.
-        This implements the QuantConnect Lean-style is_ready pattern.
 
         Args:
             bars: BarsContext to check for data availability

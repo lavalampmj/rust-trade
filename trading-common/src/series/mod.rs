@@ -46,7 +46,7 @@ impl Default for MaximumBarsLookBack {
 /// - `series[1]` returns the previous value
 /// - `series[n]` returns the value n bars ago
 ///
-/// # Warmup System (QuantConnect Lean-style)
+/// # Warmup System
 ///
 /// Each series tracks a `warmup_period` that indicates how many samples are
 /// needed before the series is considered "ready" for use. This allows
@@ -124,8 +124,7 @@ impl<T: SeriesValue> Series<T> {
 
     /// Check if series has enough samples to be ready
     ///
-    /// Returns true when `count() >= warmup_period`. This implements the
-    /// QuantConnect Lean-style `is_ready` pattern where each indicator/series
+    /// Returns true when `count() >= warmup_period`. Each indicator/series
     /// knows its own readiness state.
     ///
     /// # Example

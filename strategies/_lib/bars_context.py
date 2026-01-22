@@ -99,7 +99,7 @@ class BarsContext:
         return self.close.count() >= lookback
 
     # ========================================================================
-    # Warmup / Ready State (QuantConnect Lean-style)
+    # Warmup / Ready State
     # ========================================================================
 
     @property

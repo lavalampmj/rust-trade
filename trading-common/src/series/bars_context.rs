@@ -126,7 +126,7 @@ impl BarsContext {
     }
 
     // ========================================================================
-    // Warmup / Ready State (QuantConnect Lean-style)
+    // Warmup / Ready State
     // ========================================================================
 
     /// Check if BarsContext has at least 1 bar (basic readiness)
