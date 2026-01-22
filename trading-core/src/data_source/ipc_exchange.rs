@@ -8,6 +8,7 @@ use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 
 use crate::exchange::{Exchange, ExchangeError};
+use crate::metrics::IPC_CONNECTION_STATUS;
 use trading_common::data::types::TickData;
 
 use super::{IpcDataSource, IpcDataSourceConfig};
@@ -73,10 +74,14 @@ impl Exchange for IpcExchange {
         let subscribed = data_source.subscribed_symbols();
         if subscribed.is_empty() {
             error!("No symbols could be subscribed. Is data-manager running?");
+            IPC_CONNECTION_STATUS.set(0);
             return Err(ExchangeError::ConnectionError(
                 "No IPC channels available. Ensure data-manager is running.".to_string(),
             ));
         }
+
+        // Mark IPC as connected for alerting system
+        IPC_CONNECTION_STATUS.set(1);
 
         info!(
             "IPC subscription active for {} symbols: {:?}",
@@ -137,6 +142,9 @@ impl Exchange for IpcExchange {
             "IPC exchange stopped. Total ticks received: {}",
             ticks_received
         );
+
+        // Mark IPC as disconnected for alerting system
+        IPC_CONNECTION_STATUS.set(0);
         data_source.shutdown();
 
         Ok(())
