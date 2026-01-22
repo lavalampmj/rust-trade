@@ -261,7 +261,8 @@ async fn test_concurrent_runs() {
         .map(|i| {
             let mut config = IntegrationTestConfig::lite();
             config.data_gen.seed = 10000 + i as u64;
-            config.strategies.rust_count = 1;
+            // Ensure runner count matches symbol count so all ticks have subscribers
+            config.strategies.rust_count = config.data_gen.symbol_count;
             config.strategies.python_count = 0;
             // Use unique ports for concurrent runs (19110, 19111, 19112)
             config.emulator.transport.websocket.port = 19110 + i as u16;
@@ -377,7 +378,9 @@ async fn test_early_shutdown() {
 /// Test report generation with various results
 #[tokio::test]
 async fn test_report_formats() {
-    let config = IntegrationTestConfig::lite();
+    let mut config = IntegrationTestConfig::lite();
+    // Use unique port to avoid conflict with test_lite_pipeline
+    config.emulator.transport.websocket.port = 19150;
     let results = run_pipeline_test(config).await;
 
     // Test all report formats
@@ -432,7 +435,7 @@ async fn test_websocket_transport() {
             },
         },
         strategies: StrategyConfig {
-            rust_count: 2,
+            rust_count: 3, // Must match symbol_count so all symbols have subscribers
             python_count: 0,
             strategy_type: "tick_counter".to_string(),
             track_latency: true,

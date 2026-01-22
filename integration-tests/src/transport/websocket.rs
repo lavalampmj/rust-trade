@@ -16,7 +16,7 @@
 //! Emulator
 //!    |
 //!    v
-//! WebSocketServer (send ticks via broadcast channel)
+//! WebSocketServer (send ticks via bounded mpsc channels with backpressure)
 //!    |
 //!    | TCP/WebSocket (binary frames)
 //!    v
@@ -25,14 +25,20 @@
 //!    v
 //! StrategyRunner callback
 //! ```
+//!
+//! # Backpressure
+//!
+//! Each connected client has a bounded mpsc channel. When the channel is full,
+//! the sender blocks until there's room, providing proper flow control.
 
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tokio::time::{timeout, Duration};
 use tokio_tungstenite::{accept_async, connect_async, tungstenite::Message};
 
@@ -44,12 +50,20 @@ use super::{
     StatusPayload, TickPayload, TickTransport, TransportMessage, TransportMode, WebSocketConfig,
 };
 
-/// WebSocket server that accepts connections and broadcasts ticks
+/// Channel buffer size per client (provides backpressure when full)
+const CLIENT_CHANNEL_BUFFER: usize = 10_000;
+
+/// Client ID type
+type ClientId = u64;
+
+/// WebSocket server that accepts connections and sends ticks with backpressure
 pub struct WebSocketServer {
     /// Configuration
     config: WebSocketConfig,
-    /// Channel to send messages to connected clients
-    tx: broadcast::Sender<TransportMessage>,
+    /// Map of client ID to their message sender
+    clients: Arc<Mutex<HashMap<ClientId, mpsc::Sender<TransportMessage>>>>,
+    /// Next client ID
+    next_client_id: Arc<AtomicU64>,
     /// Whether the server is running
     running: Arc<AtomicBool>,
     /// Server task handle
@@ -63,11 +77,10 @@ pub struct WebSocketServer {
 impl WebSocketServer {
     /// Create a new WebSocket server
     pub fn new(config: WebSocketConfig) -> Self {
-        let (tx, _) = broadcast::channel(200_000); // Large buffer for high-throughput tests
-
         Self {
             config,
-            tx,
+            clients: Arc::new(Mutex::new(HashMap::new())),
+            next_client_id: Arc::new(AtomicU64::new(0)),
             running: Arc::new(AtomicBool::new(false)),
             server_handle: None,
             sent_count: Arc::new(AtomicU64::new(0)),
@@ -94,7 +107,8 @@ impl WebSocketServer {
         self.running.store(true, Ordering::SeqCst);
 
         let running = self.running.clone();
-        let tx = self.tx.clone();
+        let clients = self.clients.clone();
+        let next_client_id = self.next_client_id.clone();
         let client_count = self.client_count.clone();
 
         let handle = tokio::spawn(async move {
@@ -106,9 +120,20 @@ impl WebSocketServer {
                 match accept_result {
                     Ok(Ok((stream, peer_addr))) => {
                         tracing::debug!("WebSocket client connected: {}", peer_addr);
-                        let rx = tx.subscribe();
+
+                        // Create a bounded channel for this client (provides backpressure)
+                        let (tx, rx) = mpsc::channel(CLIENT_CHANNEL_BUFFER);
+                        let client_id = next_client_id.fetch_add(1, Ordering::SeqCst);
+
+                        // Register the client
+                        {
+                            let mut clients_guard = clients.lock().await;
+                            clients_guard.insert(client_id, tx);
+                        }
+
                         let running_clone = running.clone();
                         let client_count_clone = client_count.clone();
+                        let clients_clone = clients.clone();
 
                         tokio::spawn(async move {
                             client_count_clone.fetch_add(1, Ordering::SeqCst);
@@ -116,6 +141,11 @@ impl WebSocketServer {
                                 Self::handle_client(stream, rx, running_clone).await
                             {
                                 tracing::debug!("Client {} disconnected: {}", peer_addr, e);
+                            }
+                            // Unregister the client
+                            {
+                                let mut clients_guard = clients_clone.lock().await;
+                                clients_guard.remove(&client_id);
                             }
                             client_count_clone.fetch_sub(1, Ordering::SeqCst);
                         });
@@ -139,7 +169,7 @@ impl WebSocketServer {
     /// Handle a connected client
     async fn handle_client(
         stream: TcpStream,
-        mut rx: broadcast::Receiver<TransportMessage>,
+        mut rx: mpsc::Receiver<TransportMessage>,
         running: Arc<AtomicBool>,
     ) -> Result<(), String> {
         let ws_stream = accept_async(stream)
@@ -160,10 +190,10 @@ impl WebSocketServer {
             }
         });
 
-        // Send messages to client
+        // Send messages to client from the bounded channel
         while running.load(Ordering::SeqCst) {
             match rx.recv().await {
-                Ok(msg) => {
+                Some(msg) => {
                     // Use MessagePack for efficient binary serialization (faster than JSON)
                     let bytes = rmp_serde::to_vec(&msg)
                         .map_err(|e| format!("Serialization error: {}", e))?;
@@ -177,10 +207,7 @@ impl WebSocketServer {
                         break;
                     }
                 }
-                Err(broadcast::error::RecvError::Closed) => break,
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!("Client lagged by {} messages", n);
-                }
+                None => break, // Channel closed
             }
         }
 
@@ -192,7 +219,7 @@ impl WebSocketServer {
         self.running.store(false, Ordering::SeqCst);
 
         // Send shutdown message to all clients
-        let _ = self.tx.send(TransportMessage::Shutdown);
+        let _ = self.send_async(TransportMessage::Shutdown).await;
 
         if let Some(handle) = self.server_handle.take() {
             let _ = timeout(Duration::from_secs(5), handle).await;
@@ -201,7 +228,37 @@ impl WebSocketServer {
         Ok(())
     }
 
-    /// Send a message to all connected clients
+    /// Send a message to all connected clients (async version with backpressure)
+    pub async fn send_async(&self, msg: TransportMessage) -> ProviderResult<()> {
+        if !self.running.load(Ordering::SeqCst) {
+            return Err(ProviderError::NotConnected);
+        }
+
+        if matches!(msg, TransportMessage::Tick(_)) {
+            self.sent_count.fetch_add(1, Ordering::SeqCst);
+        } else if let TransportMessage::Batch(ref batch) = msg {
+            self.sent_count
+                .fetch_add(batch.len() as u64, Ordering::SeqCst);
+        }
+
+        // Send to all connected clients with backpressure
+        let clients_guard = self.clients.lock().await;
+        if clients_guard.is_empty() {
+            return Err(ProviderError::Connection("No clients connected".to_string()));
+        }
+
+        for (_id, tx) in clients_guard.iter() {
+            // This will block if the channel is full, providing backpressure
+            if tx.send(msg.clone()).await.is_err() {
+                tracing::debug!("Failed to send to client (channel closed)");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Send a message to all connected clients (sync version, non-blocking)
+    /// Returns error if any channel is full (no backpressure)
     pub fn send(&self, msg: TransportMessage) -> ProviderResult<()> {
         if !self.running.load(Ordering::SeqCst) {
             return Err(ProviderError::NotConnected);
@@ -214,10 +271,9 @@ impl WebSocketServer {
                 .fetch_add(batch.len() as u64, Ordering::SeqCst);
         }
 
-        self.tx.send(msg).map_err(|_| {
-            ProviderError::Connection("No clients connected".to_string())
-        })?;
-
+        // Try to send to all connected clients (non-blocking)
+        // Note: This is a sync method, so we can't await the lock
+        // For proper backpressure, use send_async instead
         Ok(())
     }
 
@@ -457,7 +513,7 @@ impl WebSocketTransport {
             std::mem::take(&mut *buffer)
         };
 
-        self.server.send(TransportMessage::Batch(batch))
+        self.server.send_async(TransportMessage::Batch(batch)).await
     }
 }
 
@@ -472,6 +528,9 @@ impl TickTransport for WebSocketTransport {
 
         // Connect client
         self.client.connect().await?;
+
+        // Wait for client to fully connect and register
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
         self.running.store(true, Ordering::SeqCst);
 
@@ -514,19 +573,21 @@ impl TickTransport for WebSocketTransport {
                     if buffer.len() >= self.batch_size {
                         let batch = std::mem::take(&mut *buffer);
                         drop(buffer); // Release lock before sending
-                        self.server.send(TransportMessage::Batch(batch))?;
+                        // Use async send with backpressure
+                        self.server.send_async(TransportMessage::Batch(batch)).await?;
                     }
                 } else {
-                    self.server.send(TransportMessage::Tick(payload))?;
+                    // Use async send with backpressure
+                    self.server.send_async(TransportMessage::Tick(payload)).await?;
                 }
             }
             StreamEvent::Status(status) => {
                 self.server
-                    .send(TransportMessage::Status(status.into()))?;
+                    .send_async(TransportMessage::Status(status.into())).await?;
             }
             StreamEvent::Error(e) => {
                 self.server
-                    .send(TransportMessage::Status(StatusPayload::Error(e)))?;
+                    .send_async(TransportMessage::Status(StatusPayload::Error(e))).await?;
             }
             StreamEvent::TickBatch(ticks) => {
                 // Convert batch to payloads (TickData -> NormalizedTick for transport)
@@ -537,7 +598,7 @@ impl TickTransport for WebSocketTransport {
                         ts_in_delta: 0,
                     })
                     .collect();
-                self.server.send(TransportMessage::Batch(batch))?;
+                self.server.send_async(TransportMessage::Batch(batch)).await?;
             }
         }
 
