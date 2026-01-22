@@ -467,11 +467,15 @@ mod tests {
         let bundle = create_test_bundle(2, 2);
         let expected_ticks = bundle.ticks.len();
 
+        // Use Direct transport for reliable unit testing (WebSocket has timing issues in tests)
         let config = EmulatorConfig {
             replay_speed: 100.0, // Speed up for testing
             embed_send_time: true,
             min_delay_us: 1,
-            transport: Default::default(),
+            transport: crate::transport::TransportConfig {
+                mode: crate::transport::TransportMode::Direct,
+                websocket: Default::default(),
+            },
         };
         let mut emulator = TestDataEmulator::new(bundle, config);
 
@@ -506,11 +510,15 @@ mod tests {
     #[tokio::test]
     async fn test_emulator_shutdown() {
         let bundle = create_test_bundle(3, 10); // Longer time window
+        // Use Direct transport for reliable unit testing
         let config = EmulatorConfig {
             replay_speed: 1.0, // Real-time (will be slow)
             embed_send_time: true,
             min_delay_us: 1000, // 1ms minimum
-            transport: Default::default(),
+            transport: crate::transport::TransportConfig {
+                mode: crate::transport::TransportMode::Direct,
+                websocket: Default::default(),
+            },
         };
         let mut emulator = TestDataEmulator::new(bundle.clone(), config);
 
