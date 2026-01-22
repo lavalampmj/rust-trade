@@ -64,7 +64,8 @@ async fn run_pipeline_test(config: IntegrationTestConfig) -> integration_tests::
         if let StreamEvent::Tick(tick) = event {
             // Use blocking task to call async method from sync context
             let manager = manager_clone.clone();
-            let tick = tick.clone();
+            // Convert TickData to NormalizedTick for strategy runners
+            let tick: data_manager::schema::NormalizedTick = tick.into();
             tokio::spawn(async move {
                 // Route tick only to runners subscribed to this symbol
                 manager.route_tick(&tick).await;
@@ -676,9 +677,12 @@ async fn test_database_persistence() {
     let db_sender_clone = db_sender.clone();
     let callback = Arc::new(move |event: StreamEvent| {
         if let StreamEvent::Tick(tick) = event {
+            // Convert TickData to NormalizedTick for internal use
+            let normalized_tick: data_manager::schema::NormalizedTick = tick.into();
+
             // Route to strategy runners subscribed to this symbol
             let manager = manager_clone.clone();
-            let tick_clone = tick.clone();
+            let tick_clone = normalized_tick.clone();
             tokio::spawn(async move {
                 manager.route_tick(&tick_clone).await;
             });
@@ -686,7 +690,7 @@ async fn test_database_persistence() {
             // Send to database writer
             let sender = db_sender_clone.clone();
             tokio::spawn(async move {
-                if let Err(e) = sender.send(tick).await {
+                if let Err(e) = sender.send(normalized_tick).await {
                     eprintln!("Failed to send tick to db writer: {}", e);
                 }
             });

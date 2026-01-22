@@ -613,10 +613,10 @@ mod tests {
         // Small delay for connection establishment
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        // Send ticks
+        // Send ticks (convert NormalizedTick to TickData for StreamEvent)
         let tick = create_test_tick();
         for _ in 0..10 {
-            transport.send(StreamEvent::Tick(tick.clone())).await.unwrap();
+            transport.send(StreamEvent::Tick(tick.clone().into())).await.unwrap();
         }
 
         // Wait for processing
@@ -656,7 +656,7 @@ mod tests {
         // Send 12 ticks (should trigger 2 batches of 5, with 2 remaining)
         let tick = create_test_tick();
         for _ in 0..12 {
-            transport.send(StreamEvent::Tick(tick.clone())).await.unwrap();
+            transport.send(StreamEvent::Tick(tick.clone().into())).await.unwrap();
         }
 
         tokio::time::sleep(Duration::from_millis(200)).await;

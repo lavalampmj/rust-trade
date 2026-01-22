@@ -137,7 +137,8 @@ mod tests {
         );
 
         for _ in 0..10 {
-            transport.send(StreamEvent::Tick(tick.clone())).await.unwrap();
+            // Convert NormalizedTick to TickData for StreamEvent
+            transport.send(StreamEvent::Tick(tick.clone().into())).await.unwrap();
         }
         assert_eq!(transport.sent_count(), 10);
     }
