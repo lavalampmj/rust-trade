@@ -4,6 +4,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use crate::data::types::{BarData, BarDataMode, BarType, Timeframe, TradeSide};
+use crate::orders::{
+    ClientOrderId, Order, OrderCanceled, OrderFilled, OrderRejected, OrderSide, TimeInForce,
+};
 use crate::series::bars_context::BarsContext;
 use crate::series::MaximumBarsLookBack;
 // OHLCData included via BarData.ohlc_bar
@@ -304,6 +307,112 @@ fn parse_timeframe(s: &str) -> Option<Timeframe> {
     }
 }
 
+/// Convert Python order dict to Rust Order
+fn pydict_to_order(dict: &Bound<'_, PyDict>) -> PyResult<Order> {
+    // Required fields
+    let symbol = dict
+        .get_item("symbol")?
+        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("Missing 'symbol'"))?
+        .extract::<String>()?;
+
+    let order_side_str = dict
+        .get_item("order_side")?
+        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("Missing 'order_side'"))?
+        .extract::<String>()?;
+    let order_side = match order_side_str.as_str() {
+        "Buy" => OrderSide::Buy,
+        "Sell" => OrderSide::Sell,
+        _ => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Invalid order_side: {}",
+                order_side_str
+            )))
+        }
+    };
+
+    let order_type_str = dict
+        .get_item("order_type")?
+        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("Missing 'order_type'"))?
+        .extract::<String>()?;
+
+    let quantity_str = dict
+        .get_item("quantity")?
+        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("Missing 'quantity'"))?
+        .extract::<String>()?;
+    let quantity = Decimal::from_str(&quantity_str)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid quantity: {}", e)))?;
+
+    // Optional fields
+    let price: Option<Decimal> = dict
+        .get_item("price")?
+        .and_then(|v| v.extract::<String>().ok())
+        .and_then(|s| Decimal::from_str(&s).ok());
+
+    let stop_price: Option<Decimal> = dict
+        .get_item("stop_price")?
+        .and_then(|v| v.extract::<String>().ok())
+        .and_then(|s| Decimal::from_str(&s).ok());
+
+    let time_in_force_str: String = dict
+        .get_item("time_in_force")?
+        .and_then(|v| v.extract::<String>().ok())
+        .unwrap_or_else(|| "GTC".to_string());
+    let time_in_force = match time_in_force_str.as_str() {
+        "GTC" => TimeInForce::GTC,
+        "IOC" => TimeInForce::IOC,
+        "FOK" => TimeInForce::FOK,
+        "DAY" => TimeInForce::Day,
+        "GTD" => TimeInForce::GTD,
+        _ => TimeInForce::GTC,
+    };
+
+    let client_order_id: Option<String> = dict
+        .get_item("client_order_id")?
+        .and_then(|v| v.extract::<String>().ok());
+
+    // Build order based on type
+    let mut builder = match order_type_str.as_str() {
+        "Market" => Order::market(&symbol, order_side, quantity),
+        "Limit" => {
+            let price = price.ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("Limit orders require 'price'")
+            })?;
+            Order::limit(&symbol, order_side, quantity, price)
+        }
+        "Stop" | "StopMarket" => {
+            let trigger = stop_price.ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("Stop orders require 'stop_price'")
+            })?;
+            Order::stop(&symbol, order_side, quantity, trigger)
+        }
+        "StopLimit" => {
+            let price = price.ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("StopLimit orders require 'price'")
+            })?;
+            let trigger = stop_price.ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("StopLimit orders require 'stop_price'")
+            })?;
+            Order::stop_limit(&symbol, order_side, quantity, price, trigger)
+        }
+        _ => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Unsupported order_type: {}",
+                order_type_str
+            )))
+        }
+    };
+
+    builder = builder.with_time_in_force(time_in_force);
+
+    if let Some(coid) = client_order_id {
+        builder = builder.with_client_order_id(coid);
+    }
+
+    builder.build().map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("Failed to build order: {}", e))
+    })
+}
+
 impl Strategy for PythonStrategy {
     fn name(&self) -> &str {
         &self.cached_name
@@ -435,13 +544,13 @@ impl Strategy for PythonStrategy {
                             "OnEachTick" => BarDataMode::OnEachTick,
                             "OnPriceMove" => BarDataMode::OnPriceMove,
                             "OnCloseBar" => BarDataMode::OnCloseBar,
-                            _ => BarDataMode::OnEachTick,
+                            _ => BarDataMode::OnCloseBar,
                         }
                     } else {
-                        BarDataMode::OnEachTick
+                        BarDataMode::OnCloseBar
                     }
                 }
-                Err(_) => BarDataMode::OnEachTick,
+                Err(_) => BarDataMode::OnCloseBar,
             }
         })
     }
@@ -529,6 +638,177 @@ impl Strategy for PythonStrategy {
                     // Log error and default to 0 (no warmup required)
                     eprintln!("Python warmup_period error: {} - defaulting to 0", e);
                     0
+                }
+            }
+        })
+    }
+
+    // ========================================================================
+    // Order Event Handlers
+    // ========================================================================
+
+    fn on_order_filled(&mut self, event: &OrderFilled) {
+        Python::with_gil(|py| {
+            let instance = self.py_instance.lock().unwrap();
+            let py_instance = instance.bind(py);
+
+            let event_dict = PyDict::new_bound(py);
+            let _ = event_dict.set_item("client_order_id", event.client_order_id.as_str());
+            let _ = event_dict.set_item("venue_order_id", event.venue_order_id.as_str());
+            let _ = event_dict.set_item("symbol", event.instrument_id.symbol.as_str());
+            let _ = event_dict.set_item("order_side", match event.order_side {
+                OrderSide::Buy => "Buy",
+                OrderSide::Sell => "Sell",
+            });
+            let _ = event_dict.set_item("last_qty", event.last_qty.to_string());
+            let _ = event_dict.set_item("last_px", event.last_px.to_string());
+            let _ = event_dict.set_item("cum_qty", event.cum_qty.to_string());
+            let _ = event_dict.set_item("leaves_qty", event.leaves_qty.to_string());
+            let _ = event_dict.set_item("commission", event.commission.to_string());
+            let _ = event_dict.set_item("timestamp", event.ts_event.to_rfc3339());
+
+            if let Err(e) = py_instance.call_method1("on_order_filled", (&event_dict,)) {
+                eprintln!("Python on_order_filled error: {}", e);
+            }
+        });
+    }
+
+    fn on_order_rejected(&mut self, event: &OrderRejected) {
+        Python::with_gil(|py| {
+            let instance = self.py_instance.lock().unwrap();
+            let py_instance = instance.bind(py);
+
+            let event_dict = PyDict::new_bound(py);
+            let _ = event_dict.set_item("client_order_id", event.client_order_id.as_str());
+            let _ = event_dict.set_item("reason", &event.reason);
+            let _ = event_dict.set_item("timestamp", event.ts_event.to_rfc3339());
+
+            if let Err(e) = py_instance.call_method1("on_order_rejected", (&event_dict,)) {
+                eprintln!("Python on_order_rejected error: {}", e);
+            }
+        });
+    }
+
+    fn on_order_canceled(&mut self, event: &OrderCanceled) {
+        Python::with_gil(|py| {
+            let instance = self.py_instance.lock().unwrap();
+            let py_instance = instance.bind(py);
+
+            let event_dict = PyDict::new_bound(py);
+            let _ = event_dict.set_item("client_order_id", event.client_order_id.as_str());
+            if let Some(ref venue_id) = event.venue_order_id {
+                let _ = event_dict.set_item("venue_order_id", venue_id.as_str());
+            }
+            let _ = event_dict.set_item("timestamp", event.ts_event.to_rfc3339());
+
+            if let Err(e) = py_instance.call_method1("on_order_canceled", (&event_dict,)) {
+                eprintln!("Python on_order_canceled error: {}", e);
+            }
+        });
+    }
+
+    fn on_order_submitted(&mut self, order: &Order) {
+        Python::with_gil(|py| {
+            let instance = self.py_instance.lock().unwrap();
+            let py_instance = instance.bind(py);
+
+            let order_dict = PyDict::new_bound(py);
+            let _ = order_dict.set_item("client_order_id", order.client_order_id.as_str());
+            let _ = order_dict.set_item("symbol", order.instrument_id.symbol.as_str());
+            let _ = order_dict.set_item("order_side", match order.side {
+                OrderSide::Buy => "Buy",
+                OrderSide::Sell => "Sell",
+            });
+            let _ = order_dict.set_item("order_type", order.order_type.to_string());
+            let _ = order_dict.set_item("quantity", order.quantity.to_string());
+            if let Some(price) = order.price {
+                let _ = order_dict.set_item("price", price.to_string());
+            }
+            if let Some(trigger_price) = order.trigger_price {
+                let _ = order_dict.set_item("stop_price", trigger_price.to_string());
+            }
+            let _ = order_dict.set_item("time_in_force", order.time_in_force.to_string());
+
+            if let Err(e) = py_instance.call_method1("on_order_submitted", (&order_dict,)) {
+                eprintln!("Python on_order_submitted error: {}", e);
+            }
+        });
+    }
+
+    fn uses_order_management(&self) -> bool {
+        Python::with_gil(|py| {
+            let instance = self.py_instance.lock().unwrap();
+            let py_instance = instance.bind(py);
+
+            match py_instance.call_method0("uses_order_management") {
+                Ok(result) => result.extract::<bool>().unwrap_or(false),
+                Err(_) => false,
+            }
+        })
+    }
+
+    fn get_orders(&mut self, bar_data: &BarData, _bars: &mut BarsContext) -> Vec<Order> {
+        Python::with_gil(|py| {
+            let instance = self.py_instance.lock().unwrap();
+            let py_bars = self.py_bars_context.lock().unwrap();
+            let py_instance = instance.bind(py);
+            let py_bars_bound = py_bars.bind(py);
+
+            let bar_dict = match bar_data_to_pydict(py, bar_data) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("Failed to convert BarData for get_orders: {}", e);
+                    return Vec::new();
+                }
+            };
+
+            match py_instance.call_method1("get_orders", (&bar_dict, py_bars_bound)) {
+                Ok(result) => {
+                    if let Ok(orders_list) = result.extract::<Vec<Bound<'_, PyDict>>>() {
+                        orders_list
+                            .iter()
+                            .filter_map(|order_dict| pydict_to_order(order_dict).ok())
+                            .collect()
+                    } else {
+                        Vec::new()
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Python get_orders error: {}", e);
+                    Vec::new()
+                }
+            }
+        })
+    }
+
+    fn get_cancellations(&mut self, bar_data: &BarData, _bars: &mut BarsContext) -> Vec<ClientOrderId> {
+        Python::with_gil(|py| {
+            let instance = self.py_instance.lock().unwrap();
+            let py_bars = self.py_bars_context.lock().unwrap();
+            let py_instance = instance.bind(py);
+            let py_bars_bound = py_bars.bind(py);
+
+            let bar_dict = match bar_data_to_pydict(py, bar_data) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("Failed to convert BarData for get_cancellations: {}", e);
+                    return Vec::new();
+                }
+            };
+
+            match py_instance.call_method1("get_cancellations", (&bar_dict, py_bars_bound)) {
+                Ok(result) => {
+                    if let Ok(ids) = result.extract::<Vec<String>>() {
+                        ids.into_iter()
+                            .map(|s| ClientOrderId::new(s))
+                            .collect()
+                    } else {
+                        Vec::new()
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Python get_cancellations error: {}", e);
+                    Vec::new()
                 }
             }
         })

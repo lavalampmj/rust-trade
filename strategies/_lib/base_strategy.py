@@ -599,3 +599,173 @@ class BaseStrategy(ABC):
             Maximum number of bars to keep
         """
         return 256
+
+    # ========================================================================
+    # Order Event Handlers (Optional - for advanced order management)
+    # ========================================================================
+
+    def on_order_filled(self, event: Dict[str, Any]) -> None:
+        """
+        Called when an order is filled (partial or complete).
+
+        Override this method to react to order fills. This is useful for:
+        - Updating internal state based on executed orders
+        - Placing follow-up orders (e.g., stop-loss after entry)
+        - Tracking realized P&L
+
+        Args:
+            event: Order filled event dictionary with keys:
+                - client_order_id (str): Client-assigned order ID
+                - venue_order_id (str): Exchange-assigned order ID
+                - symbol (str): Trading pair
+                - order_side (str): "Buy" or "Sell"
+                - last_qty (str): Quantity filled in this event
+                - last_px (str): Price of this fill
+                - cum_qty (str): Cumulative quantity filled
+                - leaves_qty (str): Remaining quantity
+                - commission (str): Commission for this fill
+                - timestamp (str): ISO 8601 timestamp
+
+        Example:
+            def on_order_filled(self, event):
+                # Place a stop-loss after a buy is filled
+                if event["order_side"] == "Buy":
+                    stop_price = Decimal(event["last_px"]) * Decimal("0.95")
+                    self.pending_stop = stop_price
+        """
+        pass  # Default: no-op
+
+    def on_order_rejected(self, event: Dict[str, Any]) -> None:
+        """
+        Called when an order is rejected by the venue.
+
+        Override this method to handle order rejections. This is useful for:
+        - Logging rejection reasons
+        - Adjusting order parameters and retrying
+        - Updating strategy state
+
+        Args:
+            event: Order rejected event dictionary with keys:
+                - client_order_id (str): Client-assigned order ID
+                - reason (str): Rejection reason
+                - timestamp (str): ISO 8601 timestamp
+        """
+        pass  # Default: no-op
+
+    def on_order_canceled(self, event: Dict[str, Any]) -> None:
+        """
+        Called when an order is canceled.
+
+        Override this method to handle order cancellations. This is useful for:
+        - Tracking canceled orders
+        - Placing replacement orders
+        - Updating order tracking state
+
+        Args:
+            event: Order canceled event dictionary with keys:
+                - client_order_id (str): Client-assigned order ID
+                - venue_order_id (str, optional): Exchange-assigned order ID
+                - timestamp (str): ISO 8601 timestamp
+        """
+        pass  # Default: no-op
+
+    def on_order_submitted(self, order: Dict[str, Any]) -> None:
+        """
+        Called when a new order is submitted.
+
+        Override this method to track submitted orders.
+
+        Args:
+            order: Order dictionary with keys:
+                - client_order_id (str): Client-assigned order ID
+                - symbol (str): Trading pair
+                - order_side (str): "Buy" or "Sell"
+                - order_type (str): "Market", "Limit", "StopMarket", etc.
+                - quantity (str): Order quantity
+                - price (str, optional): Limit price if applicable
+                - stop_price (str, optional): Stop price if applicable
+                - time_in_force (str): "GTC", "IOC", "FOK", "DAY"
+        """
+        pass  # Default: no-op
+
+    def uses_order_management(self) -> bool:
+        """
+        Whether this strategy uses advanced order management.
+
+        When True, the execution engine will:
+        - Call order event handlers (on_order_filled, etc.)
+        - Not auto-convert signals to market orders (strategy manages orders directly)
+
+        Default is False for backward compatibility with signal-based strategies.
+
+        Returns:
+            True if strategy manages its own orders, False for signal-based execution
+        """
+        return False
+
+    def get_orders(self, bar_data: Dict[str, Any], bars: 'BarsContext') -> List[Dict[str, Any]]:
+        """
+        Get orders to submit for this bar.
+
+        Advanced strategies can override this to submit complex orders
+        (limit orders, bracket orders, etc.) instead of using signals.
+
+        Only called if `uses_order_management()` returns True.
+
+        Args:
+            bar_data: Current bar data dictionary
+            bars: BarsContext with OHLCV series
+
+        Returns:
+            List of order dictionaries, each with keys:
+                - client_order_id (str): Unique client-assigned ID
+                - symbol (str): Trading pair
+                - order_side (str): "Buy" or "Sell"
+                - order_type (str): "Market", "Limit", "StopMarket", "StopLimit"
+                - quantity (str): Order quantity as decimal string
+                - price (str, optional): Limit price for Limit/StopLimit orders
+                - stop_price (str, optional): Stop price for Stop orders
+                - time_in_force (str): "GTC", "IOC", "FOK", "DAY" (default: "GTC")
+
+        Example:
+            def get_orders(self, bar_data, bars):
+                orders = []
+                if self.should_enter_long(bars):
+                    entry_price = bars.close[0] * Decimal("0.99")
+                    orders.append({
+                        "client_order_id": f"entry_{bars.current_bar()}",
+                        "symbol": bar_data["symbol"],
+                        "order_side": "Buy",
+                        "order_type": "Limit",
+                        "quantity": "0.1",
+                        "price": str(entry_price),
+                        "time_in_force": "GTC"
+                    })
+                return orders
+        """
+        return []  # Default: no orders
+
+    def get_cancellations(self, bar_data: Dict[str, Any], bars: 'BarsContext') -> List[str]:
+        """
+        Get orders to cancel for this bar.
+
+        Advanced strategies can override this to cancel pending orders
+        based on market conditions.
+
+        Only called if `uses_order_management()` returns True.
+
+        Args:
+            bar_data: Current bar data dictionary
+            bars: BarsContext with OHLCV series
+
+        Returns:
+            List of client_order_id strings to cancel
+
+        Example:
+            def get_cancellations(self, bar_data, bars):
+                # Cancel stale orders if price moved significantly
+                if abs(bars.percent_change() or 0) > 2:
+                    return list(self.pending_order_ids)
+                return []
+        """
+        return []  # Default: no cancellations

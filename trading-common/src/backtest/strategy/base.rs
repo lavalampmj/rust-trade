@@ -161,11 +161,11 @@ pub trait Strategy: Send + Sync {
 
     /// Specify the operational mode for bar data processing
     ///
-    /// - OnEachTick: Fire on every tick (default)
+    /// - OnEachTick: Fire on every tick
     /// - OnPriceMove: Fire only when price changes
-    /// - OnCloseBar: Fire only when bar closes
+    /// - OnCloseBar: Fire only when bar closes (default)
     fn bar_data_mode(&self) -> BarDataMode {
-        BarDataMode::OnEachTick // Default
+        BarDataMode::OnCloseBar // Default
     }
 
     /// Specify the preferred bar type for this strategy
