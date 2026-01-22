@@ -80,7 +80,17 @@ pub async fn execute(args: ServeArgs) -> Result<()> {
             buffer_entries: settings.transport.ipc.ring_buffer_entries,
             entry_size: settings.transport.ipc.entry_size,
         };
-        Some(Arc::new(SharedMemoryTransport::new(config)))
+        let memory_per_channel = config.buffer_entries * config.entry_size;
+        info!(
+            "IPC config: path_prefix={}, buffer_entries={}, entry_size={} bytes, memory_per_channel={} KB",
+            config.path_prefix,
+            config.buffer_entries,
+            config.entry_size,
+            memory_per_channel / 1024
+        );
+        let transport = Arc::new(SharedMemoryTransport::new(config));
+        info!("IPC transport ready - waiting for symbols to create channels");
+        Some(transport)
     } else {
         None
     };
@@ -205,6 +215,20 @@ async fn run_binance_provider(
                         ticks_persisted_clone.load(Ordering::Relaxed),
                         ticks_ipc_clone.load(Ordering::Relaxed)
                     );
+                }
+
+                // Log IPC status periodically (every 1000 ticks)
+                if count % 1000 == 0 {
+                    if let Some(ref transport) = transport_clone {
+                        let active = transport.active_symbols();
+                        let stats = transport.stats();
+                        info!(
+                            "IPC status: {} active channels, {} msgs sent, {:.1}% avg buffer utilization",
+                            active.len(),
+                            stats.messages_sent,
+                            stats.buffer_utilization * 100.0
+                        );
+                    }
                 }
 
                 // Publish to IPC

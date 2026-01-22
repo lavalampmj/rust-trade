@@ -12,7 +12,7 @@ use std::sync::Arc;
 use dbn::TradeMsg;
 use parking_lot::RwLock;
 use shared_memory::{Shmem, ShmemConf};
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::transport::{Transport, TransportError, TransportResult, TransportStats};
 
@@ -99,9 +99,9 @@ impl SharedMemoryChannel {
             (*header_ptr).init(config.buffer_entries as u64, config.entry_size as u64);
         }
 
-        debug!(
-            "Created shared memory channel {} for {}@{} ({} bytes)",
-            shm_name, symbol, exchange, total_size
+        info!(
+            "Created IPC shared memory channel {} for {}@{} ({} KB)",
+            shm_name, symbol, exchange, total_size / 1024
         );
 
         Ok(Self {
@@ -358,7 +358,7 @@ impl SharedMemoryTransport {
         let channel = SharedMemoryChannel::create(symbol, exchange, self.config.clone())?;
         channels.insert(key.clone(), channel);
 
-        debug!("Created channel for {}", key);
+        info!("IPC channel active: {} (total channels: {})", key, channels.len());
         Ok(())
     }
 
