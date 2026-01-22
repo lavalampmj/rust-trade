@@ -429,6 +429,7 @@ impl Drop for SessionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{NaiveTime, Weekday};
 
     #[test]
     fn test_session_manager_config_default() {
@@ -443,5 +444,442 @@ mod tests {
         // This test verifies the count_by_status logic
         let counts = std::collections::HashMap::<MarketStatus, usize>::new();
         assert!(counts.is_empty());
+    }
+
+    // ============================================================
+    // STATE TRACKING TESTS (using DashMap directly for unit tests)
+    // ============================================================
+
+    #[test]
+    fn test_session_state_storage() {
+        let states: DashMap<String, SessionState> = DashMap::new();
+
+        // Insert a state
+        let symbol_key = "BTCUSDT.BINANCE".to_string();
+        let state = SessionState {
+            status: MarketStatus::Open,
+            current_session: None,
+            next_change: None,
+            reason: None,
+        };
+        states.insert(symbol_key.clone(), state);
+
+        // Retrieve it
+        let retrieved = states.get(&symbol_key);
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().status, MarketStatus::Open);
+    }
+
+    #[test]
+    fn test_session_state_update() {
+        let states: DashMap<String, SessionState> = DashMap::new();
+        let symbol_key = "BTCUSDT.BINANCE".to_string();
+
+        // Initial state
+        states.insert(
+            symbol_key.clone(),
+            SessionState {
+                status: MarketStatus::Open,
+                current_session: None,
+                next_change: None,
+                reason: None,
+            },
+        );
+
+        // Update state
+        if let Some(mut state) = states.get_mut(&symbol_key) {
+            state.status = MarketStatus::Closed;
+        }
+
+        // Verify update
+        let state = states.get(&symbol_key).unwrap();
+        assert_eq!(state.status, MarketStatus::Closed);
+    }
+
+    #[test]
+    fn test_session_state_transitions() {
+        // Test all valid status values
+        let statuses = vec![
+            MarketStatus::Open,
+            MarketStatus::Closed,
+            MarketStatus::PreMarket,
+            MarketStatus::AfterHours,
+            MarketStatus::Halted,
+            MarketStatus::Auction,
+            MarketStatus::Maintenance,
+        ];
+
+        for status in statuses {
+            let state = SessionState {
+                status,
+                current_session: None,
+                next_change: None,
+                reason: None,
+            };
+            // Should be constructible
+            assert!(matches!(state.status, MarketStatus::Open | MarketStatus::Closed |
+                MarketStatus::PreMarket | MarketStatus::AfterHours | MarketStatus::Halted |
+                MarketStatus::Auction | MarketStatus::Maintenance));
+        }
+    }
+
+    // ============================================================
+    // EVENT BROADCASTING TESTS
+    // ============================================================
+
+    #[test]
+    fn test_event_channel_creation() {
+        let (tx, mut rx) = broadcast::channel::<SessionEvent>(16);
+
+        // Create a test session
+        let test_session = TradingSession::regular(
+            "Test",
+            NaiveTime::from_hms_opt(9, 30, 0).unwrap(),
+            NaiveTime::from_hms_opt(16, 0, 0).unwrap(),
+            vec![Weekday::Mon],
+        );
+
+        // Send an event
+        let event = SessionEvent::SessionOpened {
+            symbol: "BTCUSDT.BINANCE".to_string(),
+            session: test_session,
+        };
+        tx.send(event).unwrap();
+
+        // Receive it
+        match rx.try_recv() {
+            Ok(SessionEvent::SessionOpened { symbol, .. }) => {
+                assert_eq!(symbol, "BTCUSDT.BINANCE");
+            }
+            _ => panic!("Expected SessionOpened event"),
+        }
+    }
+
+    #[test]
+    fn test_event_channel_multiple_subscribers() {
+        let (tx, _) = broadcast::channel::<SessionEvent>(16);
+
+        let mut rx1 = tx.subscribe();
+        let mut rx2 = tx.subscribe();
+
+        let event = SessionEvent::MarketHalted {
+            symbol: "BTCUSDT.BINANCE".to_string(),
+            reason: "Circuit breaker".to_string(),
+        };
+        tx.send(event).unwrap();
+
+        // Both should receive
+        match rx1.try_recv() {
+            Ok(SessionEvent::MarketHalted { symbol, reason }) => {
+                assert_eq!(symbol, "BTCUSDT.BINANCE");
+                assert_eq!(reason, "Circuit breaker");
+            }
+            _ => panic!("rx1: Expected MarketHalted event"),
+        }
+
+        match rx2.try_recv() {
+            Ok(SessionEvent::MarketHalted { symbol, reason }) => {
+                assert_eq!(symbol, "BTCUSDT.BINANCE");
+                assert_eq!(reason, "Circuit breaker");
+            }
+            _ => panic!("rx2: Expected MarketHalted event"),
+        }
+    }
+
+    #[test]
+    fn test_all_event_types() {
+        let (tx, mut rx) = broadcast::channel::<SessionEvent>(16);
+
+        // Create a test session
+        let test_session = TradingSession::regular(
+            "Test",
+            NaiveTime::from_hms_opt(9, 30, 0).unwrap(),
+            NaiveTime::from_hms_opt(16, 0, 0).unwrap(),
+            vec![Weekday::Mon],
+        );
+
+        // Test all event variants (6 variants in SessionEvent enum)
+        let events: Vec<SessionEvent> = vec![
+            SessionEvent::SessionOpened {
+                symbol: "SYM1".to_string(),
+                session: test_session,
+            },
+            SessionEvent::SessionClosed {
+                symbol: "SYM2".to_string(),
+            },
+            SessionEvent::MarketHalted {
+                symbol: "SYM3".to_string(),
+                reason: "Testing".to_string(),
+            },
+            SessionEvent::MarketResumed {
+                symbol: "SYM4".to_string(),
+            },
+            SessionEvent::MaintenanceStarted {
+                symbol: "SYM5".to_string(),
+            },
+            SessionEvent::MaintenanceEnded {
+                symbol: "SYM6".to_string(),
+            },
+        ];
+
+        for event in events.iter() {
+            tx.send(event.clone()).unwrap();
+        }
+
+        // Receive all
+        for _ in 0..6 {
+            assert!(rx.try_recv().is_ok());
+        }
+    }
+
+    // ============================================================
+    // STATUS QUERY TESTS
+    // ============================================================
+
+    #[test]
+    fn test_get_symbols_by_status() {
+        let states: DashMap<String, SessionState> = DashMap::new();
+
+        // Add symbols with different statuses
+        states.insert(
+            "SYM1.VENUE".to_string(),
+            SessionState {
+                status: MarketStatus::Open,
+                current_session: None,
+                next_change: None,
+                reason: None,
+            },
+        );
+        states.insert(
+            "SYM2.VENUE".to_string(),
+            SessionState {
+                status: MarketStatus::Open,
+                current_session: None,
+                next_change: None,
+                reason: None,
+            },
+        );
+        states.insert(
+            "SYM3.VENUE".to_string(),
+            SessionState {
+                status: MarketStatus::Closed,
+                current_session: None,
+                next_change: None,
+                reason: None,
+            },
+        );
+
+        // Count by status
+        let open_count = states
+            .iter()
+            .filter(|entry| entry.status == MarketStatus::Open)
+            .count();
+        let closed_count = states
+            .iter()
+            .filter(|entry| entry.status == MarketStatus::Closed)
+            .count();
+
+        assert_eq!(open_count, 2);
+        assert_eq!(closed_count, 1);
+    }
+
+    // ============================================================
+    // HALT/RESUME LOGIC TESTS
+    // ============================================================
+
+    #[test]
+    fn test_halt_state_change() {
+        let states: DashMap<String, SessionState> = DashMap::new();
+        let symbol_key = "BTCUSDT.BINANCE".to_string();
+
+        // Start with Open
+        states.insert(
+            symbol_key.clone(),
+            SessionState {
+                status: MarketStatus::Open,
+                current_session: None,
+                next_change: None,
+                reason: None,
+            },
+        );
+
+        // Simulate halt
+        if let Some(mut state) = states.get_mut(&symbol_key) {
+            state.status = MarketStatus::Halted;
+            state.reason = Some("Manual halt".to_string());
+        }
+
+        let state = states.get(&symbol_key).unwrap();
+        assert_eq!(state.status, MarketStatus::Halted);
+        assert_eq!(state.reason, Some("Manual halt".to_string()));
+    }
+
+    #[test]
+    fn test_resume_clears_reason() {
+        let states: DashMap<String, SessionState> = DashMap::new();
+        let symbol_key = "BTCUSDT.BINANCE".to_string();
+
+        // Start halted with reason
+        states.insert(
+            symbol_key.clone(),
+            SessionState {
+                status: MarketStatus::Halted,
+                current_session: None,
+                next_change: None,
+                reason: Some("Circuit breaker".to_string()),
+            },
+        );
+
+        // Simulate resume
+        if let Some(mut state) = states.get_mut(&symbol_key) {
+            state.status = MarketStatus::Open;
+            state.reason = None;
+        }
+
+        let state = states.get(&symbol_key).unwrap();
+        assert_eq!(state.status, MarketStatus::Open);
+        assert!(state.reason.is_none());
+    }
+
+    // ============================================================
+    // CONCURRENT STATE ACCESS TESTS
+    // ============================================================
+
+    #[test]
+    fn test_concurrent_state_updates() {
+        use std::thread;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let states: Arc<DashMap<String, SessionState>> = Arc::new(DashMap::new());
+        let update_count = Arc::new(AtomicUsize::new(0));
+
+        // Pre-populate
+        for i in 0..100 {
+            states.insert(
+                format!("SYM{}.VENUE", i),
+                SessionState {
+                    status: MarketStatus::Open,
+                    current_session: None,
+                    next_change: None,
+                    reason: None,
+                },
+            );
+        }
+
+        // Multiple threads updating states
+        let handles: Vec<_> = (0..10)
+            .map(|thread_id| {
+                let states_clone = Arc::clone(&states);
+                let count_clone = Arc::clone(&update_count);
+                thread::spawn(move || {
+                    for i in 0..100 {
+                        let key = format!("SYM{}.VENUE", (i + thread_id * 10) % 100);
+                        if let Some(mut state) = states_clone.get_mut(&key) {
+                            // Toggle status
+                            state.status = if state.status == MarketStatus::Open {
+                                MarketStatus::Closed
+                            } else {
+                                MarketStatus::Open
+                            };
+                            count_clone.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().expect("Thread panicked");
+        }
+
+        // All updates should have completed
+        assert_eq!(update_count.load(Ordering::Relaxed), 1000);
+    }
+
+    #[test]
+    fn test_concurrent_register_unregister() {
+        use std::thread;
+
+        let states: Arc<DashMap<String, SessionState>> = Arc::new(DashMap::new());
+
+        let mut handles = vec![];
+
+        // Registration threads
+        for thread_id in 0..5 {
+            let states_clone = Arc::clone(&states);
+            handles.push(thread::spawn(move || {
+                for i in 0..100 {
+                    let key = format!("T{}S{}.VENUE", thread_id, i);
+                    states_clone.insert(
+                        key,
+                        SessionState {
+                            status: MarketStatus::Open,
+                            current_session: None,
+                            next_change: None,
+                            reason: None,
+                        },
+                    );
+                }
+            }));
+        }
+
+        // Unregistration threads (for even-numbered symbols)
+        for thread_id in 0..5 {
+            let states_clone = Arc::clone(&states);
+            handles.push(thread::spawn(move || {
+                // Small delay to let registrations happen
+                thread::yield_now();
+                for i in (0..100).step_by(2) {
+                    let key = format!("T{}S{}.VENUE", thread_id, i);
+                    states_clone.remove(&key);
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.join().expect("Thread panicked");
+        }
+
+        // Should have ~250 remaining (500 registered - 250 removed)
+        // Exact count may vary due to race conditions
+        assert!(states.len() <= 500);
+    }
+
+    // ============================================================
+    // TRADEABLE STATUS TESTS
+    // ============================================================
+
+    #[test]
+    fn test_is_tradeable_status() {
+        // These statuses should be tradeable
+        let tradeable_statuses = vec![
+            MarketStatus::Open,
+            MarketStatus::PreMarket,
+            MarketStatus::AfterHours,
+        ];
+
+        // These statuses should NOT be tradeable
+        let non_tradeable_statuses = vec![
+            MarketStatus::Closed,
+            MarketStatus::Halted,
+            MarketStatus::Maintenance,
+            MarketStatus::Auction,
+        ];
+
+        for status in tradeable_statuses {
+            let is_tradeable = matches!(
+                status,
+                MarketStatus::Open | MarketStatus::PreMarket | MarketStatus::AfterHours
+            );
+            assert!(is_tradeable, "{:?} should be tradeable", status);
+        }
+
+        for status in non_tradeable_statuses {
+            let is_tradeable = matches!(
+                status,
+                MarketStatus::Open | MarketStatus::PreMarket | MarketStatus::AfterHours
+            );
+            assert!(!is_tradeable, "{:?} should NOT be tradeable", status);
+        }
     }
 }

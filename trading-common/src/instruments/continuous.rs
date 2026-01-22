@@ -710,6 +710,339 @@ mod tests {
         assert!(ContinuousSymbol::parse(".c.0").is_err());
     }
 
+    // ============================================================
+    // PARSING EDGE CASES - Critical for robustness
+    // ============================================================
+
+    #[test]
+    fn test_parse_empty_and_whitespace() {
+        // Empty string
+        assert!(ContinuousSymbol::parse("").is_err());
+
+        // Only dots
+        assert!(ContinuousSymbol::parse("...").is_err());
+        assert!(ContinuousSymbol::parse("..").is_err());
+
+        // Empty base symbol (dot at start)
+        let result = ContinuousSymbol::parse(".c.0");
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e.to_string().contains("empty") || e.to_string().contains("Base"));
+        }
+    }
+
+    #[test]
+    fn test_parse_invalid_roll_methods() {
+        // Invalid single-char methods
+        assert!(ContinuousSymbol::parse("ES.x.0").is_err()); // x not valid
+        assert!(ContinuousSymbol::parse("ES.1.0").is_err()); // digit
+        assert!(ContinuousSymbol::parse("ES._.0").is_err()); // underscore
+
+        // Note: Uppercase letters ARE valid due to case-insensitive parsing (to_ascii_lowercase)
+        // ES.C.0, ES.V.0, ES.N.0 parse correctly to Calendar, Volume, OpenInterest
+        assert!(ContinuousSymbol::parse("ES.C.0").is_ok()); // uppercase C -> Calendar
+        assert!(ContinuousSymbol::parse("ES.V.0").is_ok()); // uppercase V -> Volume
+        assert!(ContinuousSymbol::parse("ES.N.0").is_ok()); // uppercase N -> OpenInterest
+
+        // Multi-char methods only use first char, so these parse with venue
+        // "ES.cal.0" -> base=ES, method=c (from 'c'), rank parses fail since "al" isn't numeric
+        // Actually it's: method comes from first char of parts[1]
+        // parts[1] = "cal", first char = 'c' -> Calendar, parts[2] = "0" -> rank 0
+        // So this would be valid! Let's test that:
+        assert!(ContinuousSymbol::parse("ES.cal.0").is_ok()); // 'c' from "cal" -> Calendar
+
+        // But this fails because 'x' is invalid
+        assert!(ContinuousSymbol::parse("ES.xv.0").is_err());
+    }
+
+    #[test]
+    fn test_parse_rank_boundaries() {
+        // Valid ranks
+        assert!(ContinuousSymbol::parse("ES.c.0").is_ok());
+        assert!(ContinuousSymbol::parse("ES.c.1").is_ok());
+        assert!(ContinuousSymbol::parse("ES.c.255").is_ok()); // Max u8
+
+        // Invalid ranks
+        assert!(ContinuousSymbol::parse("ES.c.-1").is_err()); // Negative
+        assert!(ContinuousSymbol::parse("ES.c.256").is_err()); // Overflow u8
+        assert!(ContinuousSymbol::parse("ES.c.999").is_err()); // Too large
+        assert!(ContinuousSymbol::parse("ES.c.abc").is_err()); // Non-numeric
+
+        // Note: "ES.c.1.5" is actually VALID - it parses as rank=1, venue="5"
+        // This is 4-part format: base.method.rank.venue
+        let parsed = ContinuousSymbol::parse("ES.c.1.5").unwrap();
+        assert_eq!(parsed.rank, 1);
+        assert_eq!(parsed.venue, Some("5".to_string()));
+    }
+
+    #[test]
+    fn test_parse_with_venue() {
+        // Valid 4-part format
+        let symbol = ContinuousSymbol::parse("ES.c.0.GLBX").unwrap();
+        assert_eq!(symbol.base_symbol, "ES");
+        assert_eq!(symbol.roll_method, ContinuousRollMethod::Calendar);
+        assert_eq!(symbol.rank, 0);
+        assert_eq!(symbol.venue, Some("GLBX".to_string()));
+
+        // Different venues
+        let symbol = ContinuousSymbol::parse("CL.v.1.NYMX").unwrap();
+        assert_eq!(symbol.venue, Some("NYMX".to_string()));
+
+        // Venue with numbers
+        let symbol = ContinuousSymbol::parse("ES.c.0.CME1").unwrap();
+        assert_eq!(symbol.venue, Some("CME1".to_string()));
+    }
+
+    #[test]
+    fn test_parse_too_many_parts() {
+        // 5+ parts should fail
+        assert!(ContinuousSymbol::parse("ES.c.0.GLBX.EXTRA").is_err());
+        assert!(ContinuousSymbol::parse("ES.c.0.A.B.C").is_err());
+    }
+
+    #[test]
+    fn test_parse_special_characters_in_base() {
+        // Base symbols with special chars (some exchanges use these)
+        let result = ContinuousSymbol::parse("ES-MINI.c.0");
+        // This should parse - base can contain hyphens in some cases
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().base_symbol, "ES-MINI");
+
+        // Underscore in base
+        let result = ContinuousSymbol::parse("ES_F.c.0");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_is_continuous_edge_cases() {
+        // Valid formats
+        assert!(ContinuousSymbol::is_continuous("ES.c.0"));
+        assert!(ContinuousSymbol::is_continuous("ES.c.0.GLBX"));
+        assert!(ContinuousSymbol::is_continuous("A.v.255")); // Single char base, max rank
+
+        // Uppercase methods ARE valid (case-insensitive parsing)
+        assert!(ContinuousSymbol::is_continuous("ES.C.0")); // Uppercase C -> Calendar
+        assert!(ContinuousSymbol::is_continuous("ES.V.0")); // Uppercase V -> Volume
+        assert!(ContinuousSymbol::is_continuous("ES.N.0")); // Uppercase N -> OpenInterest
+
+        // Invalid formats
+        assert!(!ContinuousSymbol::is_continuous("")); // Empty
+        assert!(!ContinuousSymbol::is_continuous("ES")); // No dots
+        assert!(!ContinuousSymbol::is_continuous("ES.c")); // Only 2 parts
+        assert!(!ContinuousSymbol::is_continuous("ES.x.0")); // Invalid method
+        assert!(!ContinuousSymbol::is_continuous("ES.c.abc")); // Invalid rank
+    }
+
+    #[test]
+    fn test_symbol_string_roundtrip() {
+        // 3-part format roundtrip
+        let original = "ES.c.0";
+        let parsed = ContinuousSymbol::parse(original).unwrap();
+        assert_eq!(parsed.to_symbol_string(), original);
+
+        // 4-part format roundtrip
+        let original_with_venue = "CL.v.1.NYMX";
+        let parsed = ContinuousSymbol::parse(original_with_venue).unwrap();
+        assert_eq!(parsed.to_full_string(), original_with_venue);
+    }
+
+    #[test]
+    fn test_display_trait() {
+        let symbol = ContinuousSymbol::new("ES", ContinuousRollMethod::Calendar, 0);
+        assert_eq!(format!("{}", symbol), "ES.c.0");
+
+        let symbol_with_venue = ContinuousSymbol::with_venue("ES", ContinuousRollMethod::Calendar, 0, "GLBX");
+        assert_eq!(format!("{}", symbol_with_venue), "ES.c.0.GLBX");
+    }
+
+    // ============================================================
+    // NEEDS_ROLL EDGE CASES - Critical for roll detection
+    // ============================================================
+
+    #[test]
+    fn test_needs_roll_empty_chain() {
+        let contract = ContinuousContract::new("ES", "GLBX", ContinuousRollMethod::Calendar, 0);
+        // Empty chain should not need roll
+        assert!(!contract.needs_roll());
+    }
+
+    #[test]
+    fn test_needs_roll_single_contract_chain() {
+        let mut contract = ContinuousContract::new("ES", "GLBX", ContinuousRollMethod::Volume, 0);
+
+        // Only one contract in chain (no next to roll to)
+        let front = ContractInfo::new("ESH6", "GLBX").with_volume(100000);
+        contract.update_chain(vec![front]);
+
+        // Should not need roll - no next contract to compare
+        assert!(!contract.needs_roll());
+    }
+
+    #[test]
+    fn test_needs_roll_volume_threshold_boundary() {
+        let mut contract = ContinuousContract::new("ES", "GLBX", ContinuousRollMethod::Volume, 0);
+
+        // Volume roll uses simple comparison: next.volume > front.volume
+        let front = ContractInfo::new("ESH6", "GLBX").with_volume(100000);
+
+        // Next has more volume - should roll
+        let next_above = ContractInfo::new("ESM6", "GLBX").with_volume(100001);
+        contract.update_chain(vec![front.clone(), next_above]);
+        assert!(contract.needs_roll()); // 100001 > 100000
+
+        // Equal volume - should NOT roll (not strictly greater)
+        let next_equal = ContractInfo::new("ESM6", "GLBX").with_volume(100000);
+        contract.update_chain(vec![front.clone(), next_equal]);
+        assert!(!contract.needs_roll()); // 100000 > 100000 is false
+
+        // Less volume - should NOT roll
+        let next_less = ContractInfo::new("ESM6", "GLBX").with_volume(99999);
+        contract.update_chain(vec![front, next_less]);
+        assert!(!contract.needs_roll()); // 99999 > 100000 is false
+    }
+
+    #[test]
+    fn test_needs_roll_volume_zero_handling() {
+        let mut contract = ContinuousContract::new("ES", "GLBX", ContinuousRollMethod::Volume, 0);
+
+        // Front has zero volume - next has any positive volume -> should roll
+        let front_zero = ContractInfo::new("ESH6", "GLBX").with_volume(0);
+        let next = ContractInfo::new("ESM6", "GLBX").with_volume(100000);
+        contract.update_chain(vec![front_zero, next]);
+
+        // 100000 > 0 is true, so it should trigger roll
+        assert!(contract.needs_roll());
+
+        // Both zero - should NOT roll (0 > 0 is false)
+        let both_zero_front = ContractInfo::new("ESH6", "GLBX").with_volume(0);
+        let both_zero_next = ContractInfo::new("ESM6", "GLBX").with_volume(0);
+        contract.update_chain(vec![both_zero_front, both_zero_next]);
+
+        assert!(!contract.needs_roll()); // 0 > 0 is false
+    }
+
+    #[test]
+    fn test_needs_roll_open_interest_threshold() {
+        let mut contract = ContinuousContract::new("ES", "GLBX", ContinuousRollMethod::OpenInterest, 0);
+
+        // OI roll uses simple comparison: next.open_interest > front.open_interest
+        let front = ContractInfo::new("ESH6", "GLBX").with_open_interest(500000);
+
+        // Next has more OI - should roll
+        let next_above = ContractInfo::new("ESM6", "GLBX").with_open_interest(500001);
+        contract.update_chain(vec![front.clone(), next_above]);
+        assert!(contract.needs_roll()); // 500001 > 500000
+
+        // Next has equal OI - should NOT roll
+        let next_equal = ContractInfo::new("ESM6", "GLBX").with_open_interest(500000);
+        contract.update_chain(vec![front.clone(), next_equal]);
+        assert!(!contract.needs_roll()); // 500000 > 500000 is false
+
+        // Next has less OI - should NOT roll
+        let next_less = ContractInfo::new("ESM6", "GLBX").with_open_interest(499999);
+        contract.update_chain(vec![front, next_less]);
+        assert!(!contract.needs_roll()); // 499999 > 500000 is false
+    }
+
+    #[test]
+    fn test_needs_roll_calendar_expiration() {
+        let mut contract = ContinuousContract::new("ES", "GLBX", ContinuousRollMethod::Calendar, 0);
+
+        // Expiration far in future - no roll needed
+        let far_future = Utc::now() + chrono::Duration::days(30);
+        let front = ContractInfo::new("ESH6", "GLBX").with_expiration(far_future);
+        contract.update_chain(vec![front]);
+
+        assert!(!contract.needs_roll());
+
+        // Expiration tomorrow - should trigger roll (within 1 day)
+        let tomorrow = Utc::now() + chrono::Duration::days(1);
+        let front_expiring = ContractInfo::new("ESH6", "GLBX").with_expiration(tomorrow);
+        contract.update_chain(vec![front_expiring]);
+
+        assert!(contract.needs_roll());
+
+        // Already expired - should trigger roll
+        let yesterday = Utc::now() - chrono::Duration::days(1);
+        let front_expired = ContractInfo::new("ESH6", "GLBX").with_expiration(yesterday);
+        contract.update_chain(vec![front_expired]);
+
+        assert!(contract.needs_roll());
+    }
+
+    #[test]
+    fn test_needs_roll_with_rank() {
+        let mut contract = ContinuousContract::new("ES", "GLBX", ContinuousRollMethod::Volume, 1); // Rank 1 (second)
+
+        let front = ContractInfo::new("ESH6", "GLBX").with_volume(100000);
+        let second = ContractInfo::new("ESM6", "GLBX").with_volume(80000);
+        let third = ContractInfo::new("ESU6", "GLBX").with_volume(200000); // High volume
+        contract.update_chain(vec![front, second, third]);
+
+        // For rank 1, compares second (80k) vs third (200k)
+        // 200000/80000 = 2.5 > 1.5 threshold
+        assert!(contract.needs_roll());
+    }
+
+    // ============================================================
+    // ADJUSTMENT FACTOR EDGE CASES
+    // ============================================================
+
+    #[test]
+    fn test_adjustment_factor_zero_old_price() {
+        let roll_date = Utc::now();
+        let factor = AdjustmentFactor::ratio(roll_date, "ESH6", "ESM6", dec!(0), dec!(4510));
+
+        // Should return ratio of 1.0 when old price is zero (avoid infinity)
+        assert_eq!(factor.ratio, Decimal::ONE);
+    }
+
+    #[test]
+    fn test_cumulative_adjustments() {
+        let mut contract = ContinuousContract::new("ES", "GLBX", ContinuousRollMethod::Calendar, 0);
+
+        // First roll: +10 difference
+        let roll1 = Utc.with_ymd_and_hms(2024, 3, 15, 12, 0, 0).unwrap();
+        let factor1 = AdjustmentFactor::difference(roll1, "ESH4", "ESM4", dec!(5000), dec!(5010));
+        contract.add_adjustment(factor1);
+
+        // Second roll: +5 difference
+        let roll2 = Utc.with_ymd_and_hms(2024, 6, 15, 12, 0, 0).unwrap();
+        let factor2 = AdjustmentFactor::difference(roll2, "ESM4", "ESU4", dec!(5010), dec!(5015));
+        contract.add_adjustment(factor2);
+
+        // Price from before both rolls should get both adjustments
+        let old_date = Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap();
+        let adjusted = contract.adjust_price(dec!(4980), old_date);
+        assert_eq!(adjusted, dec!(4995)); // 4980 + 10 + 5
+
+        // Price between rolls should only get second adjustment
+        let mid_date = Utc.with_ymd_and_hms(2024, 4, 1, 12, 0, 0).unwrap();
+        let adjusted = contract.adjust_price(dec!(5000), mid_date);
+        assert_eq!(adjusted, dec!(5005)); // 5000 + 5 (only second adjustment)
+    }
+
+    #[test]
+    fn test_contract_info_days_to_expiration() {
+        // Future expiration
+        let future_exp = Utc::now() + chrono::Duration::days(10);
+        let info = ContractInfo::new("ESH6", "GLBX").with_expiration(future_exp);
+
+        let days = info.days_to_expiration().unwrap();
+        assert!(days >= 9 && days <= 10); // Allow for time passing during test
+
+        // Past expiration (negative days)
+        let past_exp = Utc::now() - chrono::Duration::days(5);
+        let info_expired = ContractInfo::new("ESH6", "GLBX").with_expiration(past_exp);
+
+        let days = info_expired.days_to_expiration().unwrap();
+        assert!(days <= -4 && days >= -6);
+
+        // No expiration
+        let info_no_exp = ContractInfo::new("ESH6", "GLBX");
+        assert!(info_no_exp.days_to_expiration().is_none());
+    }
+
     #[test]
     fn test_is_continuous() {
         assert!(ContinuousSymbol::is_continuous("ES.c.0"));

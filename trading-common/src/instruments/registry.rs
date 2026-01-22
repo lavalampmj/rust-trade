@@ -624,4 +624,405 @@ mod tests {
         let crypto = defaults.get(&AssetClass::Crypto).unwrap();
         assert!(crypto.session_schedule.is_some());
     }
+
+    // ============================================================
+    // CACHE LOGIC TESTS
+    // ============================================================
+
+    #[test]
+    fn test_cache_insert_and_get() {
+        use crate::instruments::{SymbolInfo, VenueConfig};
+
+        // Create a mock registry without database
+        let cache: DashMap<String, Arc<SymbolDefinition>> = DashMap::new();
+
+        // Create a test symbol definition
+        let def = SymbolDefinition::new(
+            "BTCUSDT",
+            "BINANCE",
+            SymbolInfo::crypto_spot("BTC", "USDT"),
+            VenueConfig::binance("BTCUSDT"),
+            TradingSpecs::crypto(dec!(0.01), dec!(0.00001), 2, 5),
+        );
+
+        let key = "BTCUSDT.BINANCE".to_string();
+        cache.insert(key.clone(), Arc::new(def));
+
+        // Verify cache contains the symbol
+        assert!(cache.contains_key(&key));
+
+        let retrieved = cache.get(&key).unwrap();
+        assert_eq!(retrieved.id.symbol, "BTCUSDT");
+        assert_eq!(retrieved.id.venue, "BINANCE");
+    }
+
+    #[test]
+    fn test_cache_not_found() {
+        let cache: DashMap<String, Arc<SymbolDefinition>> = DashMap::new();
+
+        // Non-existent key
+        assert!(cache.get("NONEXISTENT.VENUE").is_none());
+    }
+
+    #[test]
+    fn test_cache_overwrite() {
+        use crate::instruments::{SymbolInfo, VenueConfig};
+
+        let cache: DashMap<String, Arc<SymbolDefinition>> = DashMap::new();
+
+        let key = "BTCUSDT.BINANCE".to_string();
+
+        // Insert first version
+        let def1 = SymbolDefinition::new(
+            "BTCUSDT",
+            "BINANCE",
+            SymbolInfo::crypto_spot("BTC", "USDT"),
+            VenueConfig::binance("BTCUSDT"),
+            TradingSpecs::crypto(dec!(0.01), dec!(0.00001), 2, 5),
+        );
+        cache.insert(key.clone(), Arc::new(def1));
+
+        // Insert second version (overwrites)
+        let def2 = SymbolDefinition::new(
+            "BTCUSDT",
+            "BINANCE",
+            SymbolInfo::crypto_spot("BTC", "USDT"),
+            VenueConfig::binance("BTCUSDT"),
+            TradingSpecs::crypto(dec!(0.02), dec!(0.00001), 2, 5), // Different tick size
+        );
+        cache.insert(key.clone(), Arc::new(def2));
+
+        // Should have the second version
+        let retrieved = cache.get(&key).unwrap();
+        assert_eq!(retrieved.trading_specs.min_price_increment, dec!(0.02));
+    }
+
+    #[test]
+    fn test_cache_remove() {
+        use crate::instruments::{SymbolInfo, VenueConfig};
+
+        let cache: DashMap<String, Arc<SymbolDefinition>> = DashMap::new();
+
+        let key = "BTCUSDT.BINANCE".to_string();
+
+        let def = SymbolDefinition::new(
+            "BTCUSDT",
+            "BINANCE",
+            SymbolInfo::crypto_spot("BTC", "USDT"),
+            VenueConfig::binance("BTCUSDT"),
+            TradingSpecs::crypto(dec!(0.01), dec!(0.00001), 2, 5),
+        );
+        cache.insert(key.clone(), Arc::new(def));
+
+        // Remove
+        let removed = cache.remove(&key);
+        assert!(removed.is_some());
+
+        // Should no longer exist
+        assert!(cache.get(&key).is_none());
+
+        // Remove again should return None
+        assert!(cache.remove(&key).is_none());
+    }
+
+    // ============================================================
+    // CONCURRENT ACCESS TESTS
+    // ============================================================
+
+    #[test]
+    fn test_concurrent_cache_reads() {
+        use std::thread;
+        use crate::instruments::{SymbolInfo, VenueConfig};
+
+        let cache: Arc<DashMap<String, Arc<SymbolDefinition>>> = Arc::new(DashMap::new());
+
+        // Pre-populate cache
+        for i in 0..100 {
+            let symbol = format!("SYM{}", i);
+            let key = format!("{}.BINANCE", symbol);
+            let def = SymbolDefinition::new(
+                &symbol,
+                "BINANCE",
+                SymbolInfo::crypto_spot("BTC", "USDT"),
+                VenueConfig::binance(&symbol),
+                TradingSpecs::crypto(dec!(0.01), dec!(0.00001), 2, 5),
+            );
+            cache.insert(key, Arc::new(def));
+        }
+
+        // Spawn multiple readers
+        let handles: Vec<_> = (0..10)
+            .map(|thread_id| {
+                let cache_clone = Arc::clone(&cache);
+                thread::spawn(move || {
+                    for i in 0..100 {
+                        let key = format!("SYM{}.BINANCE", (i + thread_id) % 100);
+                        let result = cache_clone.get(&key);
+                        assert!(result.is_some(), "Thread {} failed to get {}", thread_id, key);
+                    }
+                })
+            })
+            .collect();
+
+        // Wait for all threads
+        for handle in handles {
+            handle.join().expect("Thread panicked");
+        }
+    }
+
+    #[test]
+    fn test_concurrent_cache_writes() {
+        use std::thread;
+        use crate::instruments::{SymbolInfo, VenueConfig};
+
+        let cache: Arc<DashMap<String, Arc<SymbolDefinition>>> = Arc::new(DashMap::new());
+
+        // Spawn multiple writers
+        let handles: Vec<_> = (0..10)
+            .map(|thread_id| {
+                let cache_clone = Arc::clone(&cache);
+                thread::spawn(move || {
+                    for i in 0..100 {
+                        let symbol = format!("T{}S{}", thread_id, i);
+                        let key = format!("{}.BINANCE", symbol);
+                        let def = SymbolDefinition::new(
+                            &symbol,
+                            "BINANCE",
+                            SymbolInfo::crypto_spot("BTC", "USDT"),
+                            VenueConfig::binance(&symbol),
+                            TradingSpecs::crypto(dec!(0.01), dec!(0.00001), 2, 5),
+                        );
+                        cache_clone.insert(key, Arc::new(def));
+                    }
+                })
+            })
+            .collect();
+
+        // Wait for all threads
+        for handle in handles {
+            handle.join().expect("Thread panicked");
+        }
+
+        // All symbols should exist
+        assert_eq!(cache.len(), 1000); // 10 threads * 100 symbols
+    }
+
+    #[test]
+    fn test_concurrent_read_write() {
+        use std::thread;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use crate::instruments::{SymbolInfo, VenueConfig};
+
+        let cache: Arc<DashMap<String, Arc<SymbolDefinition>>> = Arc::new(DashMap::new());
+        let read_count = Arc::new(AtomicUsize::new(0));
+        let write_count = Arc::new(AtomicUsize::new(0));
+
+        // Pre-populate some symbols
+        for i in 0..50 {
+            let key = format!("SYM{}.BINANCE", i);
+            let def = SymbolDefinition::new(
+                &format!("SYM{}", i),
+                "BINANCE",
+                SymbolInfo::crypto_spot("BTC", "USDT"),
+                VenueConfig::binance(&format!("SYM{}", i)),
+                TradingSpecs::crypto(dec!(0.01), dec!(0.00001), 2, 5),
+            );
+            cache.insert(key, Arc::new(def));
+        }
+
+        let mut handles = vec![];
+
+        // Reader threads
+        for _ in 0..5 {
+            let cache_clone = Arc::clone(&cache);
+            let count_clone = Arc::clone(&read_count);
+            handles.push(thread::spawn(move || {
+                for i in 0..100 {
+                    let key = format!("SYM{}.BINANCE", i % 100);
+                    if cache_clone.get(&key).is_some() {
+                        count_clone.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }));
+        }
+
+        // Writer threads
+        for thread_id in 0..5 {
+            let cache_clone = Arc::clone(&cache);
+            let count_clone = Arc::clone(&write_count);
+            handles.push(thread::spawn(move || {
+                for i in 50..100 {
+                    let symbol = format!("SYM{}", i);
+                    let key = format!("{}.BINANCE", symbol);
+                    let def = SymbolDefinition::new(
+                        &symbol,
+                        "BINANCE",
+                        SymbolInfo::crypto_spot("BTC", "USDT"),
+                        VenueConfig::binance(&symbol),
+                        TradingSpecs::crypto(dec!(0.01), dec!(0.00001), 2, 5),
+                    );
+                    cache_clone.insert(key, Arc::new(def));
+                    count_clone.fetch_add(1, Ordering::Relaxed);
+                }
+            }));
+        }
+
+        // Wait for all
+        for handle in handles {
+            handle.join().expect("Thread panicked");
+        }
+
+        // Verify writes happened
+        assert_eq!(write_count.load(Ordering::Relaxed), 250); // 5 threads * 50 writes
+
+        // Cache should have all symbols
+        assert_eq!(cache.len(), 100);
+    }
+
+    #[test]
+    fn test_concurrent_invalidate_during_read() {
+        use std::thread;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use crate::instruments::{SymbolInfo, VenueConfig};
+
+        let cache: Arc<DashMap<String, Arc<SymbolDefinition>>> = Arc::new(DashMap::new());
+        let invalidation_done = Arc::new(AtomicBool::new(false));
+
+        // Pre-populate cache
+        for i in 0..100 {
+            let key = format!("SYM{}.BINANCE", i);
+            let def = SymbolDefinition::new(
+                &format!("SYM{}", i),
+                "BINANCE",
+                SymbolInfo::crypto_spot("BTC", "USDT"),
+                VenueConfig::binance(&format!("SYM{}", i)),
+                TradingSpecs::crypto(dec!(0.01), dec!(0.00001), 2, 5),
+            );
+            cache.insert(key, Arc::new(def));
+        }
+
+        let mut handles = vec![];
+
+        // Reader threads - continuously read
+        for _ in 0..5 {
+            let cache_clone = Arc::clone(&cache);
+            let done = Arc::clone(&invalidation_done);
+            handles.push(thread::spawn(move || {
+                let mut reads = 0;
+                while !done.load(Ordering::Relaxed) || reads < 100 {
+                    let key = format!("SYM{}.BINANCE", reads % 100);
+                    // This should not panic even if entry is being removed
+                    let _ = cache_clone.get(&key);
+                    reads += 1;
+                }
+            }));
+        }
+
+        // Invalidator thread - removes entries
+        {
+            let cache_clone = Arc::clone(&cache);
+            let done = Arc::clone(&invalidation_done);
+            handles.push(thread::spawn(move || {
+                for i in 0..50 {
+                    let key = format!("SYM{}.BINANCE", i);
+                    cache_clone.remove(&key);
+                    thread::yield_now(); // Give readers a chance
+                }
+                done.store(true, Ordering::Relaxed);
+            }));
+        }
+
+        // All should complete without panic
+        for handle in handles {
+            handle.join().expect("Thread panicked during concurrent access");
+        }
+    }
+
+    // ============================================================
+    // STATS TRACKING TESTS
+    // ============================================================
+
+    #[test]
+    fn test_stats_atomic_updates() {
+        use std::thread;
+        use std::sync::atomic::Ordering;
+
+        let stats = Arc::new(RegistryStats::default());
+
+        let handles: Vec<_> = (0..10)
+            .map(|_| {
+                let stats_clone = Arc::clone(&stats);
+                thread::spawn(move || {
+                    for _ in 0..1000 {
+                        stats_clone.cache_hits.fetch_add(1, Ordering::Relaxed);
+                        stats_clone.cache_misses.fetch_add(1, Ordering::Relaxed);
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // 10 threads * 1000 iterations each
+        assert_eq!(stats.cache_hits.load(Ordering::Relaxed), 10000);
+        assert_eq!(stats.cache_misses.load(Ordering::Relaxed), 10000);
+        assert!((stats.hit_ratio() - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_stats_hit_ratio_edge_cases() {
+        let stats = RegistryStats::default();
+
+        // Zero requests = 0.0 ratio
+        assert_eq!(stats.hit_ratio(), 0.0);
+
+        // All hits
+        stats.cache_hits.fetch_add(100, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(stats.hit_ratio(), 1.0);
+
+        // All misses
+        let stats2 = RegistryStats::default();
+        stats2.cache_misses.fetch_add(100, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(stats2.hit_ratio(), 0.0);
+    }
+
+    // ============================================================
+    // FALLBACK LOGIC TESTS
+    // ============================================================
+
+    #[test]
+    fn test_venue_defaults_have_required_fields() {
+        let defaults = SymbolRegistry::default_venue_configs();
+
+        // All venues should have session schedule
+        for (venue, config) in defaults.iter() {
+            // At minimum, trading specs should have sensible defaults
+            if let Some(specs) = &config.trading_specs {
+                assert!(specs.min_price_increment > dec!(0), "Venue {} has zero tick size", venue);
+            }
+
+            // Session schedule presence depends on asset class
+            // BINANCE (crypto) should have 24/7
+            if *venue == "BINANCE" {
+                assert!(config.session_schedule.is_some(), "BINANCE should have 24/7 schedule");
+            }
+        }
+    }
+
+    #[test]
+    fn test_asset_defaults_have_required_fields() {
+        let defaults = SymbolRegistry::default_asset_configs();
+
+        // Crypto should be 24/7
+        let crypto = defaults.get(&AssetClass::Crypto).unwrap();
+        assert!(crypto.session_schedule.is_some());
+        let schedule = crypto.session_schedule.as_ref().unwrap();
+        assert!(schedule.is_open(Utc::now())); // Should always be open
+
+        // FX should be 24/5 (closed weekends)
+        let fx = defaults.get(&AssetClass::FX).unwrap();
+        assert!(fx.session_schedule.is_some());
+    }
 }
