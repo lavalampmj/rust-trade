@@ -322,19 +322,15 @@ impl TestResults {
     }
 
     /// Calculate tick loss rate
+    ///
+    /// With per-symbol subscriptions, each strategy receives ticks only for its
+    /// subscribed symbol. Loss rate = 1 - (total_received / total_sent).
     pub fn tick_loss_rate(&self) -> f64 {
         if self.ticks_sent == 0 {
             return 0.0;
         }
 
-        // Average across all strategies
-        let avg_received = if !self.strategy_metrics.is_empty() {
-            self.ticks_received_total as f64 / self.strategy_metrics.len() as f64
-        } else {
-            0.0
-        };
-
-        1.0 - (avg_received / self.ticks_sent as f64)
+        1.0 - (self.ticks_received_total as f64 / self.ticks_sent as f64)
     }
 
     /// Validate results against config

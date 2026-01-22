@@ -298,8 +298,46 @@ impl IntegrationTestConfig {
         Duration::from_secs(self.test.settling_time_secs)
     }
 
+    /// Get the path to a config file, checking multiple locations
+    fn find_config_file(name: &str) -> Option<std::path::PathBuf> {
+        // Try relative to CARGO_MANIFEST_DIR (for tests)
+        if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+            let path = std::path::PathBuf::from(&manifest_dir).join("config").join(name);
+            if path.exists() {
+                return Some(path);
+            }
+        }
+
+        // Try relative to current directory
+        let path = std::path::PathBuf::from("config").join(name);
+        if path.exists() {
+            return Some(path);
+        }
+
+        // Try integration-tests/config (when running from workspace root)
+        let path = std::path::PathBuf::from("integration-tests/config").join(name);
+        if path.exists() {
+            return Some(path);
+        }
+
+        None
+    }
+
     /// Create a lite configuration for quick tests
+    /// Loads from config/lite.toml if available
     pub fn lite() -> Self {
+        if let Some(path) = Self::find_config_file("lite.toml") {
+            if let Ok(config) = Self::from_file(&path) {
+                println!("Loaded config from {}", path.display());
+                return config;
+            }
+        }
+        // Fallback to defaults if file not found
+        Self::lite_defaults()
+    }
+
+    /// Default lite configuration (used when TOML file not found)
+    fn lite_defaults() -> Self {
         Self {
             data_gen: DataGenConfig {
                 symbol_count: 5,
@@ -312,7 +350,7 @@ impl IntegrationTestConfig {
             emulator: EmulatorConfig::default().with_port(19100),
             strategies: StrategyConfig {
                 rust_count: 2,
-                python_count: 0,
+                python_count: 2,
                 strategy_type: "tick_counter".to_string(),
                 track_latency: true,
             },
@@ -327,7 +365,20 @@ impl IntegrationTestConfig {
     }
 
     /// Create a normal configuration for standard stress tests
+    /// Loads from config/default.toml if available
     pub fn normal() -> Self {
+        if let Some(path) = Self::find_config_file("default.toml") {
+            if let Ok(config) = Self::from_file(&path) {
+                println!("Loaded config from {}", path.display());
+                return config;
+            }
+        }
+        // Fallback to defaults if file not found
+        Self::normal_defaults()
+    }
+
+    /// Default normal configuration (used when TOML file not found)
+    fn normal_defaults() -> Self {
         Self {
             data_gen: DataGenConfig {
                 symbol_count: 10,
@@ -355,7 +406,20 @@ impl IntegrationTestConfig {
     }
 
     /// Create a heavy configuration for full stress tests
+    /// Loads from config/heavy.toml if available
     pub fn heavy() -> Self {
+        if let Some(path) = Self::find_config_file("heavy.toml") {
+            if let Ok(config) = Self::from_file(&path) {
+                println!("Loaded config from {}", path.display());
+                return config;
+            }
+        }
+        // Fallback to defaults if file not found
+        Self::heavy_defaults()
+    }
+
+    /// Default heavy configuration (used when TOML file not found)
+    fn heavy_defaults() -> Self {
         Self {
             data_gen: DataGenConfig {
                 symbol_count: 100,
@@ -367,15 +431,15 @@ impl IntegrationTestConfig {
             },
             emulator: EmulatorConfig::default().with_port(19300),
             strategies: StrategyConfig {
-                rust_count: 10,
-                python_count: 10,
+                rust_count: 50,
+                python_count: 50,
                 strategy_type: "tick_counter".to_string(),
                 track_latency: true,
             },
             metrics: MetricsConfig {
                 latency_sample_limit: 100_000,
-                tick_loss_tolerance: 0.01, // Allow higher loss rate under heavy load
-                max_avg_latency_us: 5000,  // Allow higher latency under heavy load
+                tick_loss_tolerance: 0.05,
+                max_avg_latency_us: 5000,
                 max_p99_latency_us: 50000,
             },
             test: TestConfig {

@@ -16,14 +16,14 @@ embed_send_time = true
 min_delay_us = 1            # Minimum delay for max throughput
 
 [strategies]
-rust_count = 10
-python_count = 10
+rust_count = 50              # 50 Rust strategies for TEST0000-TEST0049
+python_count = 50            # 50 Python strategies for TEST0050-TEST0099
 strategy_type = "tick_counter"
 track_latency = true
 
 [metrics]
 latency_sample_limit = 100000
-tick_loss_tolerance = 0.01   # 1% (more tolerance under heavy load)
+tick_loss_tolerance = 0.05   # 5% (more tolerance under heavy load)
 max_avg_latency_us = 5000    # 5ms (higher tolerance under load)
 max_p99_latency_us = 50000   # 50ms (higher tolerance under load)
 

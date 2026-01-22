@@ -16,8 +16,8 @@ embed_send_time = true
 min_delay_us = 1
 
 [strategies]
-rust_count = 2
-python_count = 2            # Skip Python for faster tests
+rust_count = 3              # rust_0-2 -> TEST0000-TEST0002
+python_count = 2            # python_0-1 -> TEST0003-TEST0004
 strategy_type = "tick_counter"
 track_latency = true
 
