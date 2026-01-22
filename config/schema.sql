@@ -216,3 +216,168 @@ SELECT
 FROM pg_indexes
 WHERE tablename = 'tick_data'
 ORDER BY indexname;
+
+-- =================================================================
+-- Symbol Definitions Table
+-- Stores comprehensive symbol metadata for all tradeable instruments
+-- =================================================================
+
+CREATE TABLE IF NOT EXISTS symbol_definitions (
+    -- Primary identifier: "{symbol}.{venue}" format
+    id VARCHAR(100) PRIMARY KEY,
+
+    -- Core identifiers
+    symbol VARCHAR(50) NOT NULL,
+    venue VARCHAR(50) NOT NULL,
+
+    -- Numeric instrument ID (from exchange/provider)
+    instrument_id BIGINT NOT NULL DEFAULT 0,
+
+    -- Raw symbol as used by the primary data provider
+    raw_symbol VARCHAR(50) NOT NULL,
+
+    -- SymbolInfo (JSONB for flexibility)
+    -- Contains: asset, asset_class, instrument_class, security_type,
+    -- cfi_code, base_currency, quote_currency, settlement_currency, etc.
+    info JSONB NOT NULL,
+
+    -- VenueConfig (JSONB)
+    -- Contains: venue, mic_code, dataset, publisher_id, country,
+    -- is_primary_listing, venue_symbol, channel_id, rate_limits
+    venue_config JSONB NOT NULL,
+
+    -- TradingSpecs (JSONB)
+    -- Contains: min_price_increment, display_factor, min_lot_size,
+    -- maker_fee, taker_fee, margin_requirement, supported_order_types, etc.
+    trading_specs JSONB NOT NULL,
+
+    -- SessionSchedule (JSONB, nullable for 24/7 markets)
+    -- Contains: timezone, regular_sessions, extended_sessions, calendar, maintenance_windows
+    session_schedule JSONB,
+
+    -- ContractSpec (JSONB, nullable for non-derivatives)
+    -- Contains: activation, expiration, contract_multiplier, underlying,
+    -- strike_price, option_type, roll_rule, etc.
+    contract_spec JSONB,
+
+    -- Provider-specific symbol mappings
+    -- Key: provider name (e.g., "databento", "binance")
+    -- Value: ProviderSymbol with symbol, dataset, instrument_id
+    provider_mappings JSONB NOT NULL DEFAULT '{}',
+
+    -- Symbol status
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+
+    -- Timestamps
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Composite unique constraint
+    CONSTRAINT uq_symbol_venue UNIQUE (symbol, venue),
+
+    -- Status check
+    CONSTRAINT chk_status CHECK (status IN ('ACTIVE', 'HALTED', 'SUSPENDED', 'DELISTED', 'PENDING', 'EXPIRED'))
+);
+
+-- Indexes for symbol_definitions
+CREATE INDEX IF NOT EXISTS idx_symbol_def_symbol ON symbol_definitions(symbol);
+CREATE INDEX IF NOT EXISTS idx_symbol_def_venue ON symbol_definitions(venue);
+CREATE INDEX IF NOT EXISTS idx_symbol_def_status ON symbol_definitions(status);
+CREATE INDEX IF NOT EXISTS idx_symbol_def_raw_symbol ON symbol_definitions(raw_symbol);
+
+-- GIN index for JSONB queries on info (e.g., filter by asset_class)
+CREATE INDEX IF NOT EXISTS idx_symbol_def_info ON symbol_definitions USING GIN (info);
+
+-- =================================================================
+-- Market Calendar Table
+-- Stores holidays, early closes, and late opens for each venue
+-- =================================================================
+
+CREATE TABLE IF NOT EXISTS market_calendars (
+    -- Venue identifier
+    venue VARCHAR(50) NOT NULL,
+
+    -- Calendar date
+    date DATE NOT NULL,
+
+    -- Calendar entry type: 'holiday', 'early_close', 'late_open'
+    calendar_type VARCHAR(20) NOT NULL,
+
+    -- Time for early_close/late_open (null for holidays)
+    time TIME,
+
+    -- Description (e.g., "Christmas", "Independence Day")
+    description VARCHAR(200),
+
+    -- Composite primary key
+    PRIMARY KEY (venue, date, calendar_type),
+
+    -- Type check
+    CONSTRAINT chk_calendar_type CHECK (calendar_type IN ('holiday', 'early_close', 'late_open'))
+);
+
+-- Indexes for market_calendars
+CREATE INDEX IF NOT EXISTS idx_market_cal_date ON market_calendars(date);
+CREATE INDEX IF NOT EXISTS idx_market_cal_venue_date ON market_calendars(venue, date);
+
+-- =================================================================
+-- Continuous Contracts Table (Optional - for tracking roll state)
+-- Stores current mapping of continuous contracts to underlyings
+-- =================================================================
+
+CREATE TABLE IF NOT EXISTS continuous_contracts (
+    -- Continuous symbol (e.g., "ES.c.0.GLBX")
+    id VARCHAR(100) PRIMARY KEY,
+
+    -- Base symbol (e.g., "ES")
+    base_symbol VARCHAR(50) NOT NULL,
+
+    -- Venue (e.g., "GLBX")
+    venue VARCHAR(50) NOT NULL,
+
+    -- Roll method: 'c' (calendar), 'v' (volume), 'n' (open interest)
+    roll_method CHAR(1) NOT NULL,
+
+    -- Rank (0 = front month, 1 = second, etc.)
+    rank SMALLINT NOT NULL DEFAULT 0,
+
+    -- Currently mapped underlying contract ID
+    current_contract_id VARCHAR(100),
+
+    -- Current contract's raw symbol (e.g., "ESH6")
+    current_raw_symbol VARCHAR(50),
+
+    -- Adjustment factors history (JSONB array)
+    adjustment_factors JSONB NOT NULL DEFAULT '[]',
+
+    -- Last update timestamp
+    last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Roll method check
+    CONSTRAINT chk_roll_method CHECK (roll_method IN ('c', 'v', 'n')),
+
+    -- Unique constraint
+    CONSTRAINT uq_continuous UNIQUE (base_symbol, venue, roll_method, rank)
+);
+
+-- Index for continuous_contracts
+CREATE INDEX IF NOT EXISTS idx_continuous_base ON continuous_contracts(base_symbol, venue);
+
+-- =================================================================
+-- Verification Queries for New Tables
+-- =================================================================
+
+-- Check symbol_definitions table
+SELECT
+    COUNT(*) as total_symbols,
+    COUNT(DISTINCT venue) as venues
+FROM symbol_definitions;
+
+-- Check market_calendars table
+SELECT
+    venue,
+    calendar_type,
+    COUNT(*) as entries
+FROM market_calendars
+GROUP BY venue, calendar_type
+ORDER BY venue, calendar_type;

@@ -2,12 +2,34 @@
 //!
 //! This module provides utilities to detect gaps in tick data coverage.
 //! Gaps are periods where data is expected but not present.
+//!
+//! # Session-Aware Gap Detection
+//!
+//! The gap detector can use `SessionSchedule` from the instruments module to
+//! determine trading hours, avoiding false positives during market closures.
+//!
+//! ```ignore
+//! use trading_common::data::gap_detection::{GapDetector, GapDetectionConfig};
+//! use trading_common::instruments::SessionSchedule;
+//!
+//! // Create session schedule for US equities
+//! let schedule = SessionSchedule::us_equity();
+//!
+//! // Configure gap detection with session awareness
+//! let config = GapDetectionConfig {
+//!     session_schedule: Some(schedule),
+//!     ..Default::default()
+//! };
+//!
+//! let detector = GapDetector::new(config);
+//! ```
 
 use chrono::{DateTime, Duration, Utc, Weekday, Datelike, Timelike};
 use std::collections::HashMap;
 
 use super::backfill::DataGap;
 use super::types::TickData;
+use crate::instruments::SessionSchedule;
 
 /// Configuration for gap detection
 #[derive(Debug, Clone)]
@@ -16,9 +38,13 @@ pub struct GapDetectionConfig {
     pub min_gap_minutes: i64,
     /// Expected average ticks per minute (for estimation)
     pub expected_ticks_per_minute: f64,
-    /// Trading hours for futures (UTC)
+    /// Legacy trading hours for futures (UTC)
     /// CME Globex: Sunday 5pm - Friday 4pm CT (Sunday 23:00 - Friday 22:00 UTC)
+    /// Deprecated: prefer using `session_schedule` instead
     pub trading_hours: Option<TradingHours>,
+    /// Session schedule for session-aware gap detection
+    /// Takes precedence over `trading_hours` if both are set
+    pub session_schedule: Option<SessionSchedule>,
 }
 
 impl Default for GapDetectionConfig {
@@ -27,6 +53,39 @@ impl Default for GapDetectionConfig {
             min_gap_minutes: 5,
             expected_ticks_per_minute: 100.0, // Rough estimate
             trading_hours: Some(TradingHours::cme_globex()),
+            session_schedule: None,
+        }
+    }
+}
+
+impl GapDetectionConfig {
+    /// Create config with session schedule (preferred method)
+    pub fn with_session_schedule(schedule: SessionSchedule) -> Self {
+        Self {
+            min_gap_minutes: 5,
+            expected_ticks_per_minute: 100.0,
+            trading_hours: None, // Prefer session schedule
+            session_schedule: Some(schedule),
+        }
+    }
+
+    /// Create config for 24/7 trading (crypto)
+    pub fn crypto_24_7() -> Self {
+        Self {
+            min_gap_minutes: 5,
+            expected_ticks_per_minute: 100.0,
+            trading_hours: Some(TradingHours::crypto_24_7()),
+            session_schedule: None,
+        }
+    }
+
+    /// Create config with no trading hour filters
+    pub fn no_trading_hours() -> Self {
+        Self {
+            min_gap_minutes: 5,
+            expected_ticks_per_minute: 100.0,
+            trading_hours: None,
+            session_schedule: None,
         }
     }
 }
@@ -228,9 +287,25 @@ impl GapDetector {
 
     /// Check if a gap is valid (not during maintenance/off hours)
     fn is_valid_gap(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> bool {
-        if let Some(ref trading_hours) = self.config.trading_hours {
+        // Prefer session_schedule over legacy trading_hours
+        if let Some(ref schedule) = self.config.session_schedule {
             // Check if at least part of the gap overlaps with trading hours
-            // For simplicity, check start and end points
+            // Use session schedule's is_trading_time method
+            let start_tradeable = schedule.is_trading_time(start);
+            let end_tradeable = schedule.is_trading_time(end);
+
+            // Check if any point in the gap is during trading hours
+            // For more accurate detection, sample points within the gap
+            if start_tradeable || end_tradeable {
+                return true;
+            }
+
+            // Check midpoint for longer gaps
+            let midpoint = start + (end - start) / 2;
+            schedule.is_trading_time(midpoint)
+        } else if let Some(ref trading_hours) = self.config.trading_hours {
+            // Fallback to legacy trading hours
+            // Check if at least part of the gap overlaps with trading hours
             trading_hours.is_trading_time(start) || trading_hours.is_trading_time(end)
         } else {
             // No trading hours filter, all gaps are valid
@@ -326,6 +401,7 @@ mod tests {
             min_gap_minutes: 5,
             expected_ticks_per_minute: 10.0,
             trading_hours: None, // Disable trading hours filter for test
+            session_schedule: None,
         };
         let detector = GapDetector::new(config);
 
@@ -347,6 +423,7 @@ mod tests {
             min_gap_minutes: 5,
             expected_ticks_per_minute: 10.0,
             trading_hours: None,
+            session_schedule: None,
         };
         let detector = GapDetector::new(config);
 
@@ -377,6 +454,7 @@ mod tests {
             min_gap_minutes: 5,
             expected_ticks_per_minute: 10.0,
             trading_hours: None,
+            session_schedule: None,
         };
         let detector = GapDetector::new(config);
 
@@ -401,6 +479,7 @@ mod tests {
             min_gap_minutes: 5,
             expected_ticks_per_minute: 10.0,
             trading_hours: None,
+            session_schedule: None,
         };
         let detector = GapDetector::new(config);
 
@@ -426,6 +505,7 @@ mod tests {
             min_gap_minutes: 5,
             expected_ticks_per_minute: 10.0,
             trading_hours: None,
+            session_schedule: None,
         };
         let detector = GapDetector::new(config);
 
@@ -466,6 +546,7 @@ mod tests {
             min_gap_minutes: 5,
             expected_ticks_per_minute: 100.0,
             trading_hours: None,
+            session_schedule: None,
         };
         let detector = GapDetector::new(config);
 
@@ -491,5 +572,59 @@ mod tests {
 
         assert_eq!(GapDetector::total_duration_minutes(&gaps), 20);
         assert_eq!(GapDetector::total_estimated_records(&gaps), 2000);
+    }
+
+    #[test]
+    fn test_config_with_session_schedule() {
+        use crate::instruments::SessionSchedule;
+
+        // Create a simple 24/7 schedule for testing
+        let schedule = SessionSchedule::always_open();
+        let config = GapDetectionConfig::with_session_schedule(schedule);
+
+        assert!(config.session_schedule.is_some());
+        assert!(config.trading_hours.is_none()); // Prefer session schedule
+
+        let detector = GapDetector::new(config);
+
+        // Test that the detector is created successfully
+        assert_eq!(detector.config.min_gap_minutes, 5);
+
+        // With always_open schedule, gaps should be detected at any time
+        let start = Utc.with_ymd_and_hms(2025, 1, 1, 3, 0, 0).unwrap();
+        let end = start + Duration::minutes(10);
+        let gaps = detector.detect_gaps("TEST", &[], start, end);
+        assert_eq!(gaps.len(), 1);
+    }
+
+    #[test]
+    fn test_config_crypto_24_7() {
+        let config = GapDetectionConfig::crypto_24_7();
+        assert!(config.trading_hours.is_some());
+        assert!(config.session_schedule.is_none());
+
+        let trading_hours = config.trading_hours.unwrap();
+
+        // Crypto should be trading at any time
+        let any_time = Utc.with_ymd_and_hms(2025, 1, 1, 3, 0, 0).unwrap();
+        assert!(trading_hours.is_trading_time(any_time));
+    }
+
+    #[test]
+    fn test_config_no_trading_hours() {
+        let config = GapDetectionConfig::no_trading_hours();
+        assert!(config.trading_hours.is_none());
+        assert!(config.session_schedule.is_none());
+
+        let detector = GapDetector::new(config);
+
+        // All gaps should be detected when no trading hours filter
+        let start = Utc.with_ymd_and_hms(2025, 1, 1, 3, 0, 0).unwrap();
+        let end = start + Duration::minutes(10);
+
+        // With empty ticks, entire range should be a gap
+        let gaps = detector.detect_gaps("TEST", &[], start, end);
+        assert_eq!(gaps.len(), 1);
+        assert_eq!(gaps[0].duration_minutes, 10);
     }
 }

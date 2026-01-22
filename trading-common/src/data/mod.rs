@@ -6,6 +6,7 @@ pub mod gap_detection;
 pub mod orderbook;
 pub mod quotes;
 pub mod repository;
+pub mod symbol_repository;
 pub mod types;
 
 // Re-export DBN types as the canonical format
@@ -20,3 +21,6 @@ pub use quotes::{QuoteTick, QuoteStats, QuoteStatsBuilder};
 pub use orderbook::{
     BookAction, BookDepth, BookLevel, BookSide, OrderBook, OrderBookDelta, OrderBookDeltas,
 };
+
+// Re-export symbol repository
+pub use symbol_repository::SymbolRepository;

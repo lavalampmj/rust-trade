@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::warn;
 
 use rust_decimal::Decimal;
 
@@ -15,9 +16,10 @@ use super::events::{
 };
 use super::order::{Order, OrderError};
 use super::types::{
-    AccountId, ClientOrderId, InstrumentId, LiquiditySide, OrderSide, OrderStatus, StrategyId,
-    TradeId, VenueOrderId,
+    AccountId, ClientOrderId, InstrumentId, LiquiditySide, OrderSide, OrderStatus,
+    SessionEnforcement, StrategyId, TradeId, VenueOrderId,
 };
+use crate::instruments::{MarketStatus, SessionManager};
 
 /// Result type for order manager operations.
 pub type OrderManagerResult<T> = Result<T, OrderManagerError>;
@@ -39,6 +41,15 @@ pub enum OrderManagerError {
 
     #[error("Order submission denied: {0}")]
     SubmissionDenied(String),
+
+    #[error("Market closed for {symbol}: {reason}")]
+    MarketClosed { symbol: String, reason: String },
+
+    #[error("Market halted for {symbol}: {reason}")]
+    MarketHalted { symbol: String, reason: String },
+
+    #[error("Session not found for instrument: {0}")]
+    SessionNotFound(InstrumentId),
 }
 
 /// Callback type for order events.
@@ -57,6 +68,8 @@ pub struct OrderManagerConfig {
     pub default_account_id: AccountId,
     /// Default strategy ID to use if not specified
     pub default_strategy_id: StrategyId,
+    /// Session enforcement mode (Disabled, Warn, Strict)
+    pub session_enforcement: SessionEnforcement,
 }
 
 impl Default for OrderManagerConfig {
@@ -67,6 +80,7 @@ impl Default for OrderManagerConfig {
             allow_duplicate_ids: false,
             default_account_id: AccountId::default(),
             default_strategy_id: StrategyId::default(),
+            session_enforcement: SessionEnforcement::default(),
         }
     }
 }
@@ -109,6 +123,8 @@ pub struct OrderManager {
     config: OrderManagerConfig,
     /// Event callbacks
     event_callbacks: Arc<RwLock<Vec<OrderEventCallback>>>,
+    /// Optional session manager for session-aware order validation
+    session_manager: Option<Arc<SessionManager>>,
 }
 
 impl OrderManager {
@@ -122,12 +138,40 @@ impl OrderManager {
             order_events: Arc::new(RwLock::new(HashMap::new())),
             config,
             event_callbacks: Arc::new(RwLock::new(Vec::new())),
+            session_manager: None,
         }
     }
 
     /// Create a new OrderManager with default configuration.
     pub fn with_defaults() -> Self {
         Self::new(OrderManagerConfig::default())
+    }
+
+    /// Create a new OrderManager with session manager for session-aware order validation.
+    pub fn with_session_manager(
+        config: OrderManagerConfig,
+        session_manager: Arc<SessionManager>,
+    ) -> Self {
+        Self {
+            orders: Arc::new(RwLock::new(HashMap::new())),
+            venue_to_client: Arc::new(RwLock::new(HashMap::new())),
+            orders_by_instrument: Arc::new(RwLock::new(HashMap::new())),
+            orders_by_strategy: Arc::new(RwLock::new(HashMap::new())),
+            order_events: Arc::new(RwLock::new(HashMap::new())),
+            config,
+            event_callbacks: Arc::new(RwLock::new(Vec::new())),
+            session_manager: Some(session_manager),
+        }
+    }
+
+    /// Set the session manager for session-aware order validation.
+    pub fn set_session_manager(&mut self, session_manager: Arc<SessionManager>) {
+        self.session_manager = Some(session_manager);
+    }
+
+    /// Get the current session enforcement mode.
+    pub fn session_enforcement(&self) -> SessionEnforcement {
+        self.config.session_enforcement
     }
 
     /// Register a callback for order events.
@@ -180,6 +224,71 @@ impl OrderManager {
                         self.config.max_orders_per_symbol, instrument_id
                     )));
                 }
+            }
+        }
+
+        // Session validation (if enabled and session manager is available)
+        if self.config.session_enforcement.is_enabled() {
+            if let Some(ref session_manager) = self.session_manager {
+                if let Some(status) = session_manager.get_status(&instrument_id) {
+                    match status {
+                        MarketStatus::Closed => {
+                            let reason = "Market is closed".to_string();
+                            if self.config.session_enforcement.should_reject() {
+                                return Err(OrderManagerError::MarketClosed {
+                                    symbol: instrument_id.to_string(),
+                                    reason,
+                                });
+                            } else {
+                                // Warn mode - log but continue
+                                warn!(
+                                    "Order submitted while market closed: {} for {}",
+                                    client_order_id, instrument_id
+                                );
+                            }
+                        }
+                        MarketStatus::Halted => {
+                            let state = session_manager.get_state(&instrument_id);
+                            let reason = state
+                                .and_then(|s| s.reason)
+                                .unwrap_or_else(|| "Trading halted".to_string());
+                            if self.config.session_enforcement.should_reject() {
+                                return Err(OrderManagerError::MarketHalted {
+                                    symbol: instrument_id.to_string(),
+                                    reason,
+                                });
+                            } else {
+                                warn!(
+                                    "Order submitted while market halted: {} for {} ({})",
+                                    client_order_id, instrument_id, reason
+                                );
+                            }
+                        }
+                        MarketStatus::Maintenance => {
+                            let reason = "Market in maintenance".to_string();
+                            if self.config.session_enforcement.should_reject() {
+                                return Err(OrderManagerError::MarketClosed {
+                                    symbol: instrument_id.to_string(),
+                                    reason,
+                                });
+                            } else {
+                                warn!(
+                                    "Order submitted during maintenance: {} for {}",
+                                    client_order_id, instrument_id
+                                );
+                            }
+                        }
+                        // Open, PreMarket, AfterHours, Auction - these are tradeable states
+                        MarketStatus::Open
+                        | MarketStatus::PreMarket
+                        | MarketStatus::AfterHours
+                        | MarketStatus::Auction => {
+                            // Order allowed
+                        }
+                    }
+                }
+                // If no status found, the symbol might not be registered - allow order
+                // to proceed (fail-open behavior)
             }
         }
 
@@ -2191,5 +2300,84 @@ mod tests {
         let final_orders = manager.get_all_orders().await;
         let final_stats = manager.get_stats().await;
         assert_eq!(final_orders.len(), final_stats.total_orders);
+    }
+
+    // === Session Validation Tests ===
+
+    #[test]
+    fn test_session_enforcement_default() {
+        let config = OrderManagerConfig::default();
+        assert_eq!(config.session_enforcement, SessionEnforcement::Disabled);
+    }
+
+    #[tokio::test]
+    async fn test_session_enforcement_disabled_allows_orders() {
+        // With session enforcement disabled, orders should be accepted even without session manager
+        let config = OrderManagerConfig {
+            session_enforcement: SessionEnforcement::Disabled,
+            ..Default::default()
+        };
+        let manager = OrderManager::new(config);
+
+        let order = Order::market("BTCUSDT", OrderSide::Buy, dec!(1.0))
+            .build()
+            .unwrap();
+
+        // Should succeed - no session validation
+        let result = manager.submit_order(order).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_session_enforcement_without_session_manager() {
+        // Even with strict enforcement, orders should be accepted if no session manager is set
+        // (fail-open behavior)
+        let config = OrderManagerConfig {
+            session_enforcement: SessionEnforcement::Strict,
+            ..Default::default()
+        };
+        let manager = OrderManager::new(config);
+
+        let order = Order::market("BTCUSDT", OrderSide::Buy, dec!(1.0))
+            .build()
+            .unwrap();
+
+        // Should succeed - no session manager configured
+        let result = manager.submit_order(order).await;
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_session_enforcement_is_enabled() {
+        assert!(!SessionEnforcement::Disabled.is_enabled());
+        assert!(SessionEnforcement::Warn.is_enabled());
+        assert!(SessionEnforcement::Strict.is_enabled());
+    }
+
+    #[test]
+    fn test_session_enforcement_should_reject() {
+        assert!(!SessionEnforcement::Disabled.should_reject());
+        assert!(!SessionEnforcement::Warn.should_reject());
+        assert!(SessionEnforcement::Strict.should_reject());
+    }
+
+    #[test]
+    fn test_order_manager_error_display() {
+        let closed_err = OrderManagerError::MarketClosed {
+            symbol: "BTCUSDT.BINANCE".to_string(),
+            reason: "Market is closed".to_string(),
+        };
+        assert!(closed_err.to_string().contains("Market closed"));
+        assert!(closed_err.to_string().contains("BTCUSDT.BINANCE"));
+
+        let halted_err = OrderManagerError::MarketHalted {
+            symbol: "AAPL.XNAS".to_string(),
+            reason: "Circuit breaker triggered".to_string(),
+        };
+        assert!(halted_err.to_string().contains("Market halted"));
+        assert!(halted_err.to_string().contains("AAPL.XNAS"));
+
+        let not_found_err = OrderManagerError::SessionNotFound(InstrumentId::new("BTCUSDT", "BINANCE"));
+        assert!(not_found_err.to_string().contains("Session not found"));
     }
 }

@@ -162,6 +162,7 @@ pub use order::{Order, OrderBuilder, OrderError};
 
 pub use types::{
     AccountId, ClientOrderId, ContingencyType, InstrumentId, LiquiditySide, Money, OrderListId,
-    OrderSide, OrderStatus, OrderType, PositionId, PositionSide, Price, Quantity, StrategyId,
-    TimeInForce, TradeId, TrailingOffsetType, TriggerType, VenueOrderId,
+    OrderSide, OrderStatus, OrderType, PositionId, PositionSide, Price, Quantity,
+    SessionEnforcement, StrategyId, TimeInForce, TradeId, TrailingOffsetType, TriggerType,
+    VenueOrderId,
 };

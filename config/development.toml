@@ -157,3 +157,151 @@ channel_backpressure_threshold = 80.0  # 80%
 # WebSocket reconnection storm threshold (number of reconnects)
 # WARNING alert when reconnection count exceeds this value
 reconnection_storm_threshold = 10
+
+# =================================================================
+# Symbol Registry Configuration
+# =================================================================
+# Central registry for symbol metadata, trading specifications, and session schedules
+
+[symbol_registry]
+# Enable the symbol registry service
+enabled = true
+
+# Cache configuration
+cache_capacity = 10000       # Maximum number of symbols to cache
+cache_ttl_secs = 3600        # Cache TTL in seconds (1 hour)
+
+# Default behaviors
+preload_symbols = true       # Preload configured symbols on startup
+lazy_load = true             # Enable lazy loading for uncached symbols
+
+# Default venue configurations
+[symbol_registry.venue_defaults]
+# Default settings applied when venue-specific config is missing
+default_tick_size = "0.01"
+default_lot_size = "0.001"
+default_min_notional = "10.0"
+
+# Binance-specific defaults
+[symbol_registry.venue_defaults.BINANCE]
+maker_fee = "0.001"          # 0.1% maker fee
+taker_fee = "0.001"          # 0.1% taker fee
+min_notional = "10.0"        # Minimum order value in quote currency
+
+# CME Globex defaults (for futures)
+[symbol_registry.venue_defaults.GLBX]
+maker_fee = "0.0"            # Varies by membership/contract
+taker_fee = "0.0"
+session_schedule = "cme_globex"
+
+# =================================================================
+# Session Manager Configuration
+# =================================================================
+# Real-time market session state tracking
+
+[session_manager]
+# Enable the session manager service
+enabled = true
+
+# How often to check session states (in seconds)
+check_interval_secs = 60
+
+# Event broadcast channel capacity
+event_channel_capacity = 256
+
+# Session enforcement for order validation
+# Options: "disabled", "warn", "strict"
+order_session_enforcement = "warn"
+
+# Predefined session schedules
+[session_manager.schedules]
+
+# CME Globex electronic trading hours (Sunday-Friday)
+[session_manager.schedules.cme_globex]
+timezone = "America/Chicago"
+sessions = [
+    { start = "17:00", end = "16:00", next_day = true, session_type = "regular" }
+]
+# Maintenance window
+maintenance_start = "16:00"
+maintenance_end = "17:00"
+
+# NYSE/NASDAQ regular trading hours
+[session_manager.schedules.us_equity]
+timezone = "America/New_York"
+sessions = [
+    { start = "04:00", end = "09:30", session_type = "pre_market" },
+    { start = "09:30", end = "16:00", session_type = "regular" },
+    { start = "16:00", end = "20:00", session_type = "after_hours" }
+]
+
+# Crypto 24/7 trading
+[session_manager.schedules.crypto_24_7]
+timezone = "UTC"
+sessions = [
+    { start = "00:00", end = "23:59:59", session_type = "regular" }
+]
+
+# =================================================================
+# Roll Manager Configuration (Continuous Contracts)
+# =================================================================
+# Configuration for managing continuous futures contracts
+
+[roll_manager]
+# Enable the roll manager service
+enabled = false              # Disabled by default (crypto doesn't need it)
+
+# Calendar-based roll: days before expiration to trigger roll
+calendar_roll_days = 5
+
+# Volume-based roll: ratio threshold (1.5 = next contract has 50% more volume)
+volume_roll_threshold = "1.5"
+
+# Open interest-based roll: ratio threshold
+oi_roll_threshold = "1.5"
+
+# Event broadcast channel capacity
+event_channel_capacity = 256
+
+# Continuous contracts to track (example for futures trading)
+# [[roll_manager.continuous_contracts]]
+# symbol = "ES.c.0.GLBX"      # E-mini S&P 500 front month (calendar roll)
+# roll_method = "calendar"
+
+# [[roll_manager.continuous_contracts]]
+# symbol = "CL.v.0.NYMX"      # Crude Oil front month (volume roll)
+# roll_method = "volume"
+
+# =================================================================
+# Symbol Definitions (Override database definitions)
+# =================================================================
+# Define symbols directly in config (useful for development/testing)
+# These will be merged with database definitions
+
+# Example crypto spot symbol definition
+# [[symbol_definitions]]
+# symbol = "BTCUSDT"
+# venue = "BINANCE"
+# asset_class = "CRYPTO"
+# instrument_class = "SPOT"
+# base_currency = "BTC"
+# quote_currency = "USDT"
+# tick_size = "0.01"
+# lot_size = "0.00001"
+# min_notional = "10.0"
+# maker_fee = "0.001"
+# taker_fee = "0.001"
+# session_schedule = "crypto_24_7"
+
+# Example futures symbol definition
+# [[symbol_definitions]]
+# symbol = "ESH6"
+# venue = "GLBX"
+# asset_class = "EQUITY"
+# instrument_class = "FUTURE"
+# underlying = "SPX"
+# tick_size = "0.25"
+# tick_value = "12.50"
+# contract_size = "50"
+# expiration = "2026-03-21"
+# session_schedule = "cme_globex"

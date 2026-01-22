@@ -107,6 +107,7 @@ impl StrategyContext {
             allow_duplicate_ids: false,
             default_account_id: config.account_id.clone(),
             default_strategy_id: config.strategy_id.clone(),
+            session_enforcement: Default::default(),
         };
 
         Self {

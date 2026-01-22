@@ -361,6 +361,7 @@ impl<P: HistoricalDataProvider + Send + Sync + 'static> BackfillService for Back
             min_gap_minutes: self.config.on_demand.min_gap_minutes as i64,
             expected_ticks_per_minute: 100.0,
             trading_hours: None, // Use symbol-specific trading hours if available
+            session_schedule: None, // Use symbol-specific session schedule if available
         };
         let detector = GapDetector::new(config);
         let gaps = detector.detect_gaps(symbol, &ticks, start, end);

@@ -89,6 +89,42 @@ pub enum InstrumentClass {
 }
 
 impl InstrumentClass {
+    /// Get the single-character code (Databento format).
+    ///
+    /// Databento uses single char codes for instrument_class:
+    /// - 'S' = Spot/Cash
+    /// - 'F' = Future
+    /// - 'O' = Option
+    /// - 'P' = Perpetual
+    /// - 'W' = Warrant
+    /// - 'C' = CFD
+    /// - 'B' = Betting
+    pub fn as_char(&self) -> char {
+        match self {
+            Self::Spot => 'S',
+            Self::Future => 'F',
+            Self::Option => 'O',
+            Self::PerpetualLinear | Self::PerpetualInverse => 'P',
+            Self::Warrant => 'W',
+            Self::CFD => 'C',
+            Self::Betting => 'B',
+        }
+    }
+
+    /// Parse from single character (Databento format)
+    pub fn from_char(c: char) -> Option<Self> {
+        match c.to_ascii_uppercase() {
+            'S' => Some(Self::Spot),
+            'F' => Some(Self::Future),
+            'O' => Some(Self::Option),
+            'P' => Some(Self::PerpetualLinear), // Default to linear perpetual
+            'W' => Some(Self::Warrant),
+            'C' => Some(Self::CFD),
+            'B' => Some(Self::Betting),
+            _ => None,
+        }
+    }
+
     /// Returns true if this is a derivative instrument
     pub fn is_derivative(&self) -> bool {
         !matches!(self, InstrumentClass::Spot)

@@ -978,6 +978,43 @@ impl From<&str> for OrderListId {
     }
 }
 
+/// Session enforcement mode for order submission.
+///
+/// Determines how the order manager handles orders when the market is closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SessionEnforcement {
+    /// No session enforcement - orders accepted regardless of session state
+    #[default]
+    Disabled,
+    /// Warn when submitting during closed session but accept the order
+    Warn,
+    /// Reject orders when session is closed (strict mode)
+    Strict,
+}
+
+impl SessionEnforcement {
+    /// Returns true if session validation is enabled
+    pub fn is_enabled(&self) -> bool {
+        !matches!(self, SessionEnforcement::Disabled)
+    }
+
+    /// Returns true if orders should be rejected when session is closed
+    pub fn should_reject(&self) -> bool {
+        matches!(self, SessionEnforcement::Strict)
+    }
+}
+
+impl fmt::Display for SessionEnforcement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SessionEnforcement::Disabled => write!(f, "DISABLED"),
+            SessionEnforcement::Warn => write!(f, "WARN"),
+            SessionEnforcement::Strict => write!(f, "STRICT"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
