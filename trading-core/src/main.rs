@@ -723,24 +723,9 @@ async fn test_database_connection(pool: &PgPool) -> Result<(), Box<dyn std::erro
     // Simple connectivity test
     sqlx::query("SELECT 1").execute(pool).await?;
 
-    // Check if tick_data table exists
-    let table_exists = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (
-            SELECT FROM information_schema.tables 
-            WHERE table_schema = 'public' 
-            AND table_name = 'tick_data'
-        )",
-    )
-    .fetch_one(pool)
-    .await?;
-
-    if !table_exists {
-        error!("❌ Required table 'tick_data' does not exist in database");
-        error!("💡 Please run the database migration scripts first");
-        std::process::exit(1);
-    }
-
-    info!("✅ Database schema validation passed");
+    // Note: trading-core no longer writes to database - data-manager handles persistence
+    // We only verify basic connectivity here
+    info!("✅ Database connection verified");
     Ok(())
 }
 
