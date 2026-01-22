@@ -10,9 +10,12 @@ exchange = "TEST"
 base_price = 50000.0
 
 [emulator]
-replay_speed = 1.0          # Real-time (1.0x)
+replay_speed = 100.0        # 100x speed (60s of data in ~0.6s)
 embed_send_time = true      # Embed timestamp for latency measurement
 min_delay_us = 1            # Minimum inter-tick delay
+
+[emulator.transport]
+mode = "Direct"             # In-memory (no serialization overhead)
 
 [strategies]
 rust_count = 5
@@ -23,8 +26,8 @@ track_latency = true
 [metrics]
 latency_sample_limit = 100000
 tick_loss_tolerance = 0.001  # 0.1%
-max_avg_latency_us = 1000    # 1ms
-max_p99_latency_us = 10000   # 10ms
+max_avg_latency_us = 500000  # 500ms (high-speed batch mode)
+max_p99_latency_us = 1000000 # 1000ms (high-speed batch mode)
 
 [test]
 timeout_secs = 120

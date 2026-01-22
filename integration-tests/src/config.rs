@@ -365,9 +365,9 @@ impl IntegrationTestConfig {
     }
 
     /// Create a normal configuration for standard stress tests
-    /// Loads from config/default.toml if available
+    /// Loads from config/normal.toml if available
     pub fn normal() -> Self {
-        if let Some(path) = Self::find_config_file("default.toml") {
+        if let Some(path) = Self::find_config_file("normal.toml") {
             if let Ok(config) = Self::from_file(&path) {
                 println!("Loaded config from {}", path.display());
                 return config;

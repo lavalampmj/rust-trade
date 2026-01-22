@@ -210,6 +210,10 @@ impl TestDataEmulator {
 
         let mut prev_ts = ticks[0].hd.ts_event;
 
+        // Minimum sleep threshold in microseconds - sleeping for less than this
+        // is counterproductive due to tokio timer granularity (~1-10ms overhead)
+        const MIN_SLEEP_THRESHOLD_US: u64 = 1000; // 1ms
+
         for tick in ticks.iter() {
             // Check for shutdown
             if shutdown_rx.try_recv().is_ok() {
@@ -217,9 +221,9 @@ impl TestDataEmulator {
                 break;
             }
 
-            // Calculate and apply inter-tick delay
+            // Calculate and apply inter-tick delay only if it's above timer threshold
             let delay = self.calculate_delay(prev_ts, tick.hd.ts_event);
-            if delay.as_micros() > 0 {
+            if delay.as_micros() >= MIN_SLEEP_THRESHOLD_US as u128 {
                 sleep(delay).await;
             }
             prev_ts = tick.hd.ts_event;

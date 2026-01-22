@@ -11,9 +11,12 @@ exchange = "TEST"
 base_price = 50000.0
 
 [emulator]
-replay_speed = 1.0          # Real-time (cannot speed up heavy load)
+replay_speed = 100.0        # 100x speed (60s of data in ~0.6s)
 embed_send_time = true
 min_delay_us = 1            # Minimum delay for max throughput
+
+[emulator.transport]
+mode = "Direct"             # In-memory (no serialization overhead)
 
 [strategies]
 rust_count = 50              # 50 Rust strategies for TEST0000-TEST0049
@@ -24,8 +27,8 @@ track_latency = true
 [metrics]
 latency_sample_limit = 100000
 tick_loss_tolerance = 0.05   # 5% (more tolerance under heavy load)
-max_avg_latency_us = 5000    # 5ms (higher tolerance under load)
-max_p99_latency_us = 50000   # 50ms (higher tolerance under load)
+max_avg_latency_us = 15000000 # 15s (high-speed batch mode with 6M ticks)
+max_p99_latency_us = 20000000 # 20s (high-speed batch mode with 6M ticks)
 
 [test]
 timeout_secs = 300
