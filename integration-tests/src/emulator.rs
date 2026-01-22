@@ -214,6 +214,11 @@ impl TestDataEmulator {
         // is counterproductive due to tokio timer granularity (~1-10ms overhead)
         const MIN_SLEEP_THRESHOLD_US: u64 = 1000; // 1ms
 
+        // Yield every N ticks when delay is below threshold to prevent overwhelming
+        // the async runtime (especially important for WebSocket transport)
+        const YIELD_INTERVAL: usize = 10;
+        let mut tick_count = 0;
+
         for tick in ticks.iter() {
             // Check for shutdown
             if shutdown_rx.try_recv().is_ok() {
@@ -221,10 +226,17 @@ impl TestDataEmulator {
                 break;
             }
 
-            // Calculate and apply inter-tick delay only if it's above timer threshold
+            // Calculate and apply inter-tick delay
             let delay = self.calculate_delay(prev_ts, tick.hd.ts_event);
             if delay.as_micros() >= MIN_SLEEP_THRESHOLD_US as u128 {
                 sleep(delay).await;
+            } else {
+                // For small delays, yield periodically to let other tasks run
+                // This is critical for WebSocket transport to avoid overwhelming it
+                tick_count += 1;
+                if tick_count % YIELD_INTERVAL == 0 {
+                    tokio::task::yield_now().await;
+                }
             }
             prev_ts = tick.hd.ts_event;
 

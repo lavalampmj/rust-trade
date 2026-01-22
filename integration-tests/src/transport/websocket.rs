@@ -63,7 +63,7 @@ pub struct WebSocketServer {
 impl WebSocketServer {
     /// Create a new WebSocket server
     pub fn new(config: WebSocketConfig) -> Self {
-        let (tx, _) = broadcast::channel(10_000); // Buffer for high-throughput
+        let (tx, _) = broadcast::channel(200_000); // Large buffer for high-throughput tests
 
         Self {
             config,
