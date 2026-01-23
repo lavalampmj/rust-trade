@@ -7,9 +7,10 @@ use tracing::debug;
 
 use crate::live_trading::RealtimeOHLCGenerator;
 use crate::metrics;
-use trading_common::backtest::strategy::{Signal, Strategy};
+use trading_common::backtest::strategy::Strategy;
 use trading_common::data::repository::TickDataRepository;
 use trading_common::data::types::{BarData, LiveStrategyLog, TickData};
+use trading_common::orders::{Order, OrderSide};
 use trading_common::series::bars_context::BarsContext;
 
 pub struct PaperTradingProcessor {
@@ -110,30 +111,30 @@ impl PaperTradingProcessor {
         };
 
         // 3. Process each bar event through strategy
-        let mut last_signal_type = "HOLD".to_string();
+        let mut last_action_type = "HOLD".to_string();
         for bar_data in bar_events {
             // Update BarsContext BEFORE calling strategy
             self.bars_context.on_bar_update(&bar_data);
 
             // Execute strategy with BarData and BarsContext
-            let mut signal = self.strategy.on_bar_data(&bar_data, &mut self.bars_context);
+            self.strategy.on_bar_data(&bar_data, &mut self.bars_context);
 
-            // Suppress signals during warmup (parity with backtest engine)
+            // Skip order execution during warmup
             if !self.strategy.is_ready(&self.bars_context) {
-                match signal {
-                    Signal::Buy { .. } | Signal::Sell { .. } => {
-                        signal = Signal::Hold;
-                    }
-                    Signal::Hold => {}
-                }
+                continue;
             }
 
-            // Execute trading signal
-            let signal_type = self.execute_signal(&signal, tick)?;
+            // Get orders from strategy
+            let orders = self.strategy.get_orders(&bar_data, &mut self.bars_context);
 
-            // Track last non-HOLD signal for logging
-            if signal_type != "HOLD" {
-                last_signal_type = signal_type;
+            // Execute orders
+            for order in orders {
+                let action_type = self.execute_order(&order, tick)?;
+
+                // Track last non-HOLD action for logging
+                if action_type != "HOLD" {
+                    last_action_type = action_type;
+                }
             }
         }
 
@@ -142,7 +143,8 @@ impl PaperTradingProcessor {
         let total_pnl = portfolio_value - self.initial_capital;
 
         // Update portfolio metrics
-        metrics::PAPER_PORTFOLIO_VALUE.set(portfolio_value.to_string().parse::<f64>().unwrap_or(0.0));
+        metrics::PAPER_PORTFOLIO_VALUE
+            .set(portfolio_value.to_string().parse::<f64>().unwrap_or(0.0));
         metrics::PAPER_PNL.set(total_pnl.to_string().parse::<f64>().unwrap_or(0.0));
 
         // 5. Record to database
@@ -152,7 +154,7 @@ impl PaperTradingProcessor {
             strategy_id: self.strategy.name().to_string(),
             symbol: tick.symbol.clone(),
             current_price: tick.price,
-            signal_type: last_signal_type.clone(),
+            signal_type: last_action_type.clone(),
             portfolio_value,
             total_pnl,
             cache_hit,
@@ -166,7 +168,7 @@ impl PaperTradingProcessor {
 
         // 6. Real-time output
         self.log_activity(
-            &last_signal_type,
+            &last_action_type,
             tick,
             portfolio_value,
             total_pnl,
@@ -211,22 +213,20 @@ impl PaperTradingProcessor {
             self.bars_context.on_bar_update(&bar_data);
 
             // Execute strategy with bar and BarsContext
-            let mut signal = self.strategy.on_bar_data(&bar_data, &mut self.bars_context);
+            self.strategy.on_bar_data(&bar_data, &mut self.bars_context);
 
-            // Suppress signals during warmup (parity with backtest engine)
+            // Skip order execution during warmup
             if !self.strategy.is_ready(&self.bars_context) {
-                match signal {
-                    Signal::Buy { .. } | Signal::Sell { .. } => {
-                        signal = Signal::Hold;
-                    }
-                    Signal::Hold => {}
-                }
+                continue;
             }
+
+            // Get orders from strategy
+            let orders = self.strategy.get_orders(&bar_data, &mut self.bars_context);
 
             // Use bar's close price for execution
             let execution_price = bar_data.ohlc_bar.close;
 
-            // Create a synthetic tick for signal execution
+            // Create a synthetic tick for order execution
             let synthetic_tick = TickData::with_details(
                 now,
                 now,
@@ -245,20 +245,25 @@ impl PaperTradingProcessor {
                 0,
             );
 
-            self.execute_signal(&signal, &synthetic_tick)?;
+            // Execute orders
+            for order in orders {
+                self.execute_order(&order, &synthetic_tick)?;
+            }
         }
 
         Ok(())
     }
 
-    fn execute_signal(&mut self, signal: &Signal, tick: &TickData) -> Result<String, String> {
-        match signal {
-            Signal::Buy { quantity, .. } => {
+    fn execute_order(&mut self, order: &Order, tick: &TickData) -> Result<String, String> {
+        let quantity = order.quantity;
+
+        match order.side {
+            OrderSide::Buy => {
                 let cost = quantity * tick.price;
 
                 if cost <= self.cash {
                     if self.position == Decimal::ZERO {
-                        self.position = *quantity;
+                        self.position = quantity;
                         self.avg_cost = tick.price;
                     } else {
                         let total_cost = (self.position * self.avg_cost) + cost;
@@ -277,14 +282,14 @@ impl PaperTradingProcessor {
                     return Ok("BUY".to_string());
                 } else {
                     debug!(
-                        "BUY signal ignored: insufficient cash ({} needed, {} available)",
+                        "BUY order ignored: insufficient cash ({} needed, {} available)",
                         cost, self.cash
                     );
                 }
             }
 
-            Signal::Sell { quantity, .. } => {
-                if *quantity <= self.position {
+            OrderSide::Sell => {
+                if quantity <= self.position {
                     let proceeds = quantity * tick.price;
                     self.cash += proceeds;
                     self.position -= quantity;
@@ -302,13 +307,11 @@ impl PaperTradingProcessor {
                     return Ok("SELL".to_string());
                 } else {
                     debug!(
-                        "SELL signal ignored: insufficient position ({} needed, {} available)",
+                        "SELL order ignored: insufficient position ({} needed, {} available)",
                         quantity, self.position
                     );
                 }
             }
-
-            Signal::Hold => return Ok("HOLD".to_string()),
         }
 
         Ok("HOLD".to_string())
@@ -320,7 +323,7 @@ impl PaperTradingProcessor {
 
     fn log_activity(
         &self,
-        signal_type: &str,
+        action_type: &str,
         tick: &TickData,
         portfolio_value: Decimal,
         total_pnl: Decimal,
@@ -328,7 +331,7 @@ impl PaperTradingProcessor {
         cache_time_us: u64,
         total_time_us: u64,
     ) {
-        if signal_type != "HOLD" {
+        if action_type != "HOLD" {
             let return_pct = if self.initial_capital > Decimal::ZERO {
                 total_pnl / self.initial_capital * Decimal::from(100)
             } else {
@@ -336,7 +339,7 @@ impl PaperTradingProcessor {
             };
 
             println!("🎯 {} {} @ ${} | Portfolio: ${} | P&L: ${} ({:.2}%) | Position: {} | Cash: ${} | Trades: {} | Cache: {} ({}μs) | Total: {}μs",
-                     signal_type,
+                     action_type,
                      tick.symbol,
                      tick.price,
                      portfolio_value,

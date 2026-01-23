@@ -7,9 +7,13 @@ use rust_decimal::Decimal;
 use std::str::FromStr;
 
 use super::PaperTradingProcessor;
-use trading_common::backtest::strategy::{Signal, Strategy};
+use trading_common::backtest::strategy::Strategy;
 use trading_common::data::types::{BarData, TickData, TradeSide};
-use trading_common::data::{cache::{TieredCache, TickDataCache}, repository::TickDataRepository};
+use trading_common::data::{
+    cache::{TickDataCache, TieredCache},
+    repository::TickDataRepository,
+};
+use trading_common::orders::{Order, OrderSide};
 use trading_common::series::bars_context::BarsContext;
 
 use chrono::Utc;
@@ -20,42 +24,46 @@ use chrono::Utc;
 
 struct MockStrategy {
     name: String,
-    signals: Vec<Signal>,
+    orders: Vec<Option<Order>>, // None = Hold, Some(order) = execute order
     current_index: usize,
-    last_tick_id: Option<String>, // Track last processed tick to avoid duplicate signals
+    last_tick_id: Option<String>, // Track last processed tick to avoid duplicate orders
+    pending_orders: Vec<Order>,
 }
 
 impl MockStrategy {
-    fn new(name: &str, signals: Vec<Signal>) -> Self {
+    fn new(name: &str, orders: Vec<Option<Order>>) -> Self {
         Self {
             name: name.to_string(),
-            signals,
+            orders,
             current_index: 0,
             last_tick_id: None,
+            pending_orders: Vec::new(),
         }
     }
 
     fn always_hold() -> Self {
-        Self::new("AlwaysHold", vec![Signal::Hold])
+        Self::new("AlwaysHold", vec![None]) // None = Hold
     }
 
     fn buy_once(symbol: &str, quantity: Decimal) -> Self {
         Self::new(
             "BuyOnce",
-            vec![Signal::Buy {
-                symbol: symbol.to_string(),
-                quantity,
-            }],
+            vec![Some(
+                Order::market(symbol, OrderSide::Buy, quantity)
+                    .build()
+                    .unwrap(),
+            )],
         )
     }
 
     fn sell_once(symbol: &str, quantity: Decimal) -> Self {
         Self::new(
             "SellOnce",
-            vec![Signal::Sell {
-                symbol: symbol.to_string(),
-                quantity,
-            }],
+            vec![Some(
+                Order::market(symbol, OrderSide::Sell, quantity)
+                    .build()
+                    .unwrap(),
+            )],
         )
     }
 
@@ -63,14 +71,16 @@ impl MockStrategy {
         Self::new(
             "BuyThenSell",
             vec![
-                Signal::Buy {
-                    symbol: symbol.to_string(),
-                    quantity: buy_qty,
-                },
-                Signal::Sell {
-                    symbol: symbol.to_string(),
-                    quantity: sell_qty,
-                },
+                Some(
+                    Order::market(symbol, OrderSide::Buy, buy_qty)
+                        .build()
+                        .unwrap(),
+                ),
+                Some(
+                    Order::market(symbol, OrderSide::Sell, sell_qty)
+                        .build()
+                        .unwrap(),
+                ),
             ],
         )
     }
@@ -90,8 +100,10 @@ impl Strategy for MockStrategy {
         0
     }
 
-    fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
-        // Only advance signal on new ticks (not on bar close events or duplicate tick events)
+    fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) {
+        self.pending_orders.clear();
+
+        // Only advance order on new ticks (not on bar close events or duplicate tick events)
         if let Some(ref tick) = bar_data.current_tick {
             // Check if this is a new tick
             let is_new_tick = self.last_tick_id.as_ref() != Some(&tick.trade_id);
@@ -99,22 +111,23 @@ impl Strategy for MockStrategy {
             if is_new_tick {
                 self.last_tick_id = Some(tick.trade_id.clone());
 
-                if self.current_index < self.signals.len() {
-                    let signal = self.signals[self.current_index].clone();
+                if self.current_index < self.orders.len() {
+                    if let Some(ref order) = self.orders[self.current_index] {
+                        self.pending_orders.push(order.clone());
+                    }
                     self.current_index += 1;
-                    return signal;
                 } else {
-                    // Exhausted signals, return last one
-                    return self.signals
-                        .last()
-                        .cloned()
-                        .unwrap_or(Signal::Hold);
+                    // Exhausted orders, check last one
+                    if let Some(Some(ref order)) = self.orders.last() {
+                        self.pending_orders.push(order.clone());
+                    }
                 }
             }
         }
+    }
 
-        // For duplicate ticks or bar close events, return Hold
-        Signal::Hold
+    fn get_orders(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) -> Vec<Order> {
+        std::mem::take(&mut self.pending_orders)
     }
 
     fn initialize(&mut self, _params: HashMap<String, String>) -> Result<(), String> {
@@ -141,7 +154,8 @@ fn create_test_tick(symbol: &str, price: &str, quantity: &str) -> TickData {
 async fn create_test_repository() -> Arc<TickDataRepository> {
     dotenv::dotenv().ok();
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+    let redis_url =
+        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
 
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(5)
@@ -150,8 +164,8 @@ async fn create_test_repository() -> Arc<TickDataRepository> {
         .expect("Failed to create pool");
 
     let cache = TieredCache::new(
-        (100, 60),                    // memory: 100 ticks, 60s TTL
-        (&redis_url, 1000, 300)       // redis: 1000 ticks, 300s TTL
+        (100, 60),               // memory: 100 ticks, 60s TTL
+        (&redis_url, 1000, 300), // redis: 1000 ticks, 300s TTL
     )
     .await
     .expect("Failed to create cache");
@@ -207,7 +221,7 @@ async fn test_hold_signal() {
 }
 
 #[tokio::test]
-async fn test_buy_signal_execution() {
+async fn test_buy_order_execution() {
     let repository = create_test_repository().await;
     let buy_qty = Decimal::from_str("10.0").unwrap();
     let strategy = Box::new(MockStrategy::buy_once("TESTUSDT", buy_qty));
@@ -257,7 +271,7 @@ async fn test_buy_insufficient_cash() {
 }
 
 #[tokio::test]
-async fn test_sell_signal_execution() {
+async fn test_sell_order_execution() {
     let repository = create_test_repository().await;
     let buy_qty = Decimal::from_str("10.0").unwrap();
     let sell_qty = Decimal::from_str("5.0").unwrap();
@@ -355,14 +369,16 @@ async fn test_average_cost_calculation() {
     let strategy = Box::new(MockStrategy::new(
         "DoubleBuy",
         vec![
-            Signal::Buy {
-                symbol: "TESTUSDT".to_string(),
-                quantity: Decimal::from_str("10.0").unwrap(),
-            },
-            Signal::Buy {
-                symbol: "TESTUSDT".to_string(),
-                quantity: Decimal::from_str("5.0").unwrap(),
-            },
+            Some(
+                Order::market("TESTUSDT", OrderSide::Buy, Decimal::from_str("10.0").unwrap())
+                    .build()
+                    .unwrap(),
+            ),
+            Some(
+                Order::market("TESTUSDT", OrderSide::Buy, Decimal::from_str("5.0").unwrap())
+                    .build()
+                    .unwrap(),
+            ),
         ],
     ));
     let initial_capital = Decimal::from_str("10000.0").unwrap();
@@ -422,8 +438,11 @@ async fn test_portfolio_value_calculation() {
 async fn test_database_logging() {
     let repository = create_test_repository().await;
     // Use a unique strategy name to avoid conflicts with parallel tests
-    let unique_strategy_id = format!("DbLogTest_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0));
-    let strategy = Box::new(MockStrategy::new(&unique_strategy_id, vec![Signal::Hold]));
+    let unique_strategy_id = format!(
+        "DbLogTest_{}",
+        Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
+    let strategy = Box::new(MockStrategy::new(&unique_strategy_id, vec![None])); // Hold
     let initial_capital = Decimal::from_str("10000.0").unwrap();
 
     cleanup_test_logs(&repository, &unique_strategy_id).await;
@@ -457,15 +476,17 @@ async fn test_multiple_ticks_sequential() {
     let strategy = Box::new(MockStrategy::new(
         "BuyHoldSell",
         vec![
-            Signal::Buy {
-                symbol: "TESTUSDT".to_string(),
-                quantity: Decimal::from_str("10.0").unwrap(),
-            },
-            Signal::Hold,
-            Signal::Sell {
-                symbol: "TESTUSDT".to_string(),
-                quantity: Decimal::from_str("10.0").unwrap(),
-            },
+            Some(
+                Order::market("TESTUSDT", OrderSide::Buy, Decimal::from_str("10.0").unwrap())
+                    .build()
+                    .unwrap(),
+            ),
+            None, // Hold
+            Some(
+                Order::market("TESTUSDT", OrderSide::Sell, Decimal::from_str("10.0").unwrap())
+                    .build()
+                    .unwrap(),
+            ),
         ],
     ));
     let initial_capital = Decimal::from_str("10000.0").unwrap();

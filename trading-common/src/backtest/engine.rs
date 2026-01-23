@@ -3,6 +3,7 @@ use crate::backtest::{
     strategy::Strategy,
 };
 use crate::data::types::{BarData, OHLCData, TickData};
+use crate::orders::OrderSide;
 use crate::series::bars_context::BarsContext;
 // Note: OHLCData and TickData are still used via BacktestData enum
 use rust_decimal::prelude::ToPrimitive;
@@ -107,7 +108,11 @@ impl BacktestEngine {
         if has_session {
             println!(
                 "Session: {} (align={}, truncate={})",
-                if session_config.align_to_session_open { "aligned" } else { "not aligned" },
+                if session_config.align_to_session_open {
+                    "aligned"
+                } else {
+                    "not aligned"
+                },
                 session_config.align_to_session_open,
                 session_config.truncate_at_session_close
             );
@@ -120,7 +125,8 @@ impl BacktestEngine {
             BacktestData::Ticks(ticks) => {
                 println!("Data points: {} ticks", ticks.len());
                 // Use session-aware generator if strategy specifies session config
-                let generator = HistoricalOHLCGenerator::with_session_config(bar_type, mode, session_config);
+                let generator =
+                    HistoricalOHLCGenerator::with_session_config(bar_type, mode, session_config);
                 generator.generate_from_ticks(&ticks)
             }
             BacktestData::OHLCBars(ohlc_bars) => {
@@ -152,20 +158,17 @@ impl BacktestEngine {
             self.portfolio
                 .update_price(&bar_data.ohlc_bar.symbol, bar_data.ohlc_bar.close);
 
-            // Execute strategy with BarsContext
-            let mut signal = self.strategy.on_bar_data(&bar_data, &mut self.bars_context);
+            // Execute strategy with BarsContext (populates pending orders internally)
+            self.strategy.on_bar_data(&bar_data, &mut self.bars_context);
 
-            // Suppress signals if strategy reports not ready (warmup period)
-            // This provides a framework-level safety net even if strategy forgets to check
+            // Skip order execution during warmup period
             if !self.strategy.is_ready(&self.bars_context) {
-                match signal {
-                    crate::backtest::strategy::Signal::Buy { .. }
-                    | crate::backtest::strategy::Signal::Sell { .. } => {
-                        signal = crate::backtest::strategy::Signal::Hold;
-                    }
-                    crate::backtest::strategy::Signal::Hold => {}
-                }
+                processed += 1;
+                continue;
             }
+
+            // Get orders from strategy
+            let orders = self.strategy.get_orders(&bar_data, &mut self.bars_context);
 
             // Determine execution price (use current tick if available, otherwise close)
             let execution_price = bar_data
@@ -174,29 +177,33 @@ impl BacktestEngine {
                 .map(|t| t.price)
                 .unwrap_or(bar_data.ohlc_bar.close);
 
-            // Execute trades
-            match signal {
-                crate::backtest::strategy::Signal::Buy { symbol, quantity } => {
-                    if let Err(e) = self
-                        .portfolio
-                        .execute_buy(symbol.clone(), quantity, execution_price)
-                    {
-                        println!("Buy failed {}: {}", symbol, e);
-                    } else {
-                        println!("BUY {} {} @ ${}", symbol, quantity, execution_price);
+            // Execute orders
+            for order in orders {
+                let symbol = order.symbol().to_string();
+                let quantity = order.quantity;
+
+                match order.side {
+                    OrderSide::Buy => {
+                        if let Err(e) =
+                            self.portfolio
+                                .execute_buy(symbol.clone(), quantity, execution_price)
+                        {
+                            println!("Buy failed {}: {}", symbol, e);
+                        } else {
+                            println!("BUY {} {} @ ${}", symbol, quantity, execution_price);
+                        }
+                    }
+                    OrderSide::Sell => {
+                        if let Err(e) =
+                            self.portfolio
+                                .execute_sell(symbol.clone(), quantity, execution_price)
+                        {
+                            println!("Sell failed {}: {}", symbol, e);
+                        } else {
+                            println!("SELL {} {} @ ${}", symbol, quantity, execution_price);
+                        }
                     }
                 }
-                crate::backtest::strategy::Signal::Sell { symbol, quantity } => {
-                    if let Err(e) = self
-                        .portfolio
-                        .execute_sell(symbol.clone(), quantity, execution_price)
-                    {
-                        println!("Sell failed {}: {}", symbol, e);
-                    } else {
-                        println!("SELL {} {} @ ${}", symbol, quantity, execution_price);
-                    }
-                }
-                crate::backtest::strategy::Signal::Hold => {}
             }
 
             processed += 1;

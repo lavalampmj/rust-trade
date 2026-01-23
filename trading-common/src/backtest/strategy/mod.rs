@@ -1,31 +1,31 @@
 pub(crate) mod base;
+mod config;
 pub mod dispatcher;
 pub mod position;
-pub mod state;
-mod rsi;
-mod sma;
 mod python_bridge;
 mod python_loader;
-mod config;
+mod rsi;
+mod sma;
+pub mod state;
 
 #[cfg(test)]
 mod security_tests;
 
-pub use base::{Signal, Strategy};
+pub use base::Strategy;
+pub use config::StrategiesConfig;
 pub use dispatcher::StrategyEventDispatcher;
 pub use position::PositionEvent;
-pub use state::{StrategyState, StrategyStateEvent};
+pub use python_loader::{
+    calculate_file_hash, HotReloadConfig, PythonStrategyRegistry, ReloadMetrics, ReloadStats,
+    StrategyConfig,
+};
 use rsi::RsiStrategy;
 use sma::SmaStrategy;
-pub use python_loader::{
-    PythonStrategyRegistry, StrategyConfig, calculate_file_hash,
-    HotReloadConfig, ReloadMetrics, ReloadStats
-};
-pub use config::StrategiesConfig;
+pub use state::{StrategyState, StrategyStateEvent};
 
-use std::sync::OnceLock;
 use parking_lot::RwLock;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum StrategyType {
@@ -56,10 +56,8 @@ pub fn initialize_python_strategies(config_path: &str) -> Result<(), String> {
         skip_hash_verification: config.hot_reload_config.skip_hash_verification,
     };
 
-    let mut registry = PythonStrategyRegistry::with_hot_reload_config(
-        strategy_dir,
-        hot_reload_config
-    )?;
+    let mut registry =
+        PythonStrategyRegistry::with_hot_reload_config(strategy_dir, hot_reload_config)?;
 
     // Register all Python strategies from config
     for entry in &config.python {
@@ -79,7 +77,8 @@ pub fn initialize_python_strategies(config_path: &str) -> Result<(), String> {
         registry.enable_hot_reload()?;
     }
 
-    PYTHON_REGISTRY.set(Arc::new(RwLock::new(registry)))
+    PYTHON_REGISTRY
+        .set(Arc::new(RwLock::new(registry)))
         .map_err(|_| "Python registry already initialized")?;
 
     Ok(())
@@ -153,7 +152,8 @@ pub fn get_strategy_info(strategy_id: &str) -> Option<StrategyInfo> {
 
 /// Reload a Python strategy (invalidate cache)
 pub fn reload_python_strategy(strategy_id: &str) -> Result<(), String> {
-    let registry = PYTHON_REGISTRY.get()
+    let registry = PYTHON_REGISTRY
+        .get()
         .ok_or("Python registry not initialized")?;
 
     let reg = registry.read();

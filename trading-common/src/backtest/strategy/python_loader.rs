@@ -1,15 +1,15 @@
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use notify::{Watcher, RecursiveMode, EventKind, recommended_watcher};
-use parking_lot::RwLock as ParkingLotRwLock;
-use sha2::{Sha256, Digest};
-use super::python_bridge::PythonStrategy;
 use super::base::Strategy;
+use super::python_bridge::PythonStrategy;
 use crate::series::bars_context::BarsContext;
 use crate::series::MaximumBarsLookBack;
+use notify::{recommended_watcher, EventKind, RecursiveMode, Watcher};
+use parking_lot::RwLock as ParkingLotRwLock;
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone)]
 pub struct StrategyConfig {
@@ -100,8 +100,7 @@ pub struct ReloadStats {
 /// Verify strategy file hash matches expected SHA256
 fn verify_strategy_hash(path: &Path, expected_hash: &str) -> Result<(), String> {
     // Read file contents
-    let code = std::fs::read(path)
-        .map_err(|e| format!("Failed to read strategy file: {}", e))?;
+    let code = std::fs::read(path).map_err(|e| format!("Failed to read strategy file: {}", e))?;
 
     // Calculate SHA256 hash
     let mut hasher = Sha256::new();
@@ -124,8 +123,7 @@ fn verify_strategy_hash(path: &Path, expected_hash: &str) -> Result<(), String> 
 
 /// Calculate SHA256 hash of a file (utility function for CLI)
 pub fn calculate_file_hash(path: &Path) -> Result<String, String> {
-    let code = std::fs::read(path)
-        .map_err(|e| format!("Failed to read file: {}", e))?;
+    let code = std::fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
 
     let mut hasher = Sha256::new();
     hasher.update(&code);
@@ -160,7 +158,10 @@ impl PythonStrategyRegistry {
         Self::with_hot_reload_config(strategy_dir, HotReloadConfig::default())
     }
 
-    pub fn with_hot_reload_config(strategy_dir: PathBuf, hot_reload_config: HotReloadConfig) -> Result<Self, String> {
+    pub fn with_hot_reload_config(
+        strategy_dir: PathBuf,
+        hot_reload_config: HotReloadConfig,
+    ) -> Result<Self, String> {
         Ok(Self {
             configs: Arc::new(RwLock::new(HashMap::new())),
             loaded_strategies: Arc::new(ParkingLotRwLock::new(HashMap::new())),
@@ -173,7 +174,9 @@ impl PythonStrategyRegistry {
 
     /// Register strategy from config
     pub fn register(&mut self, config: StrategyConfig) -> Result<(), String> {
-        let mut configs = self.configs.write()
+        let mut configs = self
+            .configs
+            .write()
             .map_err(|_| "Failed to acquire write lock")?;
 
         // Validate file exists
@@ -200,9 +203,12 @@ impl PythonStrategyRegistry {
 
         // Load from config
         let config = {
-            let configs = self.configs.read()
+            let configs = self
+                .configs
+                .read()
                 .map_err(|_| "Failed to acquire read lock")?;
-            configs.get(strategy_id)
+            configs
+                .get(strategy_id)
                 .ok_or_else(|| format!("Strategy '{}' not registered", strategy_id))?
                 .clone()
         };
@@ -217,10 +223,8 @@ impl PythonStrategyRegistry {
         }
 
         // Load Python strategy
-        let strategy = PythonStrategy::from_file(
-            config.file_path.to_str().unwrap(),
-            &config.class_name
-        )?;
+        let strategy =
+            PythonStrategy::from_file(config.file_path.to_str().unwrap(), &config.class_name)?;
 
         let arc_strategy = Arc::new(strategy);
 
@@ -239,10 +243,11 @@ impl PythonStrategyRegistry {
     pub fn enable_hot_reload(&mut self) -> Result<(), String> {
         let (tx, rx) = std::sync::mpsc::channel();
 
-        let mut watcher = recommended_watcher(tx)
-            .map_err(|e| format!("Failed to create watcher: {}", e))?;
+        let mut watcher =
+            recommended_watcher(tx).map_err(|e| format!("Failed to create watcher: {}", e))?;
 
-        watcher.watch(&self.strategy_dir, RecursiveMode::NonRecursive)
+        watcher
+            .watch(&self.strategy_dir, RecursiveMode::NonRecursive)
             .map_err(|e| format!("Failed to watch directory: {}", e))?;
 
         let loaded_strategies = Arc::clone(&self.loaded_strategies);
@@ -307,7 +312,10 @@ impl PythonStrategyRegistry {
         self._watcher = Some(Box::new(watcher));
         println!("✓ Hot-reload enabled for {:?}", self.strategy_dir);
         println!("  Debounce: {}ms", self.hot_reload_config.debounce_ms);
-        println!("  Skip hash verification: {}", self.hot_reload_config.skip_hash_verification);
+        println!(
+            "  Skip hash verification: {}",
+            self.hot_reload_config.skip_hash_verification
+        );
         Ok(())
     }
 
@@ -358,7 +366,9 @@ impl PythonStrategyRegistry {
                 if let Some(expected_hash) = &config.sha256 {
                     if let Err(e) = verify_strategy_hash(&config.file_path, expected_hash) {
                         eprintln!("  ✗ Hash verification failed for '{}': {}", id, e);
-                        eprintln!("    Tip: Set hot_reload.skip_hash_verification = true in dev mode");
+                        eprintln!(
+                            "    Tip: Set hot_reload.skip_hash_verification = true in dev mode"
+                        );
                         reload_metrics.record_failure();
                         continue;
                     }
@@ -368,10 +378,8 @@ impl PythonStrategyRegistry {
             }
 
             // Try to load the new version
-            match PythonStrategy::from_file(
-                config.file_path.to_str().unwrap(),
-                &config.class_name
-            ) {
+            match PythonStrategy::from_file(config.file_path.to_str().unwrap(), &config.class_name)
+            {
                 Ok(new_strategy) => {
                     // Success! Now safely replace in cache
                     let mut cache_write = cache.write();
@@ -392,7 +400,8 @@ impl PythonStrategyRegistry {
 
     /// List all registered strategies
     pub fn list_strategies(&self) -> Vec<StrategyConfig> {
-        self.configs.read()
+        self.configs
+            .read()
             .map(|configs| configs.values().cloned().collect())
             .unwrap_or_default()
     }
@@ -421,7 +430,11 @@ impl Strategy for PythonStrategyWrapper {
         self.inner.name()
     }
 
-    fn on_bar_data(&mut self, bar_data: &crate::data::types::BarData, bars: &mut BarsContext) -> super::base::Signal {
+    fn on_bar_data(
+        &mut self,
+        bar_data: &crate::data::types::BarData,
+        bars: &mut BarsContext,
+    ) {
         // We need mutable access but only have Arc
         // PythonStrategy uses internal Mutex for state, so this is safe
         unsafe {
@@ -430,7 +443,10 @@ impl Strategy for PythonStrategyWrapper {
         }
     }
 
-    fn initialize(&mut self, params: std::collections::HashMap<String, String>) -> Result<(), String> {
+    fn initialize(
+        &mut self,
+        params: std::collections::HashMap<String, String>,
+    ) -> Result<(), String> {
         unsafe {
             let ptr = Arc::as_ptr(&self.inner) as *mut PythonStrategy;
             (*ptr).initialize(params)

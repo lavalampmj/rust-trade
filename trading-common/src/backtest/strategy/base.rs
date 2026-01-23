@@ -3,87 +3,15 @@ use crate::backtest::bar_generator::SessionAwareConfig;
 use crate::data::events::MarketDataEvent;
 use crate::data::types::{BarData, BarDataMode, BarType, Timeframe};
 use crate::instruments::SessionEvent;
-use crate::orders::{ClientOrderId, Order, OrderCanceled, OrderEventAny, OrderFilled, OrderRejected, OrderSide};
+use crate::orders::{
+    ClientOrderId, Order, OrderCanceled, OrderEventAny, OrderFilled, OrderRejected,
+};
 use crate::series::bars_context::BarsContext;
 use crate::series::MaximumBarsLookBack;
-use rust_decimal::Decimal;
 use std::collections::HashMap;
 
 use super::position::PositionEvent;
 use super::state::StrategyStateEvent;
-
-/// Signal output from a strategy.
-///
-/// For backward compatibility, strategies return signals which are then
-/// converted to orders by the execution engine. For advanced order management,
-/// strategies can use the `StrategyContext` directly.
-#[derive(Debug, Clone)]
-pub enum Signal {
-    /// Buy signal with symbol and quantity
-    Buy { symbol: String, quantity: Decimal },
-    /// Sell signal with symbol and quantity
-    Sell { symbol: String, quantity: Decimal },
-    /// No action
-    Hold,
-}
-
-impl Signal {
-    /// Create a buy signal
-    pub fn buy(symbol: impl Into<String>, quantity: Decimal) -> Self {
-        Signal::Buy {
-            symbol: symbol.into(),
-            quantity,
-        }
-    }
-
-    /// Create a sell signal
-    pub fn sell(symbol: impl Into<String>, quantity: Decimal) -> Self {
-        Signal::Sell {
-            symbol: symbol.into(),
-            quantity,
-        }
-    }
-
-    /// Check if this is a buy signal
-    pub fn is_buy(&self) -> bool {
-        matches!(self, Signal::Buy { .. })
-    }
-
-    /// Check if this is a sell signal
-    pub fn is_sell(&self) -> bool {
-        matches!(self, Signal::Sell { .. })
-    }
-
-    /// Check if this is a hold signal
-    pub fn is_hold(&self) -> bool {
-        matches!(self, Signal::Hold)
-    }
-
-    /// Get the symbol if this is a buy or sell signal
-    pub fn symbol(&self) -> Option<&str> {
-        match self {
-            Signal::Buy { symbol, .. } | Signal::Sell { symbol, .. } => Some(symbol),
-            Signal::Hold => None,
-        }
-    }
-
-    /// Get the quantity if this is a buy or sell signal
-    pub fn quantity(&self) -> Option<Decimal> {
-        match self {
-            Signal::Buy { quantity, .. } | Signal::Sell { quantity, .. } => Some(*quantity),
-            Signal::Hold => None,
-        }
-    }
-
-    /// Convert signal to order side (if applicable)
-    pub fn to_order_side(&self) -> Option<OrderSide> {
-        match self {
-            Signal::Buy { .. } => Some(OrderSide::Buy),
-            Signal::Sell { .. } => Some(OrderSide::Sell),
-            Signal::Hold => None,
-        }
-    }
-}
 
 pub trait Strategy: Send + Sync {
     fn name(&self) -> &str;
@@ -91,6 +19,7 @@ pub trait Strategy: Send + Sync {
     /// Unified bar data processing method with BarsContext
     ///
     /// This is the primary method for processing market data.
+    /// Strategies should queue orders internally and return them via `get_orders()`.
     ///
     /// # Arguments
     /// - `bar_data`: Current bar information including:
@@ -104,7 +33,9 @@ pub trait Strategy: Send + Sync {
     ///
     /// # Example
     /// ```text
-    /// fn on_bar_data(&mut self, bar_data: &BarData, bars: &mut BarsContext) -> Signal {
+    /// fn on_bar_data(&mut self, bar_data: &BarData, bars: &mut BarsContext) {
+    ///     self.pending_orders.clear();
+    ///
     ///     // Access current and historical prices
     ///     let current_close = bars.close[0];
     ///     let prev_close = bars.close[1];
@@ -112,13 +43,14 @@ pub trait Strategy: Send + Sync {
     ///     // Use built-in indicators
     ///     if let (Some(sma20), Some(sma50)) = (bars.sma(20), bars.sma(50)) {
     ///         if sma20 > sma50 {
-    ///             return Signal::Buy { symbol: bars.symbol().to_string(), quantity: 1.into() };
+    ///             self.pending_orders.push(
+    ///                 Order::market(bars.symbol(), OrderSide::Buy, dec!(1)).build().unwrap()
+    ///             );
     ///         }
     ///     }
-    ///     Signal::Hold
     /// }
     /// ```
-    fn on_bar_data(&mut self, bar_data: &BarData, bars: &mut BarsContext) -> Signal;
+    fn on_bar_data(&mut self, bar_data: &BarData, bars: &mut BarsContext);
 
     /// Initialize strategy with parameters
     fn initialize(&mut self, params: HashMap<String, String>) -> Result<(), String>;
@@ -311,43 +243,19 @@ pub trait Strategy: Send + Sync {
     }
 
     // ========================================================================
-    // Advanced Order Management (Optional)
+    // Order Management
     // ========================================================================
-
-    /// Whether this strategy uses advanced order management.
-    ///
-    /// When true, the execution engine will:
-    /// - Call order event handlers
-    /// - Not auto-convert signals to market orders (strategy manages orders directly)
-    ///
-    /// Default is false for backward compatibility with signal-based strategies.
-    fn uses_order_management(&self) -> bool {
-        false // Default: use signal-based execution
-    }
 
     /// Get orders to submit for this bar.
     ///
-    /// Advanced strategies can override this to submit complex orders
-    /// (limit orders, bracket orders, etc.) instead of using signals.
-    ///
-    /// Only called if `uses_order_management()` returns true.
+    /// Called after `on_bar_data()` to retrieve orders queued during bar processing.
+    /// Strategies should clear and populate their pending orders in `on_bar_data()`,
+    /// then return them here.
     ///
     /// # Example
     /// ```text
     /// fn get_orders(&mut self, bar_data: &BarData, bars: &mut BarsContext) -> Vec<Order> {
-    ///     let mut orders = Vec::new();
-    ///
-    ///     if should_enter_long(bars) {
-    ///         // Submit a limit order below current price
-    ///         let entry_price = bars.close[0] * Decimal::new(99, 2);
-    ///         orders.push(
-    ///             Order::limit("BTCUSDT", OrderSide::Buy, dec!(0.1), entry_price)
-    ///                 .build()
-    ///                 .unwrap()
-    ///         );
-    ///     }
-    ///
-    ///     orders
+    ///     std::mem::take(&mut self.pending_orders)
     /// }
     /// ```
     #[allow(unused_variables)]
@@ -357,12 +265,13 @@ pub trait Strategy: Send + Sync {
 
     /// Get orders to cancel for this bar.
     ///
-    /// Advanced strategies can override this to cancel pending orders
-    /// based on market conditions.
-    ///
-    /// Only called if `uses_order_management()` returns true.
+    /// Override this method to cancel pending orders based on market conditions.
     #[allow(unused_variables)]
-    fn get_cancellations(&mut self, bar_data: &BarData, bars: &mut BarsContext) -> Vec<ClientOrderId> {
+    fn get_cancellations(
+        &mut self,
+        bar_data: &BarData,
+        bars: &mut BarsContext,
+    ) -> Vec<ClientOrderId> {
         Vec::new() // Default: no cancellations
     }
 

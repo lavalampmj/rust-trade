@@ -1,5 +1,6 @@
-use super::base::{Signal, Strategy};
+use super::base::Strategy;
 use crate::data::types::{BarData, BarDataMode, BarType, Timeframe};
+use crate::orders::{Order, OrderSide};
 use crate::series::bars_context::BarsContext;
 use crate::series::MaximumBarsLookBack;
 use rust_decimal::Decimal;
@@ -8,7 +9,8 @@ use std::collections::HashMap;
 pub struct SmaStrategy {
     short_period: usize,
     long_period: usize,
-    last_signal: Option<Signal>,
+    last_side: Option<OrderSide>,
+    pending_orders: Vec<Order>,
 }
 
 impl SmaStrategy {
@@ -16,7 +18,8 @@ impl SmaStrategy {
         Self {
             short_period: 5,
             long_period: 20,
-            last_signal: None,
+            last_side: None,
+            pending_orders: Vec::new(),
         }
     }
 }
@@ -35,11 +38,13 @@ impl Strategy for SmaStrategy {
         self.long_period
     }
 
-    fn on_bar_data(&mut self, _bar_data: &BarData, bars: &mut BarsContext) -> Signal {
+    fn on_bar_data(&mut self, _bar_data: &BarData, bars: &mut BarsContext) {
+        self.pending_orders.clear();
+
         // Defense-in-depth: early return if not ready
         // (Engine also checks, but strategy can check for explicit handling)
         if !self.is_ready(bars) {
-            return Signal::Hold;
+            return;
         }
 
         // Use BarsContext's built-in SMA calculation
@@ -49,26 +54,28 @@ impl Strategy for SmaStrategy {
 
         if let (Some(short), Some(long)) = (short_sma, long_sma) {
             // Golden cross: short MA crosses above long MA
-            if short > long && !matches!(self.last_signal, Some(Signal::Buy { .. })) {
-                let signal = Signal::Buy {
-                    symbol: bars.symbol().to_string(),
-                    quantity: Decimal::from(100),
-                };
-                self.last_signal = Some(signal.clone());
-                return signal;
+            if short > long && self.last_side != Some(OrderSide::Buy) {
+                if let Ok(order) = Order::market(bars.symbol(), OrderSide::Buy, Decimal::from(100))
+                    .build()
+                {
+                    self.pending_orders.push(order);
+                    self.last_side = Some(OrderSide::Buy);
+                }
             }
             // Death cross: short MA crosses below long MA
-            else if short < long && matches!(self.last_signal, Some(Signal::Buy { .. })) {
-                let signal = Signal::Sell {
-                    symbol: bars.symbol().to_string(),
-                    quantity: Decimal::from(100),
-                };
-                self.last_signal = Some(signal.clone());
-                return signal;
+            else if short < long && self.last_side == Some(OrderSide::Buy) {
+                if let Ok(order) = Order::market(bars.symbol(), OrderSide::Sell, Decimal::from(100))
+                    .build()
+                {
+                    self.pending_orders.push(order);
+                    self.last_side = Some(OrderSide::Sell);
+                }
             }
         }
+    }
 
-        Signal::Hold
+    fn get_orders(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) -> Vec<Order> {
+        std::mem::take(&mut self.pending_orders)
     }
 
     fn initialize(&mut self, params: HashMap<String, String>) -> Result<(), String> {
@@ -91,7 +98,8 @@ impl Strategy for SmaStrategy {
     }
 
     fn reset(&mut self) {
-        self.last_signal = None;
+        self.last_side = None;
+        self.pending_orders.clear();
     }
 
     fn bar_data_mode(&self) -> BarDataMode {

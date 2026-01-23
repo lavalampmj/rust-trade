@@ -11,7 +11,6 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 
-use crate::backtest::strategy::base::Signal;
 use crate::data::types::TickData;
 use crate::orders::{ClientOrderId, Order, OrderFilled, OrderSide, OrderStatus, VenueOrderId};
 
@@ -25,9 +24,7 @@ pub struct ExecutionEngineConfig {
     pub initial_capital: Decimal,
     /// Commission rate (e.g., 0.001 = 0.1%)
     pub commission_rate: Decimal,
-    /// Whether to convert signals to orders automatically
-    pub auto_convert_signals: bool,
-    /// Default position sizing for signal-based orders (as fraction of portfolio)
+    /// Default position sizing for orders (as fraction of portfolio)
     pub default_position_size: Decimal,
     /// Whether to use all available cash for position sizing
     pub use_all_available_cash: bool,
@@ -38,7 +35,6 @@ impl Default for ExecutionEngineConfig {
         Self {
             initial_capital: Decimal::new(10000, 0),
             commission_rate: Decimal::new(1, 3), // 0.1%
-            auto_convert_signals: true,
             default_position_size: Decimal::new(1, 1), // 10% of portfolio
             use_all_available_cash: false,
         }
@@ -226,9 +222,9 @@ impl ExecutionEngine {
             }
 
             // Attempt to fill
-            let fill_result = self
-                .fill_model
-                .get_fill(&order, &snapshot, self.config.commission_rate);
+            let fill_result =
+                self.fill_model
+                    .get_fill(&order, &snapshot, self.config.commission_rate);
 
             if fill_result.filled {
                 if let Some(fill_event) = self.apply_fill(&order, fill_result) {
@@ -354,84 +350,39 @@ impl ExecutionEngine {
         ))
     }
 
-    /// Execute a signal by converting it to an order.
+    /// Execute an order directly.
     ///
-    /// This provides backward compatibility with signal-based strategies.
-    pub fn execute_signal(
-        &mut self,
-        signal: &Signal,
-        _current_price: Decimal,
-    ) -> Result<Option<ClientOrderId>, ContextError> {
-        match signal {
-            Signal::Buy { symbol, quantity } => {
-                // For backward compatibility, execute as market order
-                let order_id =
-                    self.context
-                        .market_order(symbol, OrderSide::Buy, *quantity)?;
+    /// Submits the order and advances it through the lifecycle.
+    pub fn execute_order(&mut self, order: &Order) -> Result<ClientOrderId, ContextError> {
+        let order_id = self.context.submit_order(order.clone())?;
 
-                // Advance order through lifecycle
-                if let Some(order) = self.context.get_order(&order_id) {
-                    self.advance_order_status(&order);
-                }
-
-                Ok(Some(order_id))
-            }
-            Signal::Sell { symbol, quantity } => {
-                let order_id =
-                    self.context
-                        .market_order(symbol, OrderSide::Sell, *quantity)?;
-
-                if let Some(order) = self.context.get_order(&order_id) {
-                    self.advance_order_status(&order);
-                }
-
-                Ok(Some(order_id))
-            }
-            Signal::Hold => Ok(None),
+        // Advance order through lifecycle
+        if let Some(submitted_order) = self.context.get_order(&order_id) {
+            self.advance_order_status(&submitted_order);
         }
+
+        Ok(order_id)
     }
 
-    /// Execute a signal with automatic position sizing.
-    pub fn execute_signal_with_sizing(
+    /// Execute a market order for a given symbol, side, and quantity.
+    pub fn market_order(
         &mut self,
-        signal: &Signal,
-        current_price: Decimal,
-    ) -> Result<Option<ClientOrderId>, ContextError> {
-        match signal {
-            Signal::Buy { symbol, .. } => {
-                let quantity = self.calculate_buy_quantity(symbol, current_price);
-                if quantity > Decimal::ZERO {
-                    self.execute_signal(
-                        &Signal::Buy {
-                            symbol: symbol.clone(),
-                            quantity,
-                        },
-                        current_price,
-                    )
-                } else {
-                    Ok(None)
-                }
-            }
-            Signal::Sell { symbol, .. } => {
-                let quantity = self.calculate_sell_quantity(symbol);
-                if quantity > Decimal::ZERO {
-                    self.execute_signal(
-                        &Signal::Sell {
-                            symbol: symbol.clone(),
-                            quantity,
-                        },
-                        current_price,
-                    )
-                } else {
-                    Ok(None)
-                }
-            }
-            Signal::Hold => Ok(None),
+        symbol: &str,
+        side: OrderSide,
+        quantity: Decimal,
+    ) -> Result<ClientOrderId, ContextError> {
+        let order_id = self.context.market_order(symbol, side, quantity)?;
+
+        // Advance order through lifecycle
+        if let Some(order) = self.context.get_order(&order_id) {
+            self.advance_order_status(&order);
         }
+
+        Ok(order_id)
     }
 
     /// Calculate buy quantity based on position sizing rules.
-    fn calculate_buy_quantity(&self, _symbol: &str, price: Decimal) -> Decimal {
+    pub fn calculate_buy_quantity(&self, _symbol: &str, price: Decimal) -> Decimal {
         if price.is_zero() {
             return Decimal::ZERO;
         }
@@ -449,7 +400,7 @@ impl ExecutionEngine {
     }
 
     /// Calculate sell quantity (entire position).
-    fn calculate_sell_quantity(&self, symbol: &str) -> Decimal {
+    pub fn calculate_sell_quantity(&self, symbol: &str) -> Decimal {
         self.context.get_position(symbol).max(Decimal::ZERO)
     }
 
@@ -539,7 +490,7 @@ mod tests {
     }
 
     #[test]
-    fn test_signal_execution() {
+    fn test_order_execution() {
         let config = ExecutionEngineConfig {
             initial_capital: dec!(100000),
             ..Default::default()
@@ -550,14 +501,10 @@ mod tests {
         let tick = create_test_tick("BTCUSDT", dec!(50000), dec!(1.0));
         engine.on_tick(&tick);
 
-        // Execute buy signal
-        let signal = Signal::Buy {
-            symbol: "BTCUSDT".to_string(),
-            quantity: dec!(1.0),
-        };
-
-        let order_id = engine.execute_signal(&signal, dec!(50000)).unwrap();
-        assert!(order_id.is_some());
+        // Execute market buy order
+        let order_id = engine
+            .market_order("BTCUSDT", OrderSide::Buy, dec!(1.0))
+            .unwrap();
 
         // Process the order
         let fills = engine.process_orders_for_symbol("BTCUSDT");
@@ -565,6 +512,8 @@ mod tests {
 
         // Check position was updated
         assert!(engine.get_position("BTCUSDT") > Decimal::ZERO);
+        // Verify order ID is a valid UUID format
+        assert!(!order_id.0.is_empty());
     }
 
     #[test]
@@ -579,22 +528,18 @@ mod tests {
         engine.on_tick(&tick);
 
         // Buy
-        let buy_signal = Signal::Buy {
-            symbol: "BTCUSDT".to_string(),
-            quantity: dec!(0.5),
-        };
-        engine.execute_signal(&buy_signal, dec!(50000)).unwrap();
+        engine
+            .market_order("BTCUSDT", OrderSide::Buy, dec!(0.5))
+            .unwrap();
         engine.process_orders_for_symbol("BTCUSDT");
 
         let position_after_buy = engine.get_position("BTCUSDT");
         assert_eq!(position_after_buy, dec!(0.5));
 
         // Sell half
-        let sell_signal = Signal::Sell {
-            symbol: "BTCUSDT".to_string(),
-            quantity: dec!(0.25),
-        };
-        engine.execute_signal(&sell_signal, dec!(50000)).unwrap();
+        engine
+            .market_order("BTCUSDT", OrderSide::Sell, dec!(0.25))
+            .unwrap();
         engine.process_orders_for_symbol("BTCUSDT");
 
         let position_after_sell = engine.get_position("BTCUSDT");
@@ -649,11 +594,9 @@ mod tests {
         let tick = create_test_tick("BTCUSDT", dec!(50000), dec!(1.0));
         engine.on_tick(&tick);
 
-        let signal = Signal::Buy {
-            symbol: "BTCUSDT".to_string(),
-            quantity: dec!(1.0),
-        };
-        engine.execute_signal(&signal, dec!(50000)).unwrap();
+        engine
+            .market_order("BTCUSDT", OrderSide::Buy, dec!(1.0))
+            .unwrap();
         engine.process_orders_for_symbol("BTCUSDT");
 
         let metrics = engine.metrics();
@@ -670,11 +613,9 @@ mod tests {
         let tick = create_test_tick("BTCUSDT", dec!(50000), dec!(1.0));
         engine.on_tick(&tick);
 
-        let signal = Signal::Buy {
-            symbol: "BTCUSDT".to_string(),
-            quantity: dec!(0.1),
-        };
-        engine.execute_signal(&signal, dec!(50000)).unwrap();
+        engine
+            .market_order("BTCUSDT", OrderSide::Buy, dec!(0.1))
+            .unwrap();
         engine.process_orders_for_symbol("BTCUSDT");
 
         engine.reset();

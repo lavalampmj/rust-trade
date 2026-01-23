@@ -1,5 +1,6 @@
-use super::base::{Signal, Strategy};
+use super::base::Strategy;
 use crate::data::types::{BarData, BarDataMode, BarType, Timeframe};
+use crate::orders::{Order, OrderSide};
 use crate::series::bars_context::BarsContext;
 use crate::series::MaximumBarsLookBack;
 use rust_decimal::Decimal;
@@ -9,7 +10,8 @@ pub struct RsiStrategy {
     period: usize,
     oversold: Decimal,
     overbought: Decimal,
-    last_signal: Option<Signal>,
+    last_side: Option<OrderSide>,
+    pending_orders: Vec<Order>,
 }
 
 impl RsiStrategy {
@@ -18,7 +20,8 @@ impl RsiStrategy {
             period: 14,
             oversold: Decimal::from(30),
             overbought: Decimal::from(70),
-            last_signal: None,
+            last_side: None,
+            pending_orders: Vec::new(),
         }
     }
 
@@ -95,37 +98,40 @@ impl Strategy for RsiStrategy {
         self.period + 1
     }
 
-    fn on_bar_data(&mut self, _bar_data: &BarData, bars: &mut BarsContext) -> Signal {
+    fn on_bar_data(&mut self, _bar_data: &BarData, bars: &mut BarsContext) {
+        self.pending_orders.clear();
+
         // Defense-in-depth: early return if not ready
         if !self.is_ready(bars) {
-            return Signal::Hold;
+            return;
         }
 
         // Calculate RSI using the context
         if let Some(rsi) = self.calculate_rsi(bars) {
-            let symbol = bars.symbol().to_string();
+            let symbol = bars.symbol();
 
             // Buy signal when RSI is oversold
-            if rsi < self.oversold && !matches!(self.last_signal, Some(Signal::Buy { .. })) {
-                let signal = Signal::Buy {
-                    symbol,
-                    quantity: Decimal::from(100),
-                };
-                self.last_signal = Some(signal.clone());
-                return signal;
+            if rsi < self.oversold && self.last_side != Some(OrderSide::Buy) {
+                if let Ok(order) = Order::market(symbol, OrderSide::Buy, Decimal::from(100)).build()
+                {
+                    self.pending_orders.push(order);
+                    self.last_side = Some(OrderSide::Buy);
+                }
             }
             // Sell signal when RSI is overbought
-            else if rsi > self.overbought && matches!(self.last_signal, Some(Signal::Buy { .. })) {
-                let signal = Signal::Sell {
-                    symbol,
-                    quantity: Decimal::from(100),
-                };
-                self.last_signal = Some(signal.clone());
-                return signal;
+            else if rsi > self.overbought && self.last_side == Some(OrderSide::Buy) {
+                if let Ok(order) =
+                    Order::market(symbol, OrderSide::Sell, Decimal::from(100)).build()
+                {
+                    self.pending_orders.push(order);
+                    self.last_side = Some(OrderSide::Sell);
+                }
             }
         }
+    }
 
-        Signal::Hold
+    fn get_orders(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) -> Vec<Order> {
+        std::mem::take(&mut self.pending_orders)
     }
 
     fn initialize(&mut self, params: HashMap<String, String>) -> Result<(), String> {
@@ -151,7 +157,8 @@ impl Strategy for RsiStrategy {
     }
 
     fn reset(&mut self) {
-        self.last_signal = None;
+        self.last_side = None;
+        self.pending_orders.clear();
     }
 
     fn bar_data_mode(&self) -> BarDataMode {

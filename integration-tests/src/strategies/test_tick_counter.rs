@@ -7,7 +7,7 @@
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 
-use trading_common::backtest::strategy::{Signal, Strategy};
+use trading_common::backtest::strategy::Strategy;
 use trading_common::data::types::{BarData, BarDataMode, BarType, Timeframe};
 use trading_common::series::bars_context::BarsContext;
 use trading_common::series::MaximumBarsLookBack;
@@ -68,15 +68,13 @@ impl Strategy for TestTickCounterStrategy {
         "Test Tick Counter"
     }
 
-    fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
+    fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) {
         // Process tick if available
         if let Some(ref tick) = bar_data.current_tick {
             self.tick_count += 1;
             self.total_value += tick.price * tick.quantity;
         }
-
-        // Always hold - this strategy doesn't trade
-        Signal::Hold
+        // This strategy doesn't generate any orders
     }
 
     fn initialize(&mut self, _params: HashMap<String, String>) -> Result<(), String> {

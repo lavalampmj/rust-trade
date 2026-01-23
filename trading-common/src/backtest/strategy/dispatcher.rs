@@ -150,7 +150,6 @@ impl<'a, S: Strategy + ?Sized> StrategyEventDispatcher<'a, S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backtest::strategy::base::Signal;
     use crate::data::types::{BarData, BarDataMode, BarType, Timeframe};
     use crate::orders::{
         AccountId, ClientOrderId, EventId, InstrumentId, LiquiditySide, OrderSide, OrderType,
@@ -181,8 +180,8 @@ mod tests {
             "RecordingStrategy"
         }
 
-        fn on_bar_data(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
-            Signal::Hold
+        fn on_bar_data(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) {
+            // This strategy doesn't generate orders
         }
 
         fn bar_data_mode(&self) -> BarDataMode {

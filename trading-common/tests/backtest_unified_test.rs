@@ -4,16 +4,18 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
-use trading_common::backtest::strategy::{Signal, Strategy};
+use trading_common::backtest::strategy::Strategy;
 use trading_common::backtest::{BacktestConfig, BacktestData, BacktestEngine, SessionAwareConfig};
 use trading_common::data::types::{BarData, BarDataMode, BarType, TickData, Timeframe, TradeSide};
 use trading_common::instruments::session_presets;
+use trading_common::orders::{Order, OrderSide};
 use trading_common::series::bars_context::BarsContext;
 
 /// Simple test strategy that buys on first bar and sells on last
 struct TestStrategy {
     bar_count: usize,
     total_bars: usize,
+    pending_orders: Vec<Order>,
 }
 
 impl TestStrategy {
@@ -21,6 +23,7 @@ impl TestStrategy {
         TestStrategy {
             bar_count: 0,
             total_bars,
+            pending_orders: Vec::new(),
         }
     }
 }
@@ -39,24 +42,37 @@ impl Strategy for TestStrategy {
         0
     }
 
-    fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
+    fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) {
+        self.pending_orders.clear();
         self.bar_count += 1;
 
         if self.bar_count == 1 {
             // Buy on first bar
-            Signal::Buy {
-                symbol: bar_data.ohlc_bar.symbol.clone(),
-                quantity: Decimal::from(1),
+            if let Ok(order) = Order::market(
+                &bar_data.ohlc_bar.symbol,
+                OrderSide::Buy,
+                Decimal::from(1),
+            )
+            .build()
+            {
+                self.pending_orders.push(order);
             }
         } else if self.bar_count == self.total_bars {
             // Sell on last bar
-            Signal::Sell {
-                symbol: bar_data.ohlc_bar.symbol.clone(),
-                quantity: Decimal::from(1),
+            if let Ok(order) = Order::market(
+                &bar_data.ohlc_bar.symbol,
+                OrderSide::Sell,
+                Decimal::from(1),
+            )
+            .build()
+            {
+                self.pending_orders.push(order);
             }
-        } else {
-            Signal::Hold
         }
+    }
+
+    fn get_orders(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) -> Vec<Order> {
+        std::mem::take(&mut self.pending_orders)
     }
 
     fn initialize(&mut self, _params: HashMap<String, String>) -> Result<(), String> {
@@ -65,6 +81,7 @@ impl Strategy for TestStrategy {
 
     fn reset(&mut self) {
         self.bar_count = 0;
+        self.pending_orders.clear();
     }
 
     fn bar_data_mode(&self) -> BarDataMode {
@@ -181,7 +198,9 @@ struct TickModeStrategy {
 
 impl TickModeStrategy {
     fn new(counter: Arc<AtomicUsize>) -> Self {
-        TickModeStrategy { event_counter: counter }
+        TickModeStrategy {
+            event_counter: counter,
+        }
     }
 }
 
@@ -198,9 +217,8 @@ impl Strategy for TickModeStrategy {
         0
     }
 
-    fn on_bar_data(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
+    fn on_bar_data(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) {
         self.event_counter.fetch_add(1, Ordering::SeqCst);
-        Signal::Hold
     }
 
     fn initialize(&mut self, _params: HashMap<String, String>) -> Result<(), String> {
@@ -252,7 +270,9 @@ struct PriceMoveStrategy {
 
 impl PriceMoveStrategy {
     fn new(counter: Arc<AtomicUsize>) -> Self {
-        PriceMoveStrategy { event_counter: counter }
+        PriceMoveStrategy {
+            event_counter: counter,
+        }
     }
 }
 
@@ -269,9 +289,8 @@ impl Strategy for PriceMoveStrategy {
         0
     }
 
-    fn on_bar_data(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
+    fn on_bar_data(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) {
         self.event_counter.fetch_add(1, Ordering::SeqCst);
-        Signal::Hold
     }
 
     fn initialize(&mut self, _params: HashMap<String, String>) -> Result<(), String> {
@@ -325,7 +344,8 @@ fn test_on_price_move_mode() {
     assert!(
         events_processed <= tick_count,
         "OnPriceMove events ({}) should not exceed tick count ({})",
-        events_processed, tick_count
+        events_processed,
+        tick_count
     );
     // Since all consecutive ticks have different prices in our test data,
     // we expect events_processed to equal tick_count
@@ -356,9 +376,8 @@ fn test_tick_based_bars() {
             0
         }
 
-        fn on_bar_data(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
+        fn on_bar_data(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) {
             self.bar_counter.fetch_add(1, Ordering::SeqCst);
-            Signal::Hold
         }
 
         fn initialize(&mut self, _params: HashMap<String, String>) -> Result<(), String> {
@@ -386,7 +405,9 @@ fn test_tick_based_bars() {
     let expected_bars = (tick_count + ticks_per_bar - 1) / ticks_per_bar; // Ceiling division
 
     let bar_counter = Arc::new(AtomicUsize::new(0));
-    let strategy = Box::new(TickBasedStrategy { bar_counter: bar_counter.clone() });
+    let strategy = Box::new(TickBasedStrategy {
+        bar_counter: bar_counter.clone(),
+    });
     let config = BacktestConfig::new(Decimal::from(10000));
 
     let mut engine = BacktestEngine::new(strategy, config).unwrap();
@@ -445,7 +466,7 @@ impl Strategy for SessionAwareTestStrategy {
         0
     }
 
-    fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
+    fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) {
         self.bar_counter.fetch_add(1, Ordering::SeqCst);
 
         // Track if we see session-aligned or truncated bars
@@ -455,8 +476,6 @@ impl Strategy for SessionAwareTestStrategy {
         if bar_data.metadata.is_session_truncated {
             self.saw_session_truncated.store(true, Ordering::SeqCst);
         }
-
-        Signal::Hold
     }
 
     fn initialize(&mut self, _params: HashMap<String, String>) -> Result<(), String> {
@@ -504,7 +523,10 @@ fn test_strategy_session_config_default_no_session() {
     let result = engine.run_unified(BacktestData::Ticks(ticks));
 
     assert_eq!(result.strategy_name, "Session-Aware Test Strategy");
-    assert!(bar_counter.load(Ordering::SeqCst) > 0, "Should process bars");
+    assert!(
+        bar_counter.load(Ordering::SeqCst) > 0,
+        "Should process bars"
+    );
 
     // Without session config, no bars should be marked as session-aligned or truncated
     assert!(
@@ -543,7 +565,10 @@ fn test_strategy_session_config_with_schedule() {
     let result = engine.run_unified(BacktestData::Ticks(ticks));
 
     assert_eq!(result.strategy_name, "Session-Aware Test Strategy");
-    assert!(bar_counter.load(Ordering::SeqCst) > 0, "Should process bars");
+    assert!(
+        bar_counter.load(Ordering::SeqCst) > 0,
+        "Should process bars"
+    );
 
     // With session config, bars may be aligned (depending on tick timing)
     // The test verifies the config was passed through the framework
@@ -576,7 +601,10 @@ fn test_strategy_session_config_continuous_market() {
     let result = engine.run_unified(BacktestData::Ticks(ticks));
 
     assert_eq!(result.strategy_name, "Session-Aware Test Strategy");
-    assert!(bar_counter.load(Ordering::SeqCst) > 0, "Should process bars");
+    assert!(
+        bar_counter.load(Ordering::SeqCst) > 0,
+        "Should process bars"
+    );
 
     // Continuous markets have no session boundaries
     assert!(
@@ -609,14 +637,12 @@ impl Strategy for SessionAwareTickStrategy {
         0
     }
 
-    fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
+    fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) {
         self.bar_counter.fetch_add(1, Ordering::SeqCst);
 
         if bar_data.metadata.is_session_truncated {
             self.truncated_bar_count.fetch_add(1, Ordering::SeqCst);
         }
-
-        Signal::Hold
     }
 
     fn initialize(&mut self, _params: HashMap<String, String>) -> Result<(), String> {
@@ -668,7 +694,11 @@ fn test_tick_based_strategy_with_session_config() {
 
     assert_eq!(result.strategy_name, "Session-Aware Tick Strategy");
     let bars = bar_counter.load(Ordering::SeqCst);
-    assert!(bars >= 2, "Should have at least 2 bars (50-tick), got {}", bars);
+    assert!(
+        bars >= 2,
+        "Should have at least 2 bars (50-tick), got {}",
+        bars
+    );
 
     println!(
         "Tick-based session test: bars={}, truncated={}",
@@ -698,8 +728,8 @@ fn test_session_config_builder_pattern_in_strategy() {
             0
         }
 
-        fn on_bar_data(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
-            Signal::Hold
+        fn on_bar_data(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) {
+            // No action needed for this test
         }
 
         fn initialize(&mut self, params: HashMap<String, String>) -> Result<(), String> {
@@ -735,8 +765,7 @@ fn test_session_config_builder_pattern_in_strategy() {
 
     // Test with session enabled via params
     let strategy = Box::new(ConfigurableStrategy { use_session: false });
-    let config = BacktestConfig::new(Decimal::from(10000))
-        .with_param("use_session", "true");
+    let config = BacktestConfig::new(Decimal::from(10000)).with_param("use_session", "true");
 
     let ticks = create_test_ticks(60, "100");
     let mut engine = BacktestEngine::new(strategy, config).unwrap();

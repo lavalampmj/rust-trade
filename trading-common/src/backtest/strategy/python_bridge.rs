@@ -1,19 +1,20 @@
-use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use crate::accounts::AccountEvent;
 use crate::data::events::MarketDataEvent;
 use crate::data::types::{BarData, BarDataMode, BarType, Timeframe, TradeSide};
 use crate::instruments::SessionEvent;
 use crate::orders::{
-    ClientOrderId, Order, OrderCanceled, OrderEventAny, OrderFilled, OrderRejected, OrderSide, TimeInForce,
+    ClientOrderId, Order, OrderCanceled, OrderEventAny, OrderFilled, OrderRejected, OrderSide,
+    TimeInForce,
 };
 use crate::series::bars_context::BarsContext;
 use crate::series::MaximumBarsLookBack;
+use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyTuple};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 // OHLCData included via BarData.ohlc_bar
-use super::base::{Strategy, Signal};
+use super::base::Strategy;
 use super::position::PositionEvent;
 use super::state::StrategyStateEvent;
 use rust_decimal::Decimal;
@@ -40,7 +41,9 @@ impl std::fmt::Display for PythonBridgeError {
             PythonBridgeError::ConversionError(msg) => write!(f, "Conversion error: {}", msg),
             PythonBridgeError::MethodCallError(msg) => write!(f, "Method call error: {}", msg),
             PythonBridgeError::PythonException(msg) => write!(f, "Python exception: {}", msg),
-            PythonBridgeError::CircuitBreakerOpen => write!(f, "Circuit breaker open - strategy disabled"),
+            PythonBridgeError::CircuitBreakerOpen => {
+                write!(f, "Circuit breaker open - strategy disabled")
+            }
             PythonBridgeError::GilTimeout => write!(f, "GIL acquisition timeout"),
         }
     }
@@ -130,8 +133,14 @@ impl std::fmt::Debug for PythonStrategy {
             .field("cached_name", &self.cached_name)
             .field("cpu_time_us", &self.cpu_time_us.load(Ordering::Relaxed))
             .field("call_count", &self.call_count.load(Ordering::Relaxed))
-            .field("peak_execution_us", &self.peak_execution_us.load(Ordering::Relaxed))
-            .field("consecutive_errors", &self.consecutive_errors.load(Ordering::Relaxed))
+            .field(
+                "peak_execution_us",
+                &self.peak_execution_us.load(Ordering::Relaxed),
+            )
+            .field(
+                "consecutive_errors",
+                &self.consecutive_errors.load(Ordering::Relaxed),
+            )
             .field("circuit_open", &self.circuit_open.load(Ordering::Relaxed))
             .finish_non_exhaustive()
     }
@@ -142,15 +151,18 @@ impl PythonStrategy {
     pub fn from_file(path: &str, class_name: &str) -> Result<Self, String> {
         Python::with_gil(|py| {
             // Add strategy directory to Python path
-            let sys = py.import_bound("sys")
+            let sys = py
+                .import_bound("sys")
                 .map_err(|e| format!("Failed to import sys: {}", e))?;
-            let py_path = sys.getattr("path")
+            let py_path = sys
+                .getattr("path")
                 .map_err(|e| format!("Failed to get sys.path: {}", e))?;
 
             // Add parent directory of strategy file to path
             let strategy_path = std::path::Path::new(path);
             if let Some(parent) = strategy_path.parent() {
-                py_path.call_method1("insert", (0, parent.to_str().unwrap()))
+                py_path
+                    .call_method1("insert", (0, parent.to_str().unwrap()))
                     .map_err(|e| format!("Failed to add to sys.path: {}", e))?;
 
                 // Also add strategies root (for _lib package imports)
@@ -158,14 +170,20 @@ impl PythonStrategy {
                 if let Some(parent_name) = parent.file_name().and_then(|n| n.to_str()) {
                     if parent_name == "examples" || parent_name == "_tests" {
                         if let Some(strategies_root) = parent.parent() {
-                            py_path.call_method1("insert", (0, strategies_root.to_str().unwrap()))
-                                .map_err(|e| format!("Failed to add strategies root to sys.path: {}", e))?;
+                            py_path
+                                .call_method1("insert", (0, strategies_root.to_str().unwrap()))
+                                .map_err(|e| {
+                                    format!("Failed to add strategies root to sys.path: {}", e)
+                                })?;
 
                             // Add _lib directory for restricted_compiler import
                             let lib_path = strategies_root.join("_lib");
                             if lib_path.exists() {
-                                py_path.call_method1("insert", (0, lib_path.to_str().unwrap()))
-                                    .map_err(|e| format!("Failed to add _lib to sys.path: {}", e))?;
+                                py_path
+                                    .call_method1("insert", (0, lib_path.to_str().unwrap()))
+                                    .map_err(|e| {
+                                        format!("Failed to add _lib to sys.path: {}", e)
+                                    })?;
                             }
                         }
                     }
@@ -182,67 +200,82 @@ impl PythonStrategy {
                 .ok_or("Invalid file name")?;
 
             // Import restricted compiler module
-            let restricted_compiler = py.import_bound("restricted_compiler")
-                .map_err(|e| format!(
+            let restricted_compiler = py.import_bound("restricted_compiler").map_err(|e| {
+                format!(
                     "Failed to import restricted_compiler: {}\n\
                      Make sure RestrictedPython is installed: pip install RestrictedPython==7.0\n\
                      And strategies/_lib/restricted_compiler.py exists",
                     e
-                ))?;
+                )
+            })?;
 
             // Compile strategy code with restrictions
             let result = restricted_compiler
                 .getattr("compile_strategy")
                 .map_err(|e| format!("Failed to get compile_strategy function: {}", e))?
                 .call1((code.as_str(), path))
-                .map_err(|e| format!(
-                    "Failed to compile strategy with restrictions: {}\n\
+                .map_err(|e| {
+                    format!(
+                        "Failed to compile strategy with restrictions: {}\n\
                      This usually means the strategy code violates security policies.\n\
                      Check for: prohibited imports (os, subprocess, urllib, socket, sys), \n\
                      eval/exec usage, or unsafe operations.",
-                    e
-                ))?;
+                        e
+                    )
+                })?;
 
             // Extract bytecode and globals from tuple
-            let tuple = result.downcast::<PyTuple>()
+            let tuple = result
+                .downcast::<PyTuple>()
                 .map_err(|e| format!("compile_strategy should return tuple: {}", e))?;
-            let bytecode = tuple.get_item(0)
+            let bytecode = tuple
+                .get_item(0)
                 .map_err(|e| format!("Failed to get bytecode from tuple: {}", e))?;
-            let globals_item = tuple.get_item(1)
+            let globals_item = tuple
+                .get_item(1)
                 .map_err(|e| format!("Failed to get globals from tuple: {}", e))?;
-            let restricted_globals = globals_item.downcast::<PyDict>()
+            let restricted_globals = globals_item
+                .downcast::<PyDict>()
                 .map_err(|e| format!("restricted_globals should be dict: {}", e))?;
 
             // Set module metadata in restricted globals
-            restricted_globals.set_item("__name__", module_name)
+            restricted_globals
+                .set_item("__name__", module_name)
                 .map_err(|e| format!("Failed to set __name__: {}", e))?;
-            restricted_globals.set_item("__file__", path)
+            restricted_globals
+                .set_item("__file__", path)
                 .map_err(|e| format!("Failed to set __file__: {}", e))?;
 
             // Execute bytecode in restricted environment using Python's exec
-            let builtins = py.import_bound("builtins")
+            let builtins = py
+                .import_bound("builtins")
                 .map_err(|e| format!("Failed to import builtins: {}", e))?;
-            let exec_fn = builtins.getattr("exec")
+            let exec_fn = builtins
+                .getattr("exec")
                 .map_err(|e| format!("Failed to get exec function: {}", e))?;
 
-            exec_fn.call1((bytecode, restricted_globals))
-                .map_err(|e| format!(
+            exec_fn.call1((bytecode, restricted_globals)).map_err(|e| {
+                format!(
                     "Failed to execute strategy code: {}\n\
                      The strategy may be trying to use prohibited operations.",
                     e
-                ))?;
+                )
+            })?;
 
             // Get the strategy class from restricted globals
-            let strategy_class = restricted_globals.get_item(class_name)
+            let strategy_class = restricted_globals
+                .get_item(class_name)
                 .map_err(|e| format!("Failed to get item from globals: {}", e))?
                 .ok_or_else(|| format!("Class '{}' not found in module", class_name))?;
 
             // Instantiate the strategy
-            let instance = strategy_class.call0()
+            let instance = strategy_class
+                .call0()
                 .map_err(|e| format!("Failed to instantiate strategy: {}", e))?;
 
             // Cache metadata
-            let name = instance.call_method0("name")
+            let name = instance
+                .call_method0("name")
                 .and_then(|n: Bound<'_, PyAny>| n.extract::<String>())
                 .map_err(|e| format!("Failed to get strategy name: {}", e))?;
 
@@ -253,12 +286,15 @@ impl PythonStrategy {
             };
 
             // Import and create Python BarsContext
-            let bars_module = py.import_bound("_lib.bars_context")
+            let bars_module = py
+                .import_bound("_lib.bars_context")
                 .map_err(|e| format!("Failed to import _lib.bars_context: {}", e))?;
-            let bars_class = bars_module.getattr("BarsContext")
+            let bars_class = bars_module
+                .getattr("BarsContext")
                 .map_err(|e| format!("Failed to get BarsContext class: {}", e))?;
 
-            let py_bars = bars_class.call1(("", max_lookback))
+            let py_bars = bars_class
+                .call1(("", max_lookback))
                 .map_err(|e| format!("Failed to create BarsContext: {}", e))?;
 
             Ok(Self {
@@ -297,7 +333,10 @@ impl PythonStrategy {
 
     /// Get current error statistics
     pub fn get_error_stats(&self) -> ErrorStats {
-        self.error_stats.read().map(|s| s.clone()).unwrap_or_default()
+        self.error_stats
+            .read()
+            .map(|s| s.clone())
+            .unwrap_or_default()
     }
 
     /// Check if circuit breaker is open (strategy disabled)
@@ -336,7 +375,10 @@ impl PythonStrategy {
 
         // Log if enabled
         if self.error_config.log_errors {
-            eprintln!("[PythonBridge] {} error in {}: {}", self.cached_name, context, error);
+            eprintln!(
+                "[PythonBridge] {} error in {}: {}",
+                self.cached_name, context, error
+            );
         }
 
         // Notify callback
@@ -450,7 +492,10 @@ fn bar_data_to_pydict<'a>(py: Python<'a>, bar_data: &BarData) -> PyResult<Bound<
     dict.set_item("trade_count", ohlc.trade_count)?;
 
     // Add metadata
-    dict.set_item("is_first_tick_of_bar", bar_data.metadata.is_first_tick_of_bar)?;
+    dict.set_item(
+        "is_first_tick_of_bar",
+        bar_data.metadata.is_first_tick_of_bar,
+    )?;
     dict.set_item("is_bar_closed", bar_data.metadata.is_bar_closed)?;
     dict.set_item("is_synthetic", bar_data.metadata.is_synthetic)?;
     dict.set_item("tick_count_in_bar", bar_data.metadata.tick_count_in_bar)?;
@@ -461,10 +506,13 @@ fn bar_data_to_pydict<'a>(py: Python<'a>, bar_data: &BarData) -> PyResult<Bound<
         tick_dict.set_item("timestamp", tick.timestamp.to_rfc3339())?;
         tick_dict.set_item("price", tick.price.to_string())?;
         tick_dict.set_item("quantity", tick.quantity.to_string())?;
-        tick_dict.set_item("side", match tick.side {
-            TradeSide::Buy => "Buy",
-            TradeSide::Sell => "Sell",
-        })?;
+        tick_dict.set_item(
+            "side",
+            match tick.side {
+                TradeSide::Buy => "Buy",
+                TradeSide::Sell => "Sell",
+            },
+        )?;
         tick_dict.set_item("trade_id", &tick.trade_id)?;
         dict.set_item("current_tick", tick_dict)?;
     } else {
@@ -472,42 +520,6 @@ fn bar_data_to_pydict<'a>(py: Python<'a>, bar_data: &BarData) -> PyResult<Bound<
     }
 
     Ok(dict)
-}
-
-
-/// Convert Python dict to Rust Signal
-fn pydict_to_signal(obj: &Bound<'_, PyAny>) -> PyResult<Signal> {
-    let dict = obj.downcast::<PyDict>()?;
-    let signal_type = dict.get_item("type")?
-        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("Missing 'type' field"))?
-        .extract::<String>()?;
-
-    match signal_type.as_str() {
-        "Buy" => {
-            let symbol = dict.get_item("symbol")?
-                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("Missing 'symbol'"))?
-                .extract::<String>()?;
-            let quantity_str = dict.get_item("quantity")?
-                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("Missing 'quantity'"))?
-                .extract::<String>()?;
-            let quantity = Decimal::from_str(&quantity_str)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid quantity: {}", e)))?;
-            Ok(Signal::Buy { symbol, quantity })
-        }
-        "Sell" => {
-            let symbol = dict.get_item("symbol")?
-                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("Missing 'symbol'"))?
-                .extract::<String>()?;
-            let quantity_str = dict.get_item("quantity")?
-                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("Missing 'quantity'"))?
-                .extract::<String>()?;
-            let quantity = Decimal::from_str(&quantity_str)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid quantity: {}", e)))?;
-            Ok(Signal::Sell { symbol, quantity })
-        }
-        "Hold" => Ok(Signal::Hold),
-        _ => Err(pyo3::exceptions::PyValueError::new_err(format!("Unknown signal type: {}", signal_type))),
-    }
 }
 
 /// Parse timeframe string to Timeframe enum
@@ -636,20 +648,20 @@ impl Strategy for PythonStrategy {
         &self.cached_name
     }
 
-    fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
+    fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) {
         // Note: Python strategies use their own Python BarsContext
         // The Rust _bars parameter is ignored; we pass Python BarsContext instead
 
         // Check circuit breaker first
         if self.circuit_open.load(Ordering::Relaxed) {
-            return Signal::Hold;
+            return;
         }
 
         // Start timing
         let start = std::time::Instant::now();
         let mut had_error = false;
 
-        let signal = Python::with_gil(|py| {
+        Python::with_gil(|py| {
             let instance = self.py_instance.lock().unwrap();
             let py_bars = self.py_bars_context.lock().unwrap();
             let py_instance = instance.bind(py);
@@ -664,7 +676,7 @@ impl Strategy for PythonStrategy {
                         PythonBridgeError::ConversionError(e.to_string()),
                         "on_bar_data/bar_data_to_pydict",
                     );
-                    return Signal::Hold;
+                    return;
                 }
             };
 
@@ -675,32 +687,17 @@ impl Strategy for PythonStrategy {
                     PythonBridgeError::MethodCallError(e.to_string()),
                     "on_bar_data/on_bar_update",
                 );
-                return Signal::Hold;
+                return;
             }
 
             // Call Python on_bar_data method with BOTH bar_data AND bars
-            match py_instance.call_method1("on_bar_data", (&bar_dict, py_bars_bound)) {
-                Ok(result) => {
-                    match pydict_to_signal(&result) {
-                        Ok(signal) => signal,
-                        Err(e) => {
-                            had_error = true;
-                            self.record_error(
-                                PythonBridgeError::ConversionError(e.to_string()),
-                                "on_bar_data/pydict_to_signal",
-                            );
-                            Signal::Hold
-                        }
-                    }
-                }
-                Err(e) => {
-                    had_error = true;
-                    self.record_error(
-                        PythonBridgeError::PythonException(e.to_string()),
-                        "on_bar_data",
-                    );
-                    Signal::Hold
-                }
+            // Python strategy should store orders internally and return them via get_orders()
+            if let Err(e) = py_instance.call_method1("on_bar_data", (&bar_dict, py_bars_bound)) {
+                had_error = true;
+                self.record_error(
+                    PythonBridgeError::PythonException(e.to_string()),
+                    "on_bar_data",
+                );
             }
         });
 
@@ -730,8 +727,6 @@ impl Strategy for PythonStrategy {
                 self.get_avg_execution_us() / 1000
             );
         }
-
-        signal
     }
 
     fn initialize(&mut self, params: HashMap<String, String>) -> Result<(), String> {
@@ -742,12 +737,14 @@ impl Strategy for PythonStrategy {
             // Convert HashMap to Python dict
             let py_params = PyDict::new_bound(py);
             for (k, v) in params.iter() {
-                py_params.set_item(k, v)
+                py_params
+                    .set_item(k, v)
                     .map_err(|e| format!("Failed to set param: {}", e))?;
             }
 
             // Call initialize
-            let result = py_instance.call_method1("initialize", (&py_params,))
+            let result = py_instance
+                .call_method1("initialize", (&py_params,))
                 .map_err(|e| format!("Python initialize error: {}", e))?;
 
             // Check if error message returned
@@ -822,7 +819,9 @@ impl Strategy for PythonStrategy {
                                         BarType::TimeBased(Timeframe::OneMinute)
                                     }
                                     "TickBased" => {
-                                        if let Ok(Some(count)) = bar_type_dict.get_item("tick_count") {
+                                        if let Ok(Some(count)) =
+                                            bar_type_dict.get_item("tick_count")
+                                        {
                                             if let Ok(n) = count.extract::<u32>() {
                                                 return BarType::TickBased(n);
                                             }
@@ -901,10 +900,13 @@ impl Strategy for PythonStrategy {
             let _ = event_dict.set_item("client_order_id", event.client_order_id.as_str());
             let _ = event_dict.set_item("venue_order_id", event.venue_order_id.as_str());
             let _ = event_dict.set_item("symbol", event.instrument_id.symbol.as_str());
-            let _ = event_dict.set_item("order_side", match event.order_side {
-                OrderSide::Buy => "Buy",
-                OrderSide::Sell => "Sell",
-            });
+            let _ = event_dict.set_item(
+                "order_side",
+                match event.order_side {
+                    OrderSide::Buy => "Buy",
+                    OrderSide::Sell => "Sell",
+                },
+            );
             let _ = event_dict.set_item("last_qty", event.last_qty.to_string());
             let _ = event_dict.set_item("last_px", event.last_px.to_string());
             let _ = event_dict.set_item("cum_qty", event.cum_qty.to_string());
@@ -960,10 +962,13 @@ impl Strategy for PythonStrategy {
             let order_dict = PyDict::new_bound(py);
             let _ = order_dict.set_item("client_order_id", order.client_order_id.as_str());
             let _ = order_dict.set_item("symbol", order.instrument_id.symbol.as_str());
-            let _ = order_dict.set_item("order_side", match order.side {
-                OrderSide::Buy => "Buy",
-                OrderSide::Sell => "Sell",
-            });
+            let _ = order_dict.set_item(
+                "order_side",
+                match order.side {
+                    OrderSide::Buy => "Buy",
+                    OrderSide::Sell => "Sell",
+                },
+            );
             let _ = order_dict.set_item("order_type", order.order_type.to_string());
             let _ = order_dict.set_item("quantity", order.quantity.to_string());
             if let Some(price) = order.price {
@@ -978,18 +983,6 @@ impl Strategy for PythonStrategy {
                 eprintln!("Python on_order_submitted error: {}", e);
             }
         });
-    }
-
-    fn uses_order_management(&self) -> bool {
-        Python::with_gil(|py| {
-            let instance = self.py_instance.lock().unwrap();
-            let py_instance = instance.bind(py);
-
-            match py_instance.call_method0("uses_order_management") {
-                Ok(result) => result.extract::<bool>().unwrap_or(false),
-                Err(_) => false,
-            }
-        })
     }
 
     fn get_orders(&mut self, bar_data: &BarData, _bars: &mut BarsContext) -> Vec<Order> {
@@ -1026,7 +1019,11 @@ impl Strategy for PythonStrategy {
         })
     }
 
-    fn get_cancellations(&mut self, bar_data: &BarData, _bars: &mut BarsContext) -> Vec<ClientOrderId> {
+    fn get_cancellations(
+        &mut self,
+        bar_data: &BarData,
+        _bars: &mut BarsContext,
+    ) -> Vec<ClientOrderId> {
         Python::with_gil(|py| {
             let instance = self.py_instance.lock().unwrap();
             let py_bars = self.py_bars_context.lock().unwrap();
@@ -1044,9 +1041,7 @@ impl Strategy for PythonStrategy {
             match py_instance.call_method1("get_cancellations", (&bar_dict, py_bars_bound)) {
                 Ok(result) => {
                     if let Ok(ids) = result.extract::<Vec<String>>() {
-                        ids.into_iter()
-                            .map(|s| ClientOrderId::new(s))
-                            .collect()
+                        ids.into_iter().map(|s| ClientOrderId::new(s)).collect()
                     } else {
                         Vec::new()
                     }
@@ -1121,10 +1116,13 @@ impl Strategy for PythonStrategy {
                     let _ = event_dict.set_item("client_order_id", e.client_order_id.as_str());
                     let _ = event_dict.set_item("venue_order_id", e.venue_order_id.as_str());
                     let _ = event_dict.set_item("symbol", e.instrument_id.symbol.as_str());
-                    let _ = event_dict.set_item("order_side", match e.order_side {
-                        OrderSide::Buy => "Buy",
-                        OrderSide::Sell => "Sell",
-                    });
+                    let _ = event_dict.set_item(
+                        "order_side",
+                        match e.order_side {
+                            OrderSide::Buy => "Buy",
+                            OrderSide::Sell => "Sell",
+                        },
+                    );
                     let _ = event_dict.set_item("last_qty", e.last_qty.to_string());
                     let _ = event_dict.set_item("last_px", e.last_px.to_string());
                     let _ = event_dict.set_item("cum_qty", e.cum_qty.to_string());
@@ -1134,7 +1132,8 @@ impl Strategy for PythonStrategy {
                 }
                 _ => {
                     // For other event types, just add client_order_id and timestamp
-                    let _ = event_dict.set_item("client_order_id", event.client_order_id().as_str());
+                    let _ =
+                        event_dict.set_item("client_order_id", event.client_order_id().as_str());
                     let _ = event_dict.set_item("timestamp", event.ts_event().to_rfc3339());
                 }
             }
@@ -1159,10 +1158,13 @@ impl Strategy for PythonStrategy {
             let _ = event_dict.set_item("client_order_id", event.client_order_id.as_str());
             let _ = event_dict.set_item("venue_order_id", event.venue_order_id.as_str());
             let _ = event_dict.set_item("symbol", event.instrument_id.symbol.as_str());
-            let _ = event_dict.set_item("order_side", match event.order_side {
-                OrderSide::Buy => "Buy",
-                OrderSide::Sell => "Sell",
-            });
+            let _ = event_dict.set_item(
+                "order_side",
+                match event.order_side {
+                    OrderSide::Buy => "Buy",
+                    OrderSide::Sell => "Sell",
+                },
+            );
             let _ = event_dict.set_item("last_qty", event.last_qty.to_string());
             let _ = event_dict.set_item("last_px", event.last_px.to_string());
             let _ = event_dict.set_item("cum_qty", event.cum_qty.to_string());
@@ -1229,12 +1231,21 @@ impl Strategy for PythonStrategy {
             let event_dict = PyDict::new_bound(py);
 
             match event {
-                AccountEvent::Created { account_id, timestamp } => {
+                AccountEvent::Created {
+                    account_id,
+                    timestamp,
+                } => {
                     let _ = event_dict.set_item("event_type", "Created");
                     let _ = event_dict.set_item("account_id", account_id.as_str());
                     let _ = event_dict.set_item("timestamp", timestamp.to_rfc3339());
                 }
-                AccountEvent::BalanceUpdated { account_id, currency, old_balance, new_balance, timestamp } => {
+                AccountEvent::BalanceUpdated {
+                    account_id,
+                    currency,
+                    old_balance,
+                    new_balance,
+                    timestamp,
+                } => {
                     let _ = event_dict.set_item("event_type", "BalanceUpdated");
                     let _ = event_dict.set_item("account_id", account_id.as_str());
                     let _ = event_dict.set_item("currency", currency);
@@ -1244,14 +1255,25 @@ impl Strategy for PythonStrategy {
                     let _ = event_dict.set_item("new_free", new_balance.free.to_string());
                     let _ = event_dict.set_item("timestamp", timestamp.to_rfc3339());
                 }
-                AccountEvent::StateChanged { account_id, old_state, new_state, timestamp } => {
+                AccountEvent::StateChanged {
+                    account_id,
+                    old_state,
+                    new_state,
+                    timestamp,
+                } => {
                     let _ = event_dict.set_item("event_type", "StateChanged");
                     let _ = event_dict.set_item("account_id", account_id.as_str());
                     let _ = event_dict.set_item("old_state", format!("{:?}", old_state));
                     let _ = event_dict.set_item("new_state", format!("{:?}", new_state));
                     let _ = event_dict.set_item("timestamp", timestamp.to_rfc3339());
                 }
-                AccountEvent::MarginUpdated { account_id, margin_used, margin_available, unrealized_pnl, timestamp } => {
+                AccountEvent::MarginUpdated {
+                    account_id,
+                    margin_used,
+                    margin_available,
+                    unrealized_pnl,
+                    timestamp,
+                } => {
                     let _ = event_dict.set_item("event_type", "MarginUpdated");
                     let _ = event_dict.set_item("account_id", account_id.as_str());
                     let _ = event_dict.set_item("margin_used", margin_used.to_string());
@@ -1287,10 +1309,13 @@ impl Strategy for PythonStrategy {
                 let tick_dict = PyDict::new_bound(py);
                 let _ = tick_dict.set_item("price", tick.price.to_string());
                 let _ = tick_dict.set_item("quantity", tick.quantity.to_string());
-                let _ = tick_dict.set_item("side", match tick.side {
-                    TradeSide::Buy => "Buy",
-                    TradeSide::Sell => "Sell",
-                });
+                let _ = tick_dict.set_item(
+                    "side",
+                    match tick.side {
+                        TradeSide::Buy => "Buy",
+                        TradeSide::Sell => "Sell",
+                    },
+                );
                 let _ = tick_dict.set_item("trade_id", &tick.trade_id);
                 let _ = tick_dict.set_item("timestamp", tick.timestamp.to_rfc3339());
                 let _ = event_dict.set_item("tick", tick_dict);
@@ -1370,7 +1395,8 @@ impl Strategy for PythonStrategy {
                     let _ = event_dict.set_item("event_type", "SessionOpened");
                     let _ = event_dict.set_item("symbol", symbol);
                     let _ = event_dict.set_item("session_name", &session.name);
-                    let _ = event_dict.set_item("session_type", format!("{:?}", session.session_type));
+                    let _ =
+                        event_dict.set_item("session_type", format!("{:?}", session.session_type));
                 }
                 SessionEvent::SessionClosed { symbol } => {
                     let _ = event_dict.set_item("event_type", "SessionClosed");
@@ -1440,120 +1466,6 @@ mod tests {
         assert_eq!(parse_timeframe("1M"), None); // Case sensitive
         assert_eq!(parse_timeframe("1H"), None);
         assert_eq!(parse_timeframe("1D"), None);
-    }
-
-    // ========================================================================
-    // pydict_to_signal tests (require Python GIL)
-    // ========================================================================
-
-    #[test]
-    fn test_pydict_to_signal_buy() {
-        Python::with_gil(|py| {
-            let dict = PyDict::new_bound(py);
-            dict.set_item("type", "Buy").unwrap();
-            dict.set_item("symbol", "BTCUSDT").unwrap();
-            dict.set_item("quantity", "1.5").unwrap();
-
-            let signal = pydict_to_signal(dict.as_any()).unwrap();
-            match signal {
-                Signal::Buy { symbol, quantity } => {
-                    assert_eq!(symbol, "BTCUSDT");
-                    assert_eq!(quantity, dec!(1.5));
-                }
-                _ => panic!("Expected Buy signal"),
-            }
-        });
-    }
-
-    #[test]
-    fn test_pydict_to_signal_sell() {
-        Python::with_gil(|py| {
-            let dict = PyDict::new_bound(py);
-            dict.set_item("type", "Sell").unwrap();
-            dict.set_item("symbol", "ETHUSDT").unwrap();
-            dict.set_item("quantity", "10.0").unwrap();
-
-            let signal = pydict_to_signal(dict.as_any()).unwrap();
-            match signal {
-                Signal::Sell { symbol, quantity } => {
-                    assert_eq!(symbol, "ETHUSDT");
-                    assert_eq!(quantity, dec!(10.0));
-                }
-                _ => panic!("Expected Sell signal"),
-            }
-        });
-    }
-
-    #[test]
-    fn test_pydict_to_signal_hold() {
-        Python::with_gil(|py| {
-            let dict = PyDict::new_bound(py);
-            dict.set_item("type", "Hold").unwrap();
-
-            let signal = pydict_to_signal(dict.as_any()).unwrap();
-            assert!(matches!(signal, Signal::Hold));
-        });
-    }
-
-    #[test]
-    fn test_pydict_to_signal_missing_type() {
-        Python::with_gil(|py| {
-            let dict = PyDict::new_bound(py);
-            dict.set_item("symbol", "BTCUSDT").unwrap();
-
-            let result = pydict_to_signal(dict.as_any());
-            assert!(result.is_err());
-        });
-    }
-
-    #[test]
-    fn test_pydict_to_signal_missing_symbol() {
-        Python::with_gil(|py| {
-            let dict = PyDict::new_bound(py);
-            dict.set_item("type", "Buy").unwrap();
-            dict.set_item("quantity", "1.0").unwrap();
-
-            let result = pydict_to_signal(dict.as_any());
-            assert!(result.is_err());
-        });
-    }
-
-    #[test]
-    fn test_pydict_to_signal_missing_quantity() {
-        Python::with_gil(|py| {
-            let dict = PyDict::new_bound(py);
-            dict.set_item("type", "Buy").unwrap();
-            dict.set_item("symbol", "BTCUSDT").unwrap();
-
-            let result = pydict_to_signal(dict.as_any());
-            assert!(result.is_err());
-        });
-    }
-
-    #[test]
-    fn test_pydict_to_signal_invalid_quantity() {
-        Python::with_gil(|py| {
-            let dict = PyDict::new_bound(py);
-            dict.set_item("type", "Buy").unwrap();
-            dict.set_item("symbol", "BTCUSDT").unwrap();
-            dict.set_item("quantity", "not_a_number").unwrap();
-
-            let result = pydict_to_signal(dict.as_any());
-            assert!(result.is_err());
-        });
-    }
-
-    #[test]
-    fn test_pydict_to_signal_unknown_type() {
-        Python::with_gil(|py| {
-            let dict = PyDict::new_bound(py);
-            dict.set_item("type", "Unknown").unwrap();
-            dict.set_item("symbol", "BTCUSDT").unwrap();
-            dict.set_item("quantity", "1.0").unwrap();
-
-            let result = pydict_to_signal(dict.as_any());
-            assert!(result.is_err());
-        });
     }
 
     // ========================================================================
@@ -1720,7 +1632,8 @@ mod tests {
             dict.set_item("order_side", "Buy").unwrap();
             dict.set_item("order_type", "Market").unwrap();
             dict.set_item("quantity", "1.0").unwrap();
-            dict.set_item("client_order_id", "my-custom-id-123").unwrap();
+            dict.set_item("client_order_id", "my-custom-id-123")
+                .unwrap();
 
             let order = pydict_to_order(&dict).unwrap();
             assert_eq!(order.client_order_id.as_str(), "my-custom-id-123");
@@ -1849,19 +1762,96 @@ mod tests {
             let dict = bar_data_to_pydict(py, &bar_data).unwrap();
 
             // Check OHLC fields
-            assert_eq!(dict.get_item("symbol").unwrap().unwrap().extract::<String>().unwrap(), "BTCUSDT");
-            assert_eq!(dict.get_item("open").unwrap().unwrap().extract::<String>().unwrap(), "50000.0");
-            assert_eq!(dict.get_item("high").unwrap().unwrap().extract::<String>().unwrap(), "50100.0");
-            assert_eq!(dict.get_item("low").unwrap().unwrap().extract::<String>().unwrap(), "49900.0");
-            assert_eq!(dict.get_item("close").unwrap().unwrap().extract::<String>().unwrap(), "50050.0");
-            assert_eq!(dict.get_item("volume").unwrap().unwrap().extract::<String>().unwrap(), "100.5");
-            assert_eq!(dict.get_item("trade_count").unwrap().unwrap().extract::<u64>().unwrap(), 150);
+            assert_eq!(
+                dict.get_item("symbol")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "BTCUSDT"
+            );
+            assert_eq!(
+                dict.get_item("open")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "50000.0"
+            );
+            assert_eq!(
+                dict.get_item("high")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "50100.0"
+            );
+            assert_eq!(
+                dict.get_item("low")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "49900.0"
+            );
+            assert_eq!(
+                dict.get_item("close")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "50050.0"
+            );
+            assert_eq!(
+                dict.get_item("volume")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "100.5"
+            );
+            assert_eq!(
+                dict.get_item("trade_count")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<u64>()
+                    .unwrap(),
+                150
+            );
 
             // Check metadata fields
-            assert_eq!(dict.get_item("is_first_tick_of_bar").unwrap().unwrap().extract::<bool>().unwrap(), true);
-            assert_eq!(dict.get_item("is_bar_closed").unwrap().unwrap().extract::<bool>().unwrap(), false);
-            assert_eq!(dict.get_item("is_synthetic").unwrap().unwrap().extract::<bool>().unwrap(), false);
-            assert_eq!(dict.get_item("tick_count_in_bar").unwrap().unwrap().extract::<u64>().unwrap(), 10);
+            assert_eq!(
+                dict.get_item("is_first_tick_of_bar")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<bool>()
+                    .unwrap(),
+                true
+            );
+            assert_eq!(
+                dict.get_item("is_bar_closed")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<bool>()
+                    .unwrap(),
+                false
+            );
+            assert_eq!(
+                dict.get_item("is_synthetic")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<bool>()
+                    .unwrap(),
+                false
+            );
+            assert_eq!(
+                dict.get_item("tick_count_in_bar")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<u64>()
+                    .unwrap(),
+                10
+            );
 
             // Check current_tick is None
             assert!(dict.get_item("current_tick").unwrap().unwrap().is_none());
@@ -1879,10 +1869,42 @@ mod tests {
             assert!(!tick_item.is_none());
 
             let tick_dict = tick_item.downcast::<PyDict>().unwrap();
-            assert_eq!(tick_dict.get_item("price").unwrap().unwrap().extract::<String>().unwrap(), "50050.0");
-            assert_eq!(tick_dict.get_item("quantity").unwrap().unwrap().extract::<String>().unwrap(), "0.5");
-            assert_eq!(tick_dict.get_item("side").unwrap().unwrap().extract::<String>().unwrap(), "Buy");
-            assert_eq!(tick_dict.get_item("trade_id").unwrap().unwrap().extract::<String>().unwrap(), "trade-123");
+            assert_eq!(
+                tick_dict
+                    .get_item("price")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "50050.0"
+            );
+            assert_eq!(
+                tick_dict
+                    .get_item("quantity")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "0.5"
+            );
+            assert_eq!(
+                tick_dict
+                    .get_item("side")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "Buy"
+            );
+            assert_eq!(
+                tick_dict
+                    .get_item("trade_id")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "trade-123"
+            );
         });
     }
 
@@ -1897,7 +1919,15 @@ mod tests {
             let dict = bar_data_to_pydict(py, &bar_data).unwrap();
             let tick_item = dict.get_item("current_tick").unwrap().unwrap();
             let tick_dict = tick_item.downcast::<PyDict>().unwrap();
-            assert_eq!(tick_dict.get_item("side").unwrap().unwrap().extract::<String>().unwrap(), "Sell");
+            assert_eq!(
+                tick_dict
+                    .get_item("side")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "Sell"
+            );
         });
     }
 
@@ -2050,7 +2080,11 @@ mod tests {
                 params.insert("long_period".to_string(), "30".to_string());
 
                 let init_result = strategy.initialize(params);
-                assert!(init_result.is_ok(), "Initialize should succeed: {:?}", init_result);
+                assert!(
+                    init_result.is_ok(),
+                    "Initialize should succeed: {:?}",
+                    init_result
+                );
             }
             Err(e) => {
                 if e.contains("RestrictedPython") {
@@ -2063,29 +2097,6 @@ mod tests {
     }
 
     #[test]
-    fn test_python_strategy_uses_order_management_default() {
-        let strategy_path = "strategies/examples/example_sma.py";
-        if !std::path::Path::new(strategy_path).exists() {
-            eprintln!("Skipping test: {} not found", strategy_path);
-            return;
-        }
-
-        let result = PythonStrategy::from_file(strategy_path, "SMAStrategy");
-        match result {
-            Ok(strategy) => {
-                // Default should be false
-                assert!(!strategy.uses_order_management());
-            }
-            Err(e) => {
-                if e.contains("RestrictedPython") {
-                    eprintln!("Skipping test: RestrictedPython not installed");
-                    return;
-                }
-                panic!("Failed to load strategy: {}", e);
-            }
-        }
-    }
-
     #[test]
     fn test_python_strategy_on_bar_data_execution() {
         let strategy_path = "strategies/examples/example_sma.py";
@@ -2100,11 +2111,12 @@ mod tests {
                 let bar_data = create_test_bar_data();
                 let mut bars_context = BarsContext::new("BTCUSDT");
 
-                // Execute on_bar_data
-                let signal = strategy.on_bar_data(&bar_data, &mut bars_context);
+                // Execute on_bar_data (returns () now, orders via get_orders())
+                strategy.on_bar_data(&bar_data, &mut bars_context);
 
-                // Should return Hold (not enough data for SMA)
-                assert!(matches!(signal, Signal::Hold));
+                // Get orders (should be empty with not enough data for SMA)
+                let orders = strategy.get_orders(&bar_data, &mut bars_context);
+                assert!(orders.is_empty(), "Expected no orders with insufficient SMA data");
 
                 // Metrics should be updated
                 assert!(strategy.get_call_count() >= 1);
@@ -2344,8 +2356,14 @@ mod tests {
                 });
 
                 // Trigger circuit breaker
-                strategy.simulate_error(PythonBridgeError::PythonException("err1".to_string()), "test");
-                strategy.simulate_error(PythonBridgeError::PythonException("err2".to_string()), "test");
+                strategy.simulate_error(
+                    PythonBridgeError::PythonException("err1".to_string()),
+                    "test",
+                );
+                strategy.simulate_error(
+                    PythonBridgeError::PythonException("err2".to_string()),
+                    "test",
+                );
                 assert!(strategy.is_circuit_open());
 
                 // Manually reset circuit breaker
@@ -2392,8 +2410,14 @@ mod tests {
                 }));
 
                 // Simulate errors
-                strategy.simulate_error(PythonBridgeError::ConversionError("test".to_string()), "test");
-                strategy.simulate_error(PythonBridgeError::MethodCallError("test".to_string()), "test");
+                strategy.simulate_error(
+                    PythonBridgeError::ConversionError("test".to_string()),
+                    "test",
+                );
+                strategy.simulate_error(
+                    PythonBridgeError::MethodCallError("test".to_string()),
+                    "test",
+                );
 
                 // Callback should have been called twice
                 assert_eq!(error_count.load(Ordering::SeqCst), 2);
@@ -2427,15 +2451,24 @@ mod tests {
                 });
 
                 // Trigger circuit breaker
-                strategy.simulate_error(PythonBridgeError::PythonException("err1".to_string()), "test");
-                strategy.simulate_error(PythonBridgeError::PythonException("err2".to_string()), "test");
+                strategy.simulate_error(
+                    PythonBridgeError::PythonException("err1".to_string()),
+                    "test",
+                );
+                strategy.simulate_error(
+                    PythonBridgeError::PythonException("err2".to_string()),
+                    "test",
+                );
                 assert!(strategy.is_circuit_open());
 
-                // on_bar_data should return Hold without calling Python
+                // on_bar_data should do nothing with circuit open (no Python call)
                 let bar_data = create_test_bar_data();
                 let mut bars_context = BarsContext::new("BTCUSDT");
-                let signal = strategy.on_bar_data(&bar_data, &mut bars_context);
-                assert!(matches!(signal, Signal::Hold));
+                strategy.on_bar_data(&bar_data, &mut bars_context);
+
+                // Get orders should return empty when circuit is open
+                let orders = strategy.get_orders(&bar_data, &mut bars_context);
+                assert!(orders.is_empty(), "Circuit open should return no orders");
 
                 // Call count should still be 0 (circuit breaker prevented call)
                 assert_eq!(strategy.get_call_count(), 0);
@@ -2469,9 +2502,18 @@ mod tests {
                 });
 
                 // Accumulate some errors
-                strategy.simulate_error(PythonBridgeError::ConversionError("err".to_string()), "test");
-                strategy.simulate_error(PythonBridgeError::ConversionError("err".to_string()), "test");
-                strategy.simulate_error(PythonBridgeError::ConversionError("err".to_string()), "test");
+                strategy.simulate_error(
+                    PythonBridgeError::ConversionError("err".to_string()),
+                    "test",
+                );
+                strategy.simulate_error(
+                    PythonBridgeError::ConversionError("err".to_string()),
+                    "test",
+                );
+                strategy.simulate_error(
+                    PythonBridgeError::ConversionError("err".to_string()),
+                    "test",
+                );
 
                 let stats = strategy.get_error_stats();
                 assert_eq!(stats.total_errors, 3);
