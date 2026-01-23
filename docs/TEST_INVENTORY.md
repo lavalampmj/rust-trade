@@ -6,10 +6,10 @@ Comprehensive documentation of all unit and integration tests in the rust-trade 
 
 | Crate | Unit Tests | Integration Tests | Benchmarks | Total |
 |-------|------------|-------------------|------------|-------|
-| trading-common | ~387 | 16 | 0 | ~403 |
+| trading-common | ~387 | 21 | 0 | ~408 |
 | trading-core | 17 | 21 | 9 | 47 |
 | data-manager | 134 | 8 | 0 | 142 |
-| **Total** | **~538** | **45** | **9** | **~592** |
+| **Total** | **~538** | **50** | **9** | **~597** |
 
 ---
 
@@ -257,6 +257,157 @@ fn test_tick_based_bars() {
         "With {} ticks and {}-tick bars, expected {} bars, got {}",
         tick_count, ticks_per_bar, expected_bars, bars_processed
     );
+}
+```
+
+##### test_strategy_session_config_default_no_session
+Tests that strategies with default (no session) config operate in 24/7 mode.
+
+```rust
+#[test]
+fn test_strategy_session_config_default_no_session() {
+    let bar_counter = Arc::new(AtomicUsize::new(0));
+    let saw_aligned = Arc::new(AtomicBool::new(false));
+    let saw_truncated = Arc::new(AtomicBool::new(false));
+
+    let strategy = Box::new(SessionAwareTestStrategy::new(
+        SessionAwareConfig::default(), // No session
+        bar_counter.clone(),
+        saw_aligned.clone(),
+        saw_truncated.clone(),
+    ));
+
+    let ticks = create_test_ticks(120, "100");
+    let config = BacktestConfig::new(Decimal::from(10000));
+
+    let mut engine = BacktestEngine::new(strategy, config).unwrap();
+    let result = engine.run_unified(BacktestData::Ticks(ticks));
+
+    // Without session config, no bars should be marked as session-aligned or truncated
+    assert!(!saw_aligned.load(Ordering::SeqCst));
+    assert!(!saw_truncated.load(Ordering::SeqCst));
+}
+```
+
+##### test_strategy_session_config_with_schedule
+Tests that strategies can programmatically configure session awareness using preset schedules.
+
+```rust
+#[test]
+fn test_strategy_session_config_with_schedule() {
+    // Use the built-in US equity schedule (9:30 AM - 4:00 PM ET)
+    let schedule = session_presets::us_equity();
+    let session_config = SessionAwareConfig::with_session(Arc::new(schedule))
+        .with_session_open_alignment(true)
+        .with_session_close_truncation(true);
+
+    let bar_counter = Arc::new(AtomicUsize::new(0));
+    let saw_aligned = Arc::new(AtomicBool::new(false));
+    let saw_truncated = Arc::new(AtomicBool::new(false));
+
+    let strategy = Box::new(SessionAwareTestStrategy::new(
+        session_config,
+        bar_counter.clone(),
+        saw_aligned.clone(),
+        saw_truncated.clone(),
+    ));
+
+    let ticks = create_test_ticks(120, "100");
+    let config = BacktestConfig::new(Decimal::from(10000));
+
+    let mut engine = BacktestEngine::new(strategy, config).unwrap();
+    let result = engine.run_unified(BacktestData::Ticks(ticks));
+
+    assert!(bar_counter.load(Ordering::SeqCst) > 0, "Should process bars");
+}
+```
+
+##### test_strategy_session_config_continuous_market
+Tests that strategies can specify 24/7 continuous market mode.
+
+```rust
+#[test]
+fn test_strategy_session_config_continuous_market() {
+    let strategy = Box::new(SessionAwareTestStrategy::new(
+        SessionAwareConfig::continuous(), // 24/7 mode
+        bar_counter.clone(),
+        saw_aligned.clone(),
+        saw_truncated.clone(),
+    ));
+
+    let ticks = create_test_ticks(120, "100");
+    let config = BacktestConfig::new(Decimal::from(10000));
+
+    let mut engine = BacktestEngine::new(strategy, config).unwrap();
+    let result = engine.run_unified(BacktestData::Ticks(ticks));
+
+    // Continuous markets have no session boundaries
+    assert!(!saw_aligned.load(Ordering::SeqCst));
+    assert!(!saw_truncated.load(Ordering::SeqCst));
+}
+```
+
+##### test_tick_based_strategy_with_session_config
+Tests that tick-based strategies can also use session configuration.
+
+```rust
+#[test]
+fn test_tick_based_strategy_with_session_config() {
+    let schedule = session_presets::us_equity();
+    let session_config = SessionAwareConfig::with_session(Arc::new(schedule))
+        .with_session_open_alignment(false) // Not applicable for tick bars
+        .with_session_close_truncation(true); // Truncate partial bars at session close
+
+    let strategy = Box::new(SessionAwareTickStrategy {
+        session_config,
+        bar_counter: bar_counter.clone(),
+        truncated_bar_count: truncated_count.clone(),
+    });
+
+    // 75 ticks with 50-tick bars = 2 bars (50 + 25 partial)
+    let ticks = create_test_ticks(75, "100");
+    let config = BacktestConfig::new(Decimal::from(10000));
+
+    let mut engine = BacktestEngine::new(strategy, config).unwrap();
+    let result = engine.run_unified(BacktestData::Ticks(ticks));
+
+    let bars = bar_counter.load(Ordering::SeqCst);
+    assert!(bars >= 2, "Should have at least 2 bars (50-tick)");
+}
+```
+
+##### test_session_config_builder_pattern_in_strategy
+Tests that strategies can dynamically configure session awareness via parameters.
+
+```rust
+#[test]
+fn test_session_config_builder_pattern_in_strategy() {
+    // Strategy that can enable/disable session awareness via params
+    struct ConfigurableStrategy { use_session: bool }
+
+    impl Strategy for ConfigurableStrategy {
+        fn session_config(&self) -> SessionAwareConfig {
+            if self.use_session {
+                let schedule = session_presets::us_equity();
+                SessionAwareConfig::with_session(Arc::new(schedule))
+                    .with_session_open_alignment(true)
+                    .with_session_close_truncation(true)
+            } else {
+                SessionAwareConfig::continuous()
+            }
+        }
+        // ... other trait methods
+    }
+
+    let strategy = Box::new(ConfigurableStrategy { use_session: false });
+    let config = BacktestConfig::new(Decimal::from(10000))
+        .with_param("use_session", "true");
+
+    let ticks = create_test_ticks(60, "100");
+    let mut engine = BacktestEngine::new(strategy, config).unwrap();
+    let result = engine.run_unified(BacktestData::Ticks(ticks));
+
+    assert_eq!(result.strategy_name, "Configurable Strategy");
 }
 ```
 

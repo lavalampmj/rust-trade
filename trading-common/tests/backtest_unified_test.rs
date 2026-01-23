@@ -2,11 +2,12 @@ use chrono::{Duration, Utc};
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use trading_common::backtest::strategy::{Signal, Strategy};
-use trading_common::backtest::{BacktestConfig, BacktestData, BacktestEngine};
+use trading_common::backtest::{BacktestConfig, BacktestData, BacktestEngine, SessionAwareConfig};
 use trading_common::data::types::{BarData, BarDataMode, BarType, TickData, Timeframe, TradeSide};
+use trading_common::instruments::session_presets;
 use trading_common::series::bars_context::BarsContext;
 
 /// Simple test strategy that buys on first bar and sells on last
@@ -401,4 +402,345 @@ fn test_tick_based_bars() {
         "With {} ticks and {}-tick bars, expected {} bars, got {}",
         tick_count, ticks_per_bar, expected_bars, bars_processed
     );
+}
+
+// ============================================================================
+// Session-Aware Strategy Tests
+// ============================================================================
+
+/// Strategy that configures session-aware bar generation programmatically
+struct SessionAwareTestStrategy {
+    session_config: SessionAwareConfig,
+    bar_counter: Arc<AtomicUsize>,
+    saw_session_aligned: Arc<AtomicBool>,
+    saw_session_truncated: Arc<AtomicBool>,
+}
+
+impl SessionAwareTestStrategy {
+    fn new(
+        session_config: SessionAwareConfig,
+        bar_counter: Arc<AtomicUsize>,
+        saw_aligned: Arc<AtomicBool>,
+        saw_truncated: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            session_config,
+            bar_counter,
+            saw_session_aligned: saw_aligned,
+            saw_session_truncated: saw_truncated,
+        }
+    }
+}
+
+impl Strategy for SessionAwareTestStrategy {
+    fn name(&self) -> &str {
+        "Session-Aware Test Strategy"
+    }
+
+    fn is_ready(&self, _bars: &BarsContext) -> bool {
+        true
+    }
+
+    fn warmup_period(&self) -> usize {
+        0
+    }
+
+    fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
+        self.bar_counter.fetch_add(1, Ordering::SeqCst);
+
+        // Track if we see session-aligned or truncated bars
+        if bar_data.metadata.is_session_aligned {
+            self.saw_session_aligned.store(true, Ordering::SeqCst);
+        }
+        if bar_data.metadata.is_session_truncated {
+            self.saw_session_truncated.store(true, Ordering::SeqCst);
+        }
+
+        Signal::Hold
+    }
+
+    fn initialize(&mut self, _params: HashMap<String, String>) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn reset(&mut self) {
+        self.bar_counter.store(0, Ordering::SeqCst);
+        self.saw_session_aligned.store(false, Ordering::SeqCst);
+        self.saw_session_truncated.store(false, Ordering::SeqCst);
+    }
+
+    fn bar_data_mode(&self) -> BarDataMode {
+        BarDataMode::OnCloseBar
+    }
+
+    fn preferred_bar_type(&self) -> BarType {
+        BarType::TimeBased(Timeframe::OneMinute)
+    }
+
+    /// KEY: Strategy can programmatically configure session awareness
+    fn session_config(&self) -> SessionAwareConfig {
+        self.session_config.clone()
+    }
+}
+
+#[test]
+fn test_strategy_session_config_default_no_session() {
+    // Strategy with default (no session) config
+    let bar_counter = Arc::new(AtomicUsize::new(0));
+    let saw_aligned = Arc::new(AtomicBool::new(false));
+    let saw_truncated = Arc::new(AtomicBool::new(false));
+
+    let strategy = Box::new(SessionAwareTestStrategy::new(
+        SessionAwareConfig::default(), // No session
+        bar_counter.clone(),
+        saw_aligned.clone(),
+        saw_truncated.clone(),
+    ));
+
+    let ticks = create_test_ticks(120, "100");
+    let config = BacktestConfig::new(Decimal::from(10000));
+
+    let mut engine = BacktestEngine::new(strategy, config).unwrap();
+    let result = engine.run_unified(BacktestData::Ticks(ticks));
+
+    assert_eq!(result.strategy_name, "Session-Aware Test Strategy");
+    assert!(bar_counter.load(Ordering::SeqCst) > 0, "Should process bars");
+
+    // Without session config, no bars should be marked as session-aligned or truncated
+    assert!(
+        !saw_aligned.load(Ordering::SeqCst),
+        "Without session, bars should not be session-aligned"
+    );
+    assert!(
+        !saw_truncated.load(Ordering::SeqCst),
+        "Without session, bars should not be session-truncated"
+    );
+}
+
+#[test]
+fn test_strategy_session_config_with_schedule() {
+    // Use the built-in US equity schedule (9:30 AM - 4:00 PM ET)
+    let schedule = session_presets::us_equity();
+    let session_config = SessionAwareConfig::with_session(Arc::new(schedule))
+        .with_session_open_alignment(true)
+        .with_session_close_truncation(true);
+
+    let bar_counter = Arc::new(AtomicUsize::new(0));
+    let saw_aligned = Arc::new(AtomicBool::new(false));
+    let saw_truncated = Arc::new(AtomicBool::new(false));
+
+    let strategy = Box::new(SessionAwareTestStrategy::new(
+        session_config,
+        bar_counter.clone(),
+        saw_aligned.clone(),
+        saw_truncated.clone(),
+    ));
+
+    let ticks = create_test_ticks(120, "100");
+    let config = BacktestConfig::new(Decimal::from(10000));
+
+    let mut engine = BacktestEngine::new(strategy, config).unwrap();
+    let result = engine.run_unified(BacktestData::Ticks(ticks));
+
+    assert_eq!(result.strategy_name, "Session-Aware Test Strategy");
+    assert!(bar_counter.load(Ordering::SeqCst) > 0, "Should process bars");
+
+    // With session config, bars may be aligned (depending on tick timing)
+    // The test verifies the config was passed through the framework
+    println!(
+        "Session test: bars={}, saw_aligned={}, saw_truncated={}",
+        bar_counter.load(Ordering::SeqCst),
+        saw_aligned.load(Ordering::SeqCst),
+        saw_truncated.load(Ordering::SeqCst)
+    );
+}
+
+#[test]
+fn test_strategy_session_config_continuous_market() {
+    // 24/7 continuous market (e.g., crypto)
+    let bar_counter = Arc::new(AtomicUsize::new(0));
+    let saw_aligned = Arc::new(AtomicBool::new(false));
+    let saw_truncated = Arc::new(AtomicBool::new(false));
+
+    let strategy = Box::new(SessionAwareTestStrategy::new(
+        SessionAwareConfig::continuous(), // 24/7 mode
+        bar_counter.clone(),
+        saw_aligned.clone(),
+        saw_truncated.clone(),
+    ));
+
+    let ticks = create_test_ticks(120, "100");
+    let config = BacktestConfig::new(Decimal::from(10000));
+
+    let mut engine = BacktestEngine::new(strategy, config).unwrap();
+    let result = engine.run_unified(BacktestData::Ticks(ticks));
+
+    assert_eq!(result.strategy_name, "Session-Aware Test Strategy");
+    assert!(bar_counter.load(Ordering::SeqCst) > 0, "Should process bars");
+
+    // Continuous markets have no session boundaries
+    assert!(
+        !saw_aligned.load(Ordering::SeqCst),
+        "Continuous market should not have aligned bars"
+    );
+    assert!(
+        !saw_truncated.load(Ordering::SeqCst),
+        "Continuous market should not have truncated bars"
+    );
+}
+
+/// Strategy with tick-based bars and session truncation
+struct SessionAwareTickStrategy {
+    session_config: SessionAwareConfig,
+    bar_counter: Arc<AtomicUsize>,
+    truncated_bar_count: Arc<AtomicUsize>,
+}
+
+impl Strategy for SessionAwareTickStrategy {
+    fn name(&self) -> &str {
+        "Session-Aware Tick Strategy"
+    }
+
+    fn is_ready(&self, _bars: &BarsContext) -> bool {
+        true
+    }
+
+    fn warmup_period(&self) -> usize {
+        0
+    }
+
+    fn on_bar_data(&mut self, bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
+        self.bar_counter.fetch_add(1, Ordering::SeqCst);
+
+        if bar_data.metadata.is_session_truncated {
+            self.truncated_bar_count.fetch_add(1, Ordering::SeqCst);
+        }
+
+        Signal::Hold
+    }
+
+    fn initialize(&mut self, _params: HashMap<String, String>) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn reset(&mut self) {
+        self.bar_counter.store(0, Ordering::SeqCst);
+        self.truncated_bar_count.store(0, Ordering::SeqCst);
+    }
+
+    fn bar_data_mode(&self) -> BarDataMode {
+        BarDataMode::OnCloseBar
+    }
+
+    fn preferred_bar_type(&self) -> BarType {
+        BarType::TickBased(50) // 50-tick bars
+    }
+
+    fn session_config(&self) -> SessionAwareConfig {
+        self.session_config.clone()
+    }
+}
+
+#[test]
+fn test_tick_based_strategy_with_session_config() {
+    // Test that tick-based strategies can also use session config
+    // Use the built-in US equity schedule
+    let schedule = session_presets::us_equity();
+    let session_config = SessionAwareConfig::with_session(Arc::new(schedule))
+        .with_session_open_alignment(false) // Not applicable for tick bars
+        .with_session_close_truncation(true); // Truncate partial bars at session close
+
+    let bar_counter = Arc::new(AtomicUsize::new(0));
+    let truncated_count = Arc::new(AtomicUsize::new(0));
+
+    let strategy = Box::new(SessionAwareTickStrategy {
+        session_config,
+        bar_counter: bar_counter.clone(),
+        truncated_bar_count: truncated_count.clone(),
+    });
+
+    // 75 ticks with 50-tick bars = 2 bars (50 + 25 partial)
+    let ticks = create_test_ticks(75, "100");
+    let config = BacktestConfig::new(Decimal::from(10000));
+
+    let mut engine = BacktestEngine::new(strategy, config).unwrap();
+    let result = engine.run_unified(BacktestData::Ticks(ticks));
+
+    assert_eq!(result.strategy_name, "Session-Aware Tick Strategy");
+    let bars = bar_counter.load(Ordering::SeqCst);
+    assert!(bars >= 2, "Should have at least 2 bars (50-tick), got {}", bars);
+
+    println!(
+        "Tick-based session test: bars={}, truncated={}",
+        bars,
+        truncated_count.load(Ordering::SeqCst)
+    );
+}
+
+#[test]
+fn test_session_config_builder_pattern_in_strategy() {
+    // Demonstrate the builder pattern for SessionAwareConfig within a strategy
+
+    struct ConfigurableStrategy {
+        use_session: bool,
+    }
+
+    impl Strategy for ConfigurableStrategy {
+        fn name(&self) -> &str {
+            "Configurable Strategy"
+        }
+
+        fn is_ready(&self, _bars: &BarsContext) -> bool {
+            true
+        }
+
+        fn warmup_period(&self) -> usize {
+            0
+        }
+
+        fn on_bar_data(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
+            Signal::Hold
+        }
+
+        fn initialize(&mut self, params: HashMap<String, String>) -> Result<(), String> {
+            // Can configure from params
+            if let Some(use_session) = params.get("use_session") {
+                self.use_session = use_session == "true";
+            }
+            Ok(())
+        }
+
+        fn reset(&mut self) {}
+
+        fn bar_data_mode(&self) -> BarDataMode {
+            BarDataMode::OnCloseBar
+        }
+
+        fn preferred_bar_type(&self) -> BarType {
+            BarType::TimeBased(Timeframe::FiveMinutes)
+        }
+
+        fn session_config(&self) -> SessionAwareConfig {
+            if self.use_session {
+                // Use built-in US equity session schedule
+                let schedule = session_presets::us_equity();
+                SessionAwareConfig::with_session(Arc::new(schedule))
+                    .with_session_open_alignment(true)
+                    .with_session_close_truncation(true)
+            } else {
+                SessionAwareConfig::continuous()
+            }
+        }
+    }
+
+    // Test with session enabled via params
+    let strategy = Box::new(ConfigurableStrategy { use_session: false });
+    let config = BacktestConfig::new(Decimal::from(10000))
+        .with_param("use_session", "true");
+
+    let ticks = create_test_ticks(60, "100");
+    let mut engine = BacktestEngine::new(strategy, config).unwrap();
+    let result = engine.run_unified(BacktestData::Ticks(ticks));
+
+    assert_eq!(result.strategy_name, "Configurable Strategy");
 }

@@ -126,6 +126,9 @@ pub use session::{
     SessionType, TradingSession,
 };
 
+// Re-export session presets
+pub use session::presets as session_presets;
+
 // Re-export contract types
 pub use contract::{
     AdjustmentMethod, ContractSpec, ContinuousRollMethod, ExerciseStyle, RollRule, SettlementType,

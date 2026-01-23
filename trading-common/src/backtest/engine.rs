@@ -101,11 +101,26 @@ impl BacktestEngine {
             self.config.commission_rate * Decimal::from(100)
         );
 
+        // Get session configuration from strategy
+        let session_config = self.strategy.session_config();
+        let has_session = session_config.session_schedule.is_some();
+        if has_session {
+            println!(
+                "Session: {} (align={}, truncate={})",
+                if session_config.align_to_session_open { "aligned" } else { "not aligned" },
+                session_config.align_to_session_open,
+                session_config.truncate_at_session_close
+            );
+        } else {
+            println!("Session: 24/7 (no boundaries)");
+        }
+
         // Generate BarData events based on input type
         let bar_events = match data {
             BacktestData::Ticks(ticks) => {
                 println!("Data points: {} ticks", ticks.len());
-                let generator = HistoricalOHLCGenerator::new(bar_type, mode);
+                // Use session-aware generator if strategy specifies session config
+                let generator = HistoricalOHLCGenerator::with_session_config(bar_type, mode, session_config);
                 generator.generate_from_ticks(&ticks)
             }
             BacktestData::OHLCBars(ohlc_bars) => {

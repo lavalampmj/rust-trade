@@ -24,7 +24,7 @@
 - [x] Add trading session configuration per symbol - **COMPLETE** (`SessionSchedule` struct, 33 tests in session.rs)
 - [x] Implement session opening/closing times - **COMPLETE** (`TradingSession` with start/end times, `session_open_time()`, `session_close_time()`)
 - [x] Handle pre-market and after-hours trading - **COMPLETE** (`SessionType::PreMarket/AfterHours`, factory methods, extended hours tracking)
-- [x] OHLC window alignment to session opening (not first tick) - **COMPLETE** (`SessionAwareConfig` with `align_to_session_open`, `truncate_at_session_close`)
+- [x] OHLC window alignment to session opening (not first tick) - **COMPLETE** (`SessionAwareConfig` with `align_to_session_open`, `truncate_at_session_close`, Strategy `session_config()` method)
 - [x] Market calendar support (holidays, early closes) - **COMPLETE** (`MarketCalendar` with holidays, early_closes, late_opens)
 - [x] Multiple timezone support for global markets - **COMPLETE** (full `chrono_tz` support, DST handling, 6 timezone tests)
 
@@ -169,7 +169,12 @@
   - Works with both time-based and tick-based bars
   - `BarMetadata` extended with `is_session_truncated` and `is_session_aligned` flags
   - 15 tests for session-aware bar generation
-- [x] Comprehensive test coverage: 62 tests (33 session.rs + 14 session_manager.rs + 15 bar_generator session tests)
+- [x] **Strategy Session Configuration** (NEW):
+  - `Strategy::session_config()` method for programmatic configuration
+  - `BacktestEngine` uses strategy's session config when creating bar generator
+  - Preset schedules accessible via `session_presets::us_equity()`, etc.
+  - 5 integration tests for session-aware strategies in backtest_unified_test.rs
+- [x] Comprehensive test coverage: 67 tests (33 session.rs + 14 session_manager.rs + 15 bar_generator + 5 strategy session tests)
 
 ### Order Management System Test Coverage (2026-01-22)
 - [x] Comprehensive event type tests (24 tests covering all 14 order event types)

@@ -1,4 +1,5 @@
 use crate::accounts::AccountEvent;
+use crate::backtest::bar_generator::SessionAwareConfig;
 use crate::data::events::MarketDataEvent;
 use crate::data::types::{BarData, BarDataMode, BarType, Timeframe};
 use crate::instruments::SessionEvent;
@@ -188,6 +189,69 @@ pub trait Strategy: Send + Sync {
     /// - Infinite: No eviction, grows unbounded (use with caution)
     fn max_bars_lookback(&self) -> MaximumBarsLookBack {
         MaximumBarsLookBack::Fixed(256) // Default
+    }
+
+    /// Specify session-aware bar configuration for this strategy.
+    ///
+    /// Controls how bars align to trading session boundaries:
+    /// - **Session schedule**: Defines trading hours (e.g., US equity 9:30-16:00 ET)
+    /// - **Session open alignment**: Align first bar to session open, not first tick
+    /// - **Session close truncation**: Force-close partial bars at session end
+    ///
+    /// # Session-Aligned Bars
+    ///
+    /// When `align_to_session_open` is true, the first bar of each session starts
+    /// at the session open time rather than when the first tick arrives:
+    ///
+    /// ```text
+    /// Session opens at 9:30 AM, first tick at 9:30:15 AM:
+    /// - align_to_session_open = true:  First 1-min bar is 9:30:00-9:31:00
+    /// - align_to_session_open = false: First 1-min bar is 9:30:15-9:31:15
+    /// ```
+    ///
+    /// # Session-Truncated Bars
+    ///
+    /// When `truncate_at_session_close` is true, partial bars are closed at
+    /// session end rather than carrying over to the next session:
+    ///
+    /// ```text
+    /// 500-tick bars, session closes with 300 ticks accumulated:
+    /// - truncate_at_session_close = true:  Close bar at tick 300 (truncated)
+    /// - truncate_at_session_close = false: Continue bar to next session
+    ///
+    /// 1-minute bars, session closes at 15:59:30:
+    /// - truncate_at_session_close = true:  Close 15:59 bar at 15:59:30
+    /// - truncate_at_session_close = false: Let bar complete naturally
+    /// ```
+    ///
+    /// # Bar Metadata
+    ///
+    /// Session-aware bars include metadata flags:
+    /// - `is_session_aligned`: True if bar was aligned to session open
+    /// - `is_session_truncated`: True if bar was truncated at session close
+    ///
+    /// # Example
+    ///
+    /// ```text
+    /// use trading_common::backtest::SessionAwareConfig;
+    /// use trading_common::instruments::SessionSchedule;
+    /// use std::sync::Arc;
+    ///
+    /// fn session_config(&self) -> SessionAwareConfig {
+    ///     // Use US equity schedule (9:30 AM - 4:00 PM ET)
+    ///     let schedule = Arc::new(SessionSchedule::us_equity());
+    ///     SessionAwareConfig::with_session(schedule)
+    ///         .with_session_open_alignment(true)
+    ///         .with_session_close_truncation(true)
+    /// }
+    /// ```
+    ///
+    /// # Default
+    ///
+    /// Returns `SessionAwareConfig::default()` which operates in 24/7 mode
+    /// (no session boundaries, no alignment, no truncation).
+    fn session_config(&self) -> SessionAwareConfig {
+        SessionAwareConfig::default()
     }
 
     // ========================================================================
