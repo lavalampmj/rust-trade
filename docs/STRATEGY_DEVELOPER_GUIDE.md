@@ -9,13 +9,14 @@ This guide documents all available methods and interfaces for developing trading
 1. [Strategy Trait Interface](#1-strategy-trait-interface)
 2. [Data Structures](#2-data-structures)
 3. [BarsContext - Price Series Access](#3-barscontext---price-series-access)
-4. [Signal Generation](#4-signal-generation)
-5. [Order Management System](#5-order-management-system)
-6. [Event-Driven Methods](#6-event-driven-methods)
-7. [Portfolio Management](#7-portfolio-management)
-8. [Python Strategy Development](#8-python-strategy-development)
-9. [Complete Examples](#9-complete-examples)
-10. [Best Practices](#10-best-practices)
+4. [Transform Framework - Composable Indicators](#4-transform-framework---composable-indicators)
+5. [Signal Generation](#5-signal-generation)
+6. [Order Management System](#6-order-management-system)
+7. [Event-Driven Methods](#7-event-driven-methods)
+8. [Portfolio Management](#8-portfolio-management)
+9. [Python Strategy Development](#9-python-strategy-development)
+10. [Complete Examples](#10-complete-examples)
+11. [Best Practices](#11-best-practices)
 
 ---
 
@@ -494,7 +495,390 @@ def on_bar_data(self, bar_data: Dict[str, Any], bars: BarsContext) -> Dict[str, 
 
 ---
 
-## 4. Signal Generation
+## 4. Transform Framework - Composable Indicators
+
+The Transform framework provides stateful, composable indicators with automatic warmup propagation and efficient O(1) per-bar updates. Transforms maintain internal output buffers (`Series<Output>`) allowing historical access to computed values.
+
+### Transform Trait
+
+All transforms implement the `Transform` trait:
+
+| Method | Description |
+|--------|-------------|
+| `compute(&mut self, bars)` | Compute current value, update internal state |
+| `current()` | Get most recent output value |
+| `get(bars_ago)` | Get historical value N bars ago |
+| `output()` | Access internal `Series<Output>` buffer |
+| `warmup_period()` | Minimum bars before valid output |
+| `is_ready(bars)` | Check if enough data exists |
+| `reset()` | Reset internal state for new run |
+| `name()` | Unique identifier for this transform |
+
+### Available Transforms
+
+| Transform | Description | Warmup |
+|-----------|-------------|--------|
+| `Sma::new(period)` | Simple Moving Average | `period` |
+| `Ema::new(period)` | Exponential Moving Average | `period` |
+| `Rsi::new(period)` | Relative Strength Index (0-100) | `period + 1` |
+| `Atr::new(period)` | Average True Range | `period` |
+| `Change::new()` | Price change from previous bar | `2` |
+| `RateOfChange::new(period)` | Percentage change over period | `period + 1` |
+| `Highest::new(period)` | Highest high over period | `period` |
+| `Lowest::new(period)` | Lowest low over period | `period` |
+
+### Basic Usage
+
+#### Rust
+
+```rust
+use trading_common::transforms::{Transform, Sma, Rsi, Ema};
+use rust_decimal_macros::dec;
+
+pub struct MyStrategy {
+    sma_20: Sma,
+    rsi_14: Rsi,
+    ema_50: Ema,
+}
+
+impl MyStrategy {
+    pub fn new() -> Self {
+        Self {
+            sma_20: Sma::new(20),
+            rsi_14: Rsi::new(14),
+            ema_50: Ema::new(50),
+        }
+    }
+}
+
+impl Strategy for MyStrategy {
+    fn on_bar_data(&mut self, _bar_data: &BarData, bars: &mut BarsContext) -> Signal {
+        // Compute transforms (updates internal state)
+        let sma = self.sma_20.compute(bars);
+        let rsi = self.rsi_14.compute(bars);
+        let ema = self.ema_50.compute(bars);
+
+        // Use values if available
+        if let (Some(sma_val), Some(rsi_val)) = (sma, rsi) {
+            if rsi_val < dec!(30) && bars.close[0] > sma_val {
+                return Signal::buy(bars.symbol(), dec!(0.1));
+            }
+        }
+
+        Signal::Hold
+    }
+
+    fn warmup_period(&self) -> usize {
+        // Use the longest warmup
+        self.ema_50.warmup_period()  // 50
+    }
+
+    fn reset(&mut self) {
+        self.sma_20.reset();
+        self.rsi_14.reset();
+        self.ema_50.reset();
+    }
+}
+```
+
+### Historical Value Access
+
+Transforms maintain an internal `Series<Output>` buffer. Access historical values using `get(bars_ago)`:
+
+```rust
+// Compute on current bar
+let current_rsi = self.rsi.compute(bars);
+
+// Access historical RSI values
+let prev_rsi = self.rsi.get(1);      // Previous bar's RSI
+let rsi_5_ago = self.rsi.get(5);     // RSI from 5 bars ago
+
+// Check for RSI divergence
+if let (Some(curr), Some(prev)) = (current_rsi, prev_rsi) {
+    if curr > prev && bars.close[0] < bars.close[1] {
+        // Bullish divergence: RSI rising, price falling
+    }
+}
+```
+
+### Transform Chaining with TransformExt
+
+The `TransformExt` trait enables fluent chaining of transforms. The output of one transform becomes the input of the next:
+
+```rust
+use trading_common::transforms::{Transform, TransformExt, Rsi, Sma};
+
+// Smoothed RSI: 3-period SMA of RSI(14)
+let mut smoothed_rsi = Rsi::new(14).sma(3);
+
+// Double smoothed: EMA of SMA of close prices
+let mut double_smooth = Sma::new(10).ema(5);
+
+// Highest RSI over 10 bars
+let mut highest_rsi = Rsi::new(14).highest(10);
+
+// RSI cross above 30 detection (returns bool)
+let mut rsi_oversold_exit = Rsi::new(14).cross_above(dec!(30));
+
+// Complex chain: RSI smoothed with SMA, then EMA, then highest
+let mut complex = Rsi::new(14).sma(3).ema(5).highest(10);
+```
+
+### Available Chaining Methods
+
+| Method | Input | Output | Description |
+|--------|-------|--------|-------------|
+| `.sma(period)` | `Decimal` | `Decimal` | Apply SMA smoothing |
+| `.ema(period)` | `Decimal` | `Decimal` | Apply EMA smoothing |
+| `.highest(period)` | `Decimal` | `Decimal` | Highest value over period |
+| `.lowest(period)` | `Decimal` | `Decimal` | Lowest value over period |
+| `.cross_above(threshold)` | `Decimal` | `bool` | Detect cross above threshold |
+| `.cross_below(threshold)` | `Decimal` | `bool` | Detect cross below threshold |
+
+### Warmup Propagation
+
+When transforms are chained, warmup periods automatically accumulate:
+
+```rust
+// RSI(14) warmup = 15 bars
+let rsi = Rsi::new(14);
+assert_eq!(rsi.warmup_period(), 15);
+
+// RSI(14).sma(3) warmup = 15 + 3 = 18 bars
+let smoothed = Rsi::new(14).sma(3);
+assert_eq!(smoothed.warmup_period(), 18);
+
+// RSI(14).sma(3).ema(5) warmup = 15 + 3 + 5 = 23 bars
+let double_smooth = Rsi::new(14).sma(3).ema(5);
+assert_eq!(double_smooth.warmup_period(), 23);
+
+// Deep chain: RSI(14).sma(3).sma(5).highest(10) = 15 + 3 + 5 + 10 = 33 bars
+let complex = Rsi::new(14).sma(3).sma(5).highest(10);
+assert_eq!(complex.warmup_period(), 33);
+```
+
+### Cross Detection
+
+Use `cross_above()` and `cross_below()` to detect threshold crossings:
+
+```rust
+use trading_common::transforms::{Transform, TransformExt, Rsi};
+use rust_decimal_macros::dec;
+
+pub struct CrossStrategy {
+    // Detects when RSI crosses above 30 (oversold recovery)
+    rsi_cross_above_30: CrossAbove<Rsi>,
+    // Detects when RSI crosses below 70 (overbought correction)
+    rsi_cross_below_70: CrossBelow<Rsi>,
+}
+
+impl CrossStrategy {
+    pub fn new() -> Self {
+        Self {
+            rsi_cross_above_30: Rsi::new(14).cross_above(dec!(30)),
+            rsi_cross_below_70: Rsi::new(14).cross_below(dec!(70)),
+        }
+    }
+}
+
+impl Strategy for CrossStrategy {
+    fn on_bar_data(&mut self, _bar_data: &BarData, bars: &mut BarsContext) -> Signal {
+        let buy_signal = self.rsi_cross_above_30.compute(bars);
+        let sell_signal = self.rsi_cross_below_70.compute(bars);
+
+        if buy_signal == Some(true) {
+            return Signal::buy(bars.symbol(), dec!(0.1));
+        }
+        if sell_signal == Some(true) {
+            return Signal::sell(bars.symbol(), dec!(0.1));
+        }
+
+        Signal::Hold
+    }
+
+    fn warmup_period(&self) -> usize {
+        // Cross needs source warmup + 1
+        // RSI(14) = 15, cross = 15 + 1 = 16
+        self.rsi_cross_above_30.warmup_period()
+    }
+
+    fn reset(&mut self) {
+        self.rsi_cross_above_30.reset();
+        self.rsi_cross_below_70.reset();
+    }
+}
+```
+
+### Price Source Configuration
+
+Some transforms support custom price sources:
+
+```rust
+use trading_common::transforms::{Rsi, PriceSource};
+
+// RSI of close prices (default)
+let rsi_close = Rsi::new(14);
+
+// RSI of typical price ((H+L+C)/3)
+let rsi_typical = Rsi::with_source(14, PriceSource::Typical);
+
+// RSI of high prices
+let rsi_high = Rsi::with_source(14, PriceSource::High);
+```
+
+| PriceSource | Formula |
+|-------------|---------|
+| `Close` | Close price (default) |
+| `Open` | Open price |
+| `High` | High price |
+| `Low` | Low price |
+| `HL2` | (High + Low) / 2 |
+| `HLC3` / `Typical` | (High + Low + Close) / 3 |
+| `OHLC4` | (Open + High + Low + Close) / 4 |
+
+### Complete Transform Strategy Example
+
+```rust
+use trading_common::backtest::strategy::{Strategy, Signal, BarDataMode, BarType};
+use trading_common::data::types::BarData;
+use trading_common::data::Timeframe;
+use trading_common::series::BarsContext;
+use trading_common::transforms::{Transform, TransformExt, Rsi, Sma, Ema, CrossAbove, CrossBelow};
+use rust_decimal::Decimal;
+use rust_decimal_macros::dec;
+use std::collections::HashMap;
+
+/// Smoothed RSI Strategy with Cross Detection
+///
+/// Uses transforms for:
+/// - Smoothed RSI (RSI with SMA smoothing to reduce noise)
+/// - Cross detection for entry/exit signals
+/// - Trend filter using EMA
+pub struct SmoothedRsiStrategy {
+    // Smoothed RSI: 3-period SMA of RSI(14)
+    smoothed_rsi: SmaOf<Rsi>,
+    // Oversold recovery detection
+    oversold_cross: CrossAbove<Rsi>,
+    // Overbought correction detection
+    overbought_cross: CrossBelow<Rsi>,
+    // Trend filter: 50-period EMA
+    ema_50: Ema,
+    // Position tracking
+    is_long: bool,
+    position_size: Decimal,
+}
+
+impl SmoothedRsiStrategy {
+    pub fn new() -> Self {
+        Self {
+            smoothed_rsi: Rsi::new(14).sma(3),
+            oversold_cross: Rsi::new(14).cross_above(dec!(30)),
+            overbought_cross: Rsi::new(14).cross_below(dec!(70)),
+            ema_50: Ema::new(50),
+            is_long: false,
+            position_size: dec!(0.1),
+        }
+    }
+}
+
+impl Strategy for SmoothedRsiStrategy {
+    fn on_bar_data(&mut self, _bar_data: &BarData, bars: &mut BarsContext) -> Signal {
+        // Compute all transforms
+        let smoothed = self.smoothed_rsi.compute(bars);
+        let buy_cross = self.oversold_cross.compute(bars);
+        let sell_cross = self.overbought_cross.compute(bars);
+        let ema = self.ema_50.compute(bars);
+
+        let close = bars.close[0];
+        let symbol = bars.symbol().to_string();
+
+        // Entry: RSI crosses above 30 AND price above EMA (uptrend)
+        if !self.is_long {
+            if let (Some(true), Some(ema_val)) = (buy_cross, ema) {
+                if close > ema_val {
+                    self.is_long = true;
+                    return Signal::buy(&symbol, self.position_size);
+                }
+            }
+        }
+
+        // Exit: RSI crosses below 70 OR price falls below EMA
+        if self.is_long {
+            if sell_cross == Some(true) {
+                self.is_long = false;
+                return Signal::sell(&symbol, self.position_size);
+            }
+            if let Some(ema_val) = ema {
+                if close < ema_val {
+                    self.is_long = false;
+                    return Signal::sell(&symbol, self.position_size);
+                }
+            }
+        }
+
+        // Debug: Access historical smoothed RSI values
+        if let Some(curr) = smoothed {
+            if let Some(prev) = self.smoothed_rsi.get(1) {
+                // Can detect RSI divergence here
+                let _ = (curr, prev); // Use for divergence logic
+            }
+        }
+
+        Signal::Hold
+    }
+
+    fn initialize(&mut self, params: HashMap<String, String>) -> Result<(), String> {
+        if let Some(size) = params.get("position_size") {
+            self.position_size = size.parse().map_err(|_| "Invalid position_size")?;
+        }
+        Ok(())
+    }
+
+    fn is_ready(&self, bars: &BarsContext) -> bool {
+        bars.is_ready_for(self.warmup_period())
+    }
+
+    fn warmup_period(&self) -> usize {
+        // Use the longest warmup among all transforms
+        // smoothed_rsi: 15 + 3 = 18
+        // oversold_cross: 15 + 1 = 16
+        // ema_50: 50
+        self.ema_50.warmup_period() // 50 is the longest
+    }
+
+    fn reset(&mut self) {
+        self.smoothed_rsi.reset();
+        self.oversold_cross.reset();
+        self.overbought_cross.reset();
+        self.ema_50.reset();
+        self.is_long = false;
+    }
+
+    fn bar_data_mode(&self) -> BarDataMode {
+        BarDataMode::OnCloseBar
+    }
+
+    fn preferred_bar_type(&self) -> BarType {
+        BarType::TimeBased(Timeframe::FiveMinutes)
+    }
+}
+```
+
+### Transform vs BarsContext Indicators
+
+| Feature | BarsContext Methods | Transform Framework |
+|---------|---------------------|---------------------|
+| State | Stateless (recalculates each call) | Stateful (maintains internal Series) |
+| Historical Access | N/A | `get(bars_ago)` |
+| Chaining | N/A | Fluent API (`.sma().ema()`) |
+| Warmup | Manual tracking | Automatic propagation |
+| Use Case | Simple, one-off calculations | Complex, multi-indicator strategies |
+
+**Recommendation**: Use Transforms for complex strategies with multiple indicators, especially when you need historical indicator values or chained indicators. Use BarsContext methods for simple, one-off calculations.
+
+---
+
+## 5. Signal Generation
 
 ### Signal Enum
 
@@ -565,7 +949,7 @@ def on_bar_data(self, bar_data: Dict[str, Any], bars: BarsContext) -> Dict[str, 
 
 ---
 
-## 5. Order Management System
+## 6. Order Management System
 
 For advanced strategies that need more control than simple signals.
 
@@ -823,7 +1207,7 @@ impl Strategy for OrderManagementStrategy {
 
 ---
 
-## 6. Event-Driven Methods
+## 7. Event-Driven Methods
 
 NinjaTrader-style event-driven methods for reacting to order lifecycle, position changes, account updates, and more.
 
@@ -1452,7 +1836,7 @@ class EventDrivenStrategy(BaseStrategy):
 
 ---
 
-## 7. Portfolio Management
+## 8. Portfolio Management
 
 The `Portfolio` struct tracks positions, cash, and trade history during backtesting.
 
@@ -1493,7 +1877,7 @@ The `Portfolio` struct tracks positions, cash, and trade history during backtest
 
 ---
 
-## 8. Python Strategy Development
+## 9. Python Strategy Development
 
 ### File Location
 
@@ -1553,7 +1937,7 @@ class BarsContext:
 
 ---
 
-## 9. Complete Examples
+## 10. Complete Examples
 
 ### SMA Crossover Strategy (Rust)
 
@@ -2150,7 +2534,7 @@ impl Strategy for BreakoutStrategy {
 
 ---
 
-## 10. Best Practices
+## 11. Best Practices
 
 ### Strategy Development Checklist
 
