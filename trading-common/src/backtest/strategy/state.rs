@@ -2,136 +2,43 @@
 //!
 //! This module provides types for tracking strategy lifecycle state transitions,
 //! inspired by NinjaTrader's state machine model.
+//!
+//! **Note**: `StrategyState` is now a type alias for `ComponentState` from the
+//! unified state management system. This maintains backward compatibility while
+//! allowing strategies to participate in the broader component state framework.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 use crate::orders::StrategyId;
+use crate::state::{ComponentState, ComponentStateEvent, ComponentId, ComponentType};
 
 /// Strategy lifecycle states.
 ///
-/// Tracks the current phase of strategy execution from initialization
-/// through to termination. States follow a logical progression with
-/// defined transitions.
+/// **Note**: This is now a type alias for `ComponentState`. The unified state
+/// system provides the same states plus additional ones for non-data components.
 ///
-/// # State Flow
+/// # State Flow (Data-processing path)
 ///
 /// ```text
-/// Undefined → SetDefaults → Configure → DataLoaded → Historical → Transition → Realtime → Terminated
-///                                                                                      ↓
-///                                                                                   Faulted
+/// Undefined → SetDefaults → Configure → DataLoaded → Historical → Transition → Realtime → Terminated → Finalized
+///                                                                                              ↓
+///                                                                                           Faulted
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum StrategyState {
-    /// Strategy has not been initialized
-    #[default]
-    Undefined,
-
-    /// Strategy is setting default parameter values
-    SetDefaults,
-
-    /// Strategy is being configured with user parameters
-    Configure,
-
-    /// Data feeds have been connected and historical data is available
-    DataLoaded,
-
-    /// Processing historical data (backtest warmup period)
-    Historical,
-
-    /// Transitioning from historical to realtime processing
-    Transition,
-
-    /// Processing live/realtime data
-    Realtime,
-
-    /// Strategy has been terminated normally
-    Terminated,
-
-    /// Strategy encountered a fatal error
-    Faulted,
-}
-
-impl StrategyState {
-    /// Check if strategy is in a running state (Historical or Realtime)
-    pub fn is_running(&self) -> bool {
-        matches!(self, StrategyState::Historical | StrategyState::Realtime)
-    }
-
-    /// Check if strategy is in a terminal state
-    pub fn is_terminal(&self) -> bool {
-        matches!(self, StrategyState::Terminated | StrategyState::Faulted)
-    }
-
-    /// Check if strategy can accept new data
-    pub fn can_process_data(&self) -> bool {
-        matches!(
-            self,
-            StrategyState::Historical | StrategyState::Transition | StrategyState::Realtime
-        )
-    }
-
-    /// Check if strategy is processing live data
-    pub fn is_realtime(&self) -> bool {
-        matches!(self, StrategyState::Realtime)
-    }
-
-    /// Check if strategy is still initializing
-    pub fn is_initializing(&self) -> bool {
-        matches!(
-            self,
-            StrategyState::Undefined
-                | StrategyState::SetDefaults
-                | StrategyState::Configure
-                | StrategyState::DataLoaded
-        )
-    }
-
-    /// Get valid next states from current state
-    pub fn valid_transitions(&self) -> &'static [StrategyState] {
-        match self {
-            StrategyState::Undefined => &[StrategyState::SetDefaults],
-            StrategyState::SetDefaults => &[StrategyState::Configure],
-            StrategyState::Configure => &[StrategyState::DataLoaded, StrategyState::Faulted],
-            StrategyState::DataLoaded => &[StrategyState::Historical, StrategyState::Faulted],
-            StrategyState::Historical => {
-                &[StrategyState::Transition, StrategyState::Terminated, StrategyState::Faulted]
-            }
-            StrategyState::Transition => &[StrategyState::Realtime, StrategyState::Faulted],
-            StrategyState::Realtime => &[StrategyState::Terminated, StrategyState::Faulted],
-            StrategyState::Terminated => &[],
-            StrategyState::Faulted => &[],
-        }
-    }
-
-    /// Check if transition to target state is valid
-    pub fn can_transition_to(&self, target: StrategyState) -> bool {
-        self.valid_transitions().contains(&target)
-    }
-}
-
-impl fmt::Display for StrategyState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            StrategyState::Undefined => write!(f, "UNDEFINED"),
-            StrategyState::SetDefaults => write!(f, "SET_DEFAULTS"),
-            StrategyState::Configure => write!(f, "CONFIGURE"),
-            StrategyState::DataLoaded => write!(f, "DATA_LOADED"),
-            StrategyState::Historical => write!(f, "HISTORICAL"),
-            StrategyState::Transition => write!(f, "TRANSITION"),
-            StrategyState::Realtime => write!(f, "REALTIME"),
-            StrategyState::Terminated => write!(f, "TERMINATED"),
-            StrategyState::Faulted => write!(f, "FAULTED"),
-        }
-    }
-}
+///
+/// # Migration
+///
+/// Existing code using `StrategyState` will continue to work. For new code,
+/// consider using `ComponentState` directly from `crate::state`.
+pub type StrategyState = ComponentState;
 
 /// Event generated when a strategy's state changes.
 ///
 /// Provides information about the state transition including the old and new
 /// states, and an optional reason for the transition.
+///
+/// **Note**: This type is kept for backward compatibility. New code should
+/// consider using `ComponentStateEvent` from `crate::state` directly.
 ///
 /// # Example
 ///
@@ -165,6 +72,39 @@ pub struct StrategyStateEvent {
 
     /// Timestamp of the state change
     pub ts_event: DateTime<Utc>,
+}
+
+/// Convert from ComponentStateEvent to StrategyStateEvent.
+///
+/// This allows strategies to receive events from the unified state system
+/// while maintaining backward compatibility.
+impl From<ComponentStateEvent> for StrategyStateEvent {
+    fn from(event: ComponentStateEvent) -> Self {
+        Self {
+            strategy_id: StrategyId::new(&event.component_id.instance_name),
+            old_state: event.old_state,
+            new_state: event.new_state,
+            reason: event.reason,
+            ts_event: event.ts_event,
+        }
+    }
+}
+
+/// Convert from StrategyStateEvent to ComponentStateEvent.
+///
+/// This allows existing strategy events to be published to the unified state registry.
+impl From<StrategyStateEvent> for ComponentStateEvent {
+    fn from(event: StrategyStateEvent) -> Self {
+        let component_id = ComponentId::new(
+            ComponentType::Strategy,
+            event.strategy_id.as_str().to_string(),
+        );
+
+        let mut component_event = Self::new(component_id, event.old_state, event.new_state);
+        component_event.reason = event.reason;
+        component_event.ts_event = event.ts_event;
+        component_event
+    }
 }
 
 impl StrategyStateEvent {
@@ -293,9 +233,48 @@ mod tests {
         assert!(StrategyState::Historical.can_transition_to(StrategyState::Faulted));
         assert!(!StrategyState::Historical.can_transition_to(StrategyState::Realtime));
 
-        // Terminal states have no valid transitions
-        assert!(StrategyState::Terminated.valid_transitions().is_empty());
+        // Terminated can go to Finalized (unified state system)
+        assert!(StrategyState::Terminated.can_transition_to(StrategyState::Finalized));
+
+        // Faulted and Finalized are fully terminal
         assert!(StrategyState::Faulted.valid_transitions().is_empty());
+        assert!(StrategyState::Finalized.valid_transitions().is_empty());
+    }
+
+    #[test]
+    fn test_strategy_state_event_conversion_from_component() {
+        let component_id = ComponentId::strategy("my-strategy");
+        let component_event = ComponentStateEvent::with_reason(
+            component_id,
+            StrategyState::Historical,
+            StrategyState::Realtime,
+            "Warmup complete",
+        );
+
+        let strategy_event: StrategyStateEvent = component_event.into();
+
+        assert_eq!(strategy_event.strategy_id.as_str(), "my-strategy");
+        assert_eq!(strategy_event.old_state, StrategyState::Historical);
+        assert_eq!(strategy_event.new_state, StrategyState::Realtime);
+        assert_eq!(strategy_event.reason.as_deref(), Some("Warmup complete"));
+    }
+
+    #[test]
+    fn test_strategy_state_event_conversion_to_component() {
+        let strategy_event = StrategyStateEvent::with_reason(
+            StrategyId::new("my-strategy"),
+            StrategyState::Configure,
+            StrategyState::DataLoaded,
+            "Data loaded",
+        );
+
+        let component_event: ComponentStateEvent = strategy_event.into();
+
+        assert_eq!(component_event.component_id.instance_name, "my-strategy");
+        assert_eq!(component_event.component_id.component_type, ComponentType::Strategy);
+        assert_eq!(component_event.old_state, StrategyState::Configure);
+        assert_eq!(component_event.new_state, StrategyState::DataLoaded);
+        assert_eq!(component_event.reason.as_deref(), Some("Data loaded"));
     }
 
     #[test]

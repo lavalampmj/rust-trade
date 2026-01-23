@@ -1325,8 +1325,23 @@ impl Strategy for PythonStrategy {
 
             let event_dict = PyDict::new_bound(py);
             let _ = event_dict.set_item("strategy_id", event.strategy_id.as_str());
-            let _ = event_dict.set_item("old_state", format!("{:?}", event.old_state));
-            let _ = event_dict.set_item("new_state", format!("{:?}", event.new_state));
+
+            // String representations for display/debugging
+            let _ = event_dict.set_item("old_state", format!("{}", event.old_state));
+            let _ = event_dict.set_item("new_state", format!("{}", event.new_state));
+
+            // Integer values for programmatic use (matches ComponentState::as_i32())
+            // Python code can compare: if event['new_state_int'] == ComponentState.REALTIME
+            let _ = event_dict.set_item("old_state_int", event.old_state.as_i32());
+            let _ = event_dict.set_item("new_state_int", event.new_state.as_i32());
+
+            // Helper booleans for common state checks
+            let _ = event_dict.set_item("is_going_live", event.is_going_live());
+            let _ = event_dict.set_item("is_terminal", event.is_terminal_transition());
+            let _ = event_dict.set_item("is_fault", event.is_fault());
+            let _ = event_dict.set_item("can_process_data", event.new_state.can_process_data());
+            let _ = event_dict.set_item("is_running", event.new_state.is_running());
+
             if let Some(ref reason) = event.reason {
                 let _ = event_dict.set_item("reason", reason);
             }

@@ -14,18 +14,112 @@ reverse-indexed access to time series data:
 - series[0] = most recent value
 - series[1] = previous value
 - series.sma(period) = simple moving average
+
+Component State Management:
+- ComponentState class provides state constants for lifecycle management
+- on_state_change() callback notifies strategies of state transitions
 """
 
 from abc import ABC, abstractmethod
 from collections import deque
 from decimal import Decimal
 from typing import Dict, Optional, Any, Generic, TypeVar, Iterator, List, Union, TYPE_CHECKING
+from enum import IntEnum
 
 if TYPE_CHECKING:
     from .bars_context import BarsContext
 
 # Type variable for Series values
 T = TypeVar('T')
+
+
+class ComponentState(IntEnum):
+    """
+    Unified component lifecycle states (NinjaTrader pattern).
+
+    Applies to ALL component types: strategies, indicators, data sources, caches, services.
+
+    State Flow (Data-processing components):
+        Undefined -> SetDefaults -> Configure -> DataLoaded -> Historical -> Transition -> Realtime -> Terminated -> Finalized
+                                                                                                    |
+                                                                                                 Faulted
+
+    State Flow (Non-data components like services/caches):
+        Undefined -> SetDefaults -> Configure -> Active -> Terminated -> Finalized
+
+    Usage in on_state_change:
+        >>> def on_state_change(self, event):
+        ...     if event['new_state_int'] == ComponentState.SET_DEFAULTS:
+        ...         self.period = 20  # Set default parameters
+        ...     elif event['new_state_int'] == ComponentState.DATA_LOADED:
+        ...         # Initialize child indicators
+        ...         pass
+        ...     elif event['new_state_int'] == ComponentState.REALTIME:
+        ...         print("Going live!")
+    """
+    UNDEFINED = 0       # Component has not been initialized
+    SET_DEFAULTS = 1    # Setting default property values (keep lean)
+    CONFIGURE = 2       # Adding data series, configuring dependencies
+    ACTIVE = 3          # For non-data components (services, adapters) - equivalent to "running"
+    DATA_LOADED = 4     # All data series loaded - instantiate child indicators here
+    HISTORICAL = 5      # Processing historical data (backtest warmup period)
+    TRANSITION = 6      # Switching from historical to realtime processing
+    REALTIME = 7        # Processing live/realtime data
+    TERMINATED = 8      # Normal shutdown initiated - cleanup resources here
+    FAULTED = 9         # Fatal error occurred
+    FINALIZED = 10      # Internal cleanup complete (terminal state)
+
+    def is_running(self) -> bool:
+        """Check if component is in a running state (Historical, Realtime, or Active)."""
+        return self in (ComponentState.HISTORICAL, ComponentState.REALTIME, ComponentState.ACTIVE)
+
+    def is_terminal(self) -> bool:
+        """Check if component is in a terminal state."""
+        return self in (ComponentState.TERMINATED, ComponentState.FAULTED, ComponentState.FINALIZED)
+
+    def can_process_data(self) -> bool:
+        """Check if component can accept new data."""
+        return self in (ComponentState.HISTORICAL, ComponentState.TRANSITION, ComponentState.REALTIME)
+
+    def is_realtime(self) -> bool:
+        """Check if component is processing live data."""
+        return self == ComponentState.REALTIME
+
+    def is_initializing(self) -> bool:
+        """Check if component is still initializing."""
+        return self in (ComponentState.UNDEFINED, ComponentState.SET_DEFAULTS,
+                        ComponentState.CONFIGURE, ComponentState.DATA_LOADED)
+
+    @classmethod
+    def from_string(cls, state_str: str) -> 'ComponentState':
+        """
+        Convert state string to ComponentState enum.
+
+        Args:
+            state_str: State string like "REALTIME", "HISTORICAL", "SET_DEFAULTS"
+
+        Returns:
+            ComponentState enum value
+
+        Raises:
+            ValueError if unknown state
+        """
+        mapping = {
+            'UNDEFINED': cls.UNDEFINED,
+            'SET_DEFAULTS': cls.SET_DEFAULTS,
+            'CONFIGURE': cls.CONFIGURE,
+            'ACTIVE': cls.ACTIVE,
+            'DATA_LOADED': cls.DATA_LOADED,
+            'HISTORICAL': cls.HISTORICAL,
+            'TRANSITION': cls.TRANSITION,
+            'REALTIME': cls.REALTIME,
+            'TERMINATED': cls.TERMINATED,
+            'FAULTED': cls.FAULTED,
+            'FINALIZED': cls.FINALIZED,
+        }
+        if state_str not in mapping:
+            raise ValueError(f"Unknown state: {state_str}")
+        return mapping[state_str]
 
 
 class Series(Generic[T]):
@@ -769,3 +863,60 @@ class BaseStrategy(ABC):
                 return []
         """
         return []  # Default: no cancellations
+
+    # ========================================================================
+    # State Change Handler (Optional - for lifecycle management)
+    # ========================================================================
+
+    def on_state_change(self, event: Dict[str, Any]) -> None:
+        """
+        Called when the strategy's lifecycle state changes.
+
+        Override this method to perform state-specific initialization:
+        - SET_DEFAULTS: Set default parameter values (keep lean)
+        - CONFIGURE: Configure dependencies, validate parameters
+        - DATA_LOADED: Initialize child indicators (series, custom indicators)
+        - HISTORICAL: Entering backtest warmup phase
+        - REALTIME: Going live - ready for real-time data
+        - TERMINATED: Cleanup resources, close connections
+
+        Args:
+            event: State change event dictionary with keys:
+                - strategy_id (str): Strategy identifier
+                - old_state (str): Previous state name (e.g., "HISTORICAL")
+                - new_state (str): New state name (e.g., "REALTIME")
+                - old_state_int (int): Previous state as integer (use with ComponentState)
+                - new_state_int (int): New state as integer (use with ComponentState)
+                - reason (str, optional): Reason for state change
+                - timestamp (str): ISO 8601 timestamp
+                - is_going_live (bool): True if transitioning to REALTIME
+                - is_terminal (bool): True if new state is terminal
+                - is_fault (bool): True if new state is FAULTED
+                - can_process_data (bool): True if can accept market data
+                - is_running (bool): True if in a running state
+
+        Example:
+            >>> def on_state_change(self, event):
+            ...     state = ComponentState(event['new_state_int'])
+            ...
+            ...     if state == ComponentState.SET_DEFAULTS:
+            ...         # Set default parameters
+            ...         self.period = 20
+            ...
+            ...     elif state == ComponentState.DATA_LOADED:
+            ...         # Initialize indicators
+            ...         self.sma_short = DecimalSeries("sma_short", warmup_period=self.short_period)
+            ...         self.sma_long = DecimalSeries("sma_long", warmup_period=self.long_period)
+            ...
+            ...     elif state == ComponentState.REALTIME:
+            ...         print(f"Strategy {event['strategy_id']} is now live!")
+            ...
+            ...     elif state == ComponentState.TERMINATED:
+            ...         # Cleanup
+            ...         self.cleanup_resources()
+            ...
+            ...     elif state == ComponentState.FAULTED:
+            ...         reason = event.get('reason', 'Unknown')
+            ...         print(f"Strategy faulted: {reason}")
+        """
+        pass  # Default: no-op
