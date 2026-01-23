@@ -2,6 +2,8 @@ use chrono::{Duration, Utc};
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use trading_common::backtest::strategy::{Signal, Strategy};
 use trading_common::backtest::{BacktestConfig, BacktestData, BacktestEngine};
 use trading_common::data::types::{BarData, BarDataMode, BarType, TickData, Timeframe, TradeSide};
@@ -122,41 +124,63 @@ fn test_unified_backtest_on_close_bar_mode() {
 #[test]
 fn test_unified_backtest_modes_comparison() {
     // Create test data - use affordable price
+    // 100 ticks at 1 second apart = 100 seconds = ~2 bars at 1-minute timeframe
     let ticks = create_test_ticks(100, "100");
 
-    // Test OnCloseBar mode - allow for multiple bars
-    let strategy_close = Box::new(TestStrategy::new(3));
+    // Test OnCloseBar mode - use total_bars=2 to match the ~2 bars generated
+    let strategy_close = Box::new(TestStrategy::new(2));
     let config_close = BacktestConfig::new(Decimal::from(10000));
     let mut engine_close = BacktestEngine::new(strategy_close, config_close).unwrap();
     let result_close = engine_close.run_unified(BacktestData::Ticks(ticks.clone()));
 
-    // Verify OnCloseBar mode works
+    // Verify OnCloseBar mode works - should execute trades (buy + sell)
     assert_eq!(result_close.strategy_name, "Test Strategy");
-    println!("OnCloseBar mode: {} trades", result_close.total_trades);
+    // In OnCloseBar mode with TestStrategy, we expect exactly 2 trades (buy on bar 1, sell on bar 2)
+    assert_eq!(
+        result_close.total_trades, 2,
+        "OnCloseBar mode should generate exactly 2 trades (buy + sell), got {}",
+        result_close.total_trades
+    );
+    // Verify final value differs from initial (position was taken)
+    assert_ne!(
+        result_close.final_value, result_close.initial_capital,
+        "Final value should differ from initial capital after trades"
+    );
 }
 
 #[test]
 fn test_backtest_data_enum_ticks() {
-    let ticks = create_test_ticks(50, "100");
-    let strategy = Box::new(TestStrategy::new(2)); // Allow for at least 1 bar
+    // Create 120 ticks at 1 second apart = 120 seconds = 2 full 1-minute bars
+    let ticks = create_test_ticks(120, "100");
+    let tick_count = ticks.len();
+    let strategy = Box::new(TestStrategy::new(2)); // Sell on bar 2
     let config = BacktestConfig::new(Decimal::from(10000));
 
     let mut engine = BacktestEngine::new(strategy, config).unwrap();
     let result = engine.run_unified(BacktestData::Ticks(ticks));
 
+    // Verify backtest processed the tick data correctly
     assert_eq!(result.initial_capital, Decimal::from(10000));
-    // total_trades is u64, so this assertion is always true - just verify backtest completed
-    let _ = result.total_trades;
+    // TestStrategy buys on bar 1 and sells on bar 2, so we expect exactly 2 trades
+    assert_eq!(
+        result.total_trades, 2,
+        "TestStrategy should execute exactly 2 trades (buy + sell), got {}",
+        result.total_trades
+    );
+    // Verify the strategy name was correctly set
+    assert_eq!(result.strategy_name, "Test Strategy");
+    // Verify backtest processed ticks
+    assert_eq!(tick_count, 120, "Should have 120 ticks");
 }
 
-/// Strategy that uses OnEachTick mode
+/// Strategy that uses OnEachTick mode with shared counter for verification
 struct TickModeStrategy {
-    tick_count: usize,
+    event_counter: Arc<AtomicUsize>,
 }
 
 impl TickModeStrategy {
-    fn new() -> Self {
-        TickModeStrategy { tick_count: 0 }
+    fn new(counter: Arc<AtomicUsize>) -> Self {
+        TickModeStrategy { event_counter: counter }
     }
 }
 
@@ -166,7 +190,6 @@ impl Strategy for TickModeStrategy {
     }
 
     fn is_ready(&self, _bars: &BarsContext) -> bool {
-        // Test strategy is always ready (no warmup needed)
         true
     }
 
@@ -175,7 +198,7 @@ impl Strategy for TickModeStrategy {
     }
 
     fn on_bar_data(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
-        self.tick_count += 1;
+        self.event_counter.fetch_add(1, Ordering::SeqCst);
         Signal::Hold
     }
 
@@ -184,7 +207,7 @@ impl Strategy for TickModeStrategy {
     }
 
     fn reset(&mut self) {
-        self.tick_count = 0;
+        self.event_counter.store(0, Ordering::SeqCst);
     }
 
     fn bar_data_mode(&self) -> BarDataMode {
@@ -201,28 +224,34 @@ fn test_on_each_tick_mode() {
     let ticks = create_test_ticks(50, "100");
     let tick_count = ticks.len();
 
-    let strategy = Box::new(TickModeStrategy::new());
+    // Use shared counter to verify on_bar_data was called for each tick
+    let event_counter = Arc::new(AtomicUsize::new(0));
+    let strategy = Box::new(TickModeStrategy::new(event_counter.clone()));
     let config = BacktestConfig::new(Decimal::from(10000));
 
     let mut engine = BacktestEngine::new(strategy, config).unwrap();
     let result = engine.run_unified(BacktestData::Ticks(ticks));
 
-    // In OnEachTick mode, we should process every tick
+    // Verify strategy name
     assert_eq!(result.strategy_name, "Tick Mode Test Strategy");
-    println!(
-        "OnEachTick mode processed {} events from {} ticks",
-        tick_count, tick_count
+
+    // In OnEachTick mode, on_bar_data should be called for EVERY tick
+    let events_processed = event_counter.load(Ordering::SeqCst);
+    assert_eq!(
+        events_processed, tick_count,
+        "OnEachTick mode should call on_bar_data for every tick. Expected {}, got {}",
+        tick_count, events_processed
     );
 }
 
-/// Strategy that uses OnPriceMove mode
+/// Strategy that uses OnPriceMove mode with shared counter for verification
 struct PriceMoveStrategy {
-    event_count: usize,
+    event_counter: Arc<AtomicUsize>,
 }
 
 impl PriceMoveStrategy {
-    fn new() -> Self {
-        PriceMoveStrategy { event_count: 0 }
+    fn new(counter: Arc<AtomicUsize>) -> Self {
+        PriceMoveStrategy { event_counter: counter }
     }
 }
 
@@ -232,7 +261,6 @@ impl Strategy for PriceMoveStrategy {
     }
 
     fn is_ready(&self, _bars: &BarsContext) -> bool {
-        // Test strategy is always ready (no warmup needed)
         true
     }
 
@@ -241,7 +269,7 @@ impl Strategy for PriceMoveStrategy {
     }
 
     fn on_bar_data(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
-        self.event_count += 1;
+        self.event_counter.fetch_add(1, Ordering::SeqCst);
         Signal::Hold
     }
 
@@ -250,7 +278,7 @@ impl Strategy for PriceMoveStrategy {
     }
 
     fn reset(&mut self) {
-        self.event_count = 0;
+        self.event_counter.store(0, Ordering::SeqCst);
     }
 
     fn bar_data_mode(&self) -> BarDataMode {
@@ -264,25 +292,54 @@ impl Strategy for PriceMoveStrategy {
 
 #[test]
 fn test_on_price_move_mode() {
-    // Create ticks with changing prices
-    let ticks = create_test_ticks(100, "100"); // Each tick has different price
+    // Create ticks - price cycles through 10 values (i % 10), so not all ticks have unique prices
+    // For 100 ticks with price = base + (i % 10), we have 10 unique prices cycling
+    let ticks = create_test_ticks(100, "100");
+    let tick_count = ticks.len();
 
-    let strategy = Box::new(PriceMoveStrategy::new());
+    // Count unique price changes (first tick always fires, subsequent only on change)
+    // With i % 10 pattern: prices are 100, 101, 102, ..., 109, 100, 101, ...
+    // Each cycle of 10 has 10 changes (going 109->100 is a change too)
+    // So we expect approximately tick_count price move events
+
+    let event_counter = Arc::new(AtomicUsize::new(0));
+    let strategy = Box::new(PriceMoveStrategy::new(event_counter.clone()));
     let config = BacktestConfig::new(Decimal::from(10000));
 
     let mut engine = BacktestEngine::new(strategy, config).unwrap();
     let result = engine.run_unified(BacktestData::Ticks(ticks));
 
-    // OnPriceMove should fire on each price change
+    // Verify strategy name
     assert_eq!(result.strategy_name, "Price Move Strategy");
-    println!("OnPriceMove mode executed successfully");
+
+    // OnPriceMove should fire on each price change
+    let events_processed = event_counter.load(Ordering::SeqCst);
+
+    // With cycling prices (i % 10), every tick has a different price from the previous
+    // so we should have approximately tick_count events
+    assert!(
+        events_processed > 0,
+        "OnPriceMove mode should fire at least once, got 0 events"
+    );
+    assert!(
+        events_processed <= tick_count,
+        "OnPriceMove events ({}) should not exceed tick count ({})",
+        events_processed, tick_count
+    );
+    // Since all consecutive ticks have different prices in our test data,
+    // we expect events_processed to equal tick_count
+    assert_eq!(
+        events_processed, tick_count,
+        "With unique consecutive prices, OnPriceMove should fire for every tick. Expected {}, got {}",
+        tick_count, events_processed
+    );
 }
 
 #[test]
 fn test_tick_based_bars() {
-    /// Strategy using tick-based bars (N-tick bars)
+    /// Strategy using tick-based bars (N-tick bars) with shared counter
     struct TickBasedStrategy {
-        bar_count: usize,
+        bar_counter: Arc<AtomicUsize>,
     }
 
     impl Strategy for TickBasedStrategy {
@@ -291,7 +348,6 @@ fn test_tick_based_bars() {
         }
 
         fn is_ready(&self, _bars: &BarsContext) -> bool {
-            // Test strategy is always ready (no warmup needed)
             true
         }
 
@@ -300,7 +356,7 @@ fn test_tick_based_bars() {
         }
 
         fn on_bar_data(&mut self, _bar_data: &BarData, _bars: &mut BarsContext) -> Signal {
-            self.bar_count += 1;
+            self.bar_counter.fetch_add(1, Ordering::SeqCst);
             Signal::Hold
         }
 
@@ -309,7 +365,7 @@ fn test_tick_based_bars() {
         }
 
         fn reset(&mut self) {
-            self.bar_count = 0;
+            self.bar_counter.store(0, Ordering::SeqCst);
         }
 
         fn bar_data_mode(&self) -> BarDataMode {
@@ -321,14 +377,28 @@ fn test_tick_based_bars() {
         }
     }
 
-    let ticks = create_test_ticks(25, "100"); // Should create 3 bars (10 + 10 + 5)
+    // 25 ticks with 10-tick bars = 3 bars (10 + 10 + 5 ticks)
+    // In OnCloseBar mode, we get an event when each bar closes
+    let ticks = create_test_ticks(25, "100");
+    let tick_count = ticks.len();
+    let ticks_per_bar = 10;
+    let expected_bars = (tick_count + ticks_per_bar - 1) / ticks_per_bar; // Ceiling division
 
-    let strategy = Box::new(TickBasedStrategy { bar_count: 0 });
+    let bar_counter = Arc::new(AtomicUsize::new(0));
+    let strategy = Box::new(TickBasedStrategy { bar_counter: bar_counter.clone() });
     let config = BacktestConfig::new(Decimal::from(10000));
 
     let mut engine = BacktestEngine::new(strategy, config).unwrap();
     let result = engine.run_unified(BacktestData::Ticks(ticks));
 
+    // Verify strategy name
     assert_eq!(result.strategy_name, "Tick-Based Bar Strategy");
-    println!("Tick-based bar test executed successfully");
+
+    // Verify correct number of bars were generated
+    let bars_processed = bar_counter.load(Ordering::SeqCst);
+    assert_eq!(
+        bars_processed, expected_bars,
+        "With {} ticks and {}-tick bars, expected {} bars, got {}",
+        tick_count, ticks_per_bar, expected_bars, bars_processed
+    );
 }

@@ -55,7 +55,7 @@ fn test_both_rust_and_python_strategies_work() {
 
 #[test]
 fn test_rust_sma_strategy_backtest() {
-    // Create sample data
+    // Create sample data with enough ticks to potentially trigger SMA crossover
     let ticks = vec![
         create_sample_tick("BTCUSDT", "50000.0", 1),
         create_sample_tick("BTCUSDT", "50100.0", 2),
@@ -63,27 +63,38 @@ fn test_rust_sma_strategy_backtest() {
         create_sample_tick("BTCUSDT", "50300.0", 4),
         create_sample_tick("BTCUSDT", "50400.0", 5),
     ];
+    let initial_capital = Decimal::from_str("10000.0").unwrap();
 
     // Create Rust SMA strategy
     let strategy_box = strategy::create_strategy("sma").expect("Failed to create Rust SMA strategy");
+    assert_eq!(strategy_box.name(), "Simple Moving Average", "Strategy name mismatch");
 
     // Run backtest
-    let config = BacktestConfig::new(Decimal::from_str("10000.0").unwrap());
-
+    let config = BacktestConfig::new(initial_capital);
     let mut engine = BacktestEngine::new(strategy_box, config).expect("Failed to create backtest engine");
     let result = engine.run_unified(BacktestData::Ticks(ticks));
 
-    // Backtest completed successfully (total_trades is u64, always >= 0)
-    println!("Rust SMA strategy executed {} trades", result.total_trades);
+    // Verify backtest completed with correct configuration
+    assert_eq!(result.strategy_name, "Simple Moving Average");
+    assert_eq!(result.initial_capital, initial_capital);
+    // Final value should be positive (even if no trades, capital remains)
+    assert!(
+        result.final_value > Decimal::ZERO,
+        "Final value should be positive, got {}",
+        result.final_value
+    );
+    // With only 5 ticks, SMA strategy likely won't have enough data for crossover
+    // so we just verify the backtest ran without crashing
+    // The key assertion is that the strategy was created and executed
 }
 
 #[test]
 fn test_python_sma_strategy_backtest() {
-    // Initialize Python strategies
+    // Initialize Python strategies (may already be initialized by other tests)
     let config_path = get_config_path();
     let _ = strategy::initialize_python_strategies(&config_path);
 
-    // Create sample data
+    // Create sample data with enough ticks to potentially trigger SMA crossover
     let ticks = vec![
         create_sample_tick("BTCUSDT", "50000.0", 1),
         create_sample_tick("BTCUSDT", "50100.0", 2),
@@ -91,18 +102,32 @@ fn test_python_sma_strategy_backtest() {
         create_sample_tick("BTCUSDT", "50300.0", 4),
         create_sample_tick("BTCUSDT", "50400.0", 5),
     ];
+    let initial_capital = Decimal::from_str("10000.0").unwrap();
 
     // Create Python SMA strategy
     let strategy_box = strategy::create_strategy("sma_python").expect("Failed to create Python SMA strategy");
+    assert_eq!(strategy_box.name(), "Simple Moving Average (Python)", "Strategy name mismatch");
 
     // Run backtest
-    let config = BacktestConfig::new(Decimal::from_str("10000.0").unwrap());
-
+    let config = BacktestConfig::new(initial_capital);
     let mut engine = BacktestEngine::new(strategy_box, config).expect("Failed to create backtest engine");
     let result = engine.run_unified(BacktestData::Ticks(ticks));
 
-    // Backtest completed successfully (total_trades is u64, always >= 0)
-    println!("Python SMA strategy executed {} trades", result.total_trades);
+    // Verify backtest completed with correct configuration
+    assert_eq!(result.strategy_name, "Simple Moving Average (Python)");
+    assert_eq!(result.initial_capital, initial_capital);
+    // Final value should be positive (even if no trades, capital remains)
+    assert!(
+        result.final_value > Decimal::ZERO,
+        "Final value should be positive, got {}",
+        result.final_value
+    );
+    // Verify max drawdown is in valid range (0 to 100%)
+    assert!(
+        result.max_drawdown >= Decimal::ZERO && result.max_drawdown <= Decimal::from(100),
+        "Max drawdown should be between 0% and 100%, got {}",
+        result.max_drawdown
+    );
 }
 
 #[test]
