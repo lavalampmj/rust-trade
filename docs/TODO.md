@@ -379,6 +379,7 @@
 - [x] Hot-reload improvements documentation - see [HOT-RELOAD-IMPROVEMENTS.md](./HOT-RELOAD-IMPROVEMENTS.md)
 - [x] WebSocket rate limiting review - see [WEBSOCKET-RATE-LIMITING-REVIEW.md](./WEBSOCKET-RATE-LIMITING-REVIEW.md)
 - [x] Alerting system documentation - see [ALERTING-SYSTEM.md](./ALERTING-SYSTEM.md)
+- [x] Transform framework documentation - see [STRATEGY_DEVELOPER_GUIDE.md](./STRATEGY_DEVELOPER_GUIDE.md) Section 4
 
 ---
 
