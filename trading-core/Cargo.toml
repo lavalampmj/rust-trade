@@ -37,3 +37,7 @@ criterion = { version = "0.5", features = ["async_tokio"] }
 [[bench]]
 name = "repository_bench"
 harness = false
+
+[[bench]]
+name = "ohlc_benchmark"
+harness = false
