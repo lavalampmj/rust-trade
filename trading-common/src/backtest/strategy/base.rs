@@ -1,9 +1,15 @@
+use crate::accounts::AccountEvent;
+use crate::data::events::MarketDataEvent;
 use crate::data::types::{BarData, BarDataMode, BarType, Timeframe};
-use crate::orders::{ClientOrderId, Order, OrderCanceled, OrderFilled, OrderRejected, OrderSide};
+use crate::instruments::SessionEvent;
+use crate::orders::{ClientOrderId, Order, OrderCanceled, OrderEventAny, OrderFilled, OrderRejected, OrderSide};
 use crate::series::bars_context::BarsContext;
 use crate::series::MaximumBarsLookBack;
 use rust_decimal::Decimal;
 use std::collections::HashMap;
+
+use super::position::PositionEvent;
+use super::state::StrategyStateEvent;
 
 /// Signal output from a strategy.
 ///
@@ -294,5 +300,202 @@ pub trait Strategy: Send + Sync {
     #[allow(unused_variables)]
     fn get_cancellations(&mut self, bar_data: &BarData, bars: &mut BarsContext) -> Vec<ClientOrderId> {
         Vec::new() // Default: no cancellations
+    }
+
+    // ========================================================================
+    // Event-Driven Handlers (NinjaTrader-style)
+    // ========================================================================
+    //
+    // ORDERING GUARANTEE: For fill events that affect positions:
+    //   on_order_update() → on_execution() → on_position_update()
+    //
+    // This ordering ensures strategies can properly track state as orders are filled.
+    // Use StrategyEventDispatcher to maintain this guarantee.
+
+    /// Called on ANY order state change.
+    ///
+    /// **ORDERING**: ALWAYS fires BEFORE `on_execution()` and `on_position_update()`
+    /// for fill events that affect positions.
+    ///
+    /// This is the primary handler for tracking order lifecycle events including:
+    /// - Submitted, Accepted, Rejected
+    /// - Pending modifications and cancellations
+    /// - Filled (before execution details)
+    /// - Canceled, Expired
+    ///
+    /// # Example
+    /// ```text
+    /// fn on_order_update(&mut self, event: &OrderEventAny) {
+    ///     match event {
+    ///         OrderEventAny::Accepted(e) => {
+    ///             println!("Order {} accepted", e.client_order_id);
+    ///         }
+    ///         OrderEventAny::Rejected(e) => {
+    ///             println!("Order {} rejected: {}", e.client_order_id, e.reason);
+    ///         }
+    ///         _ => {}
+    ///     }
+    /// }
+    /// ```
+    #[allow(unused_variables)]
+    fn on_order_update(&mut self, event: &OrderEventAny) {
+        // Default: no-op
+    }
+
+    /// Called on order fills (partial or complete).
+    ///
+    /// **ORDERING**: Fires AFTER `on_order_update()`, BEFORE `on_position_update()`.
+    ///
+    /// Use this for detailed fill processing:
+    /// - Track execution prices and quantities
+    /// - Calculate slippage
+    /// - Update fill statistics
+    ///
+    /// # Example
+    /// ```text
+    /// fn on_execution(&mut self, event: &OrderFilled) {
+    ///     println!("Filled {} @ {} ({})",
+    ///         event.last_qty, event.last_px,
+    ///         if event.leaves_qty.is_zero() { "complete" } else { "partial" }
+    ///     );
+    /// }
+    /// ```
+    #[allow(unused_variables)]
+    fn on_execution(&mut self, event: &OrderFilled) {
+        // Default: no-op
+    }
+
+    /// Called on position changes.
+    ///
+    /// **ORDERING**: ALWAYS fires AFTER `on_order_update()` and `on_execution()`
+    /// for fill events.
+    ///
+    /// Position events notify strategies of changes including:
+    /// - Position opened (new position from flat)
+    /// - Position increased (added to existing)
+    /// - Position decreased (reduced existing)
+    /// - Position closed (returned to flat)
+    /// - Mark-to-market updates (unrealized P&L changes)
+    ///
+    /// # Example
+    /// ```text
+    /// fn on_position_update(&mut self, event: &PositionEvent) {
+    ///     match event.side {
+    ///         PositionSide::Long => {
+    ///             println!("Long {} @ {} | PnL: {}",
+    ///                 event.quantity, event.avg_entry_price, event.unrealized_pnl);
+    ///         }
+    ///         PositionSide::Flat => {
+    ///             println!("Position closed. Realized P&L: {}", event.realized_pnl);
+    ///         }
+    ///         _ => {}
+    ///     }
+    /// }
+    /// ```
+    #[allow(unused_variables)]
+    fn on_position_update(&mut self, event: &PositionEvent) {
+        // Default: no-op
+    }
+
+    /// Called on account balance/state changes.
+    ///
+    /// Account events include:
+    /// - Balance updates (deposits, withdrawals, P&L settlements)
+    /// - State changes (active, suspended, etc.)
+    /// - Margin updates
+    ///
+    /// # Example
+    /// ```text
+    /// fn on_account_update(&mut self, event: &AccountEvent) {
+    ///     match event {
+    ///         AccountEvent::BalanceUpdated { account_id, currency, balance, .. } => {
+    ///             println!("Account {} balance: {} {}", account_id, balance, currency);
+    ///         }
+    ///         _ => {}
+    ///     }
+    /// }
+    /// ```
+    #[allow(unused_variables)]
+    fn on_account_update(&mut self, event: &AccountEvent) {
+        // Default: no-op
+    }
+
+    /// Called on market data updates.
+    ///
+    /// Market data events include:
+    /// - Last trade (tick data)
+    /// - Quote updates (L1 BBO)
+    /// - Order book snapshots/deltas (L2)
+    /// - Mark price, index price, funding rate
+    ///
+    /// # Example
+    /// ```text
+    /// fn on_marketdata_update(&mut self, event: &MarketDataEvent) {
+    ///     match event.data_type {
+    ///         MarketDataType::Last => {
+    ///             if let Some(tick) = &event.tick {
+    ///                 println!("Trade: {} @ {}", tick.quantity, tick.price);
+    ///             }
+    ///         }
+    ///         MarketDataType::Quote => {
+    ///             if let Some(quote) = &event.quote {
+    ///                 println!("BBO: {} / {}", quote.bid_price, quote.ask_price);
+    ///             }
+    ///         }
+    ///         _ => {}
+    ///     }
+    /// }
+    /// ```
+    #[allow(unused_variables)]
+    fn on_marketdata_update(&mut self, event: &MarketDataEvent) {
+        // Default: no-op
+    }
+
+    /// Called on strategy state transitions.
+    ///
+    /// State events track the strategy lifecycle:
+    /// - Historical → Realtime (backtest warmup complete, going live)
+    /// - Realtime → Terminated (shutdown)
+    /// - Any → Faulted (fatal error)
+    ///
+    /// # Example
+    /// ```text
+    /// fn on_state_change(&mut self, event: &StrategyStateEvent) {
+    ///     if event.new_state == StrategyState::Realtime {
+    ///         println!("Going live!");
+    ///         self.is_live = true;
+    ///     }
+    /// }
+    /// ```
+    #[allow(unused_variables)]
+    fn on_state_change(&mut self, event: &StrategyStateEvent) {
+        // Default: no-op
+    }
+
+    /// Called on trading session changes.
+    ///
+    /// Session events include:
+    /// - Session open/close
+    /// - Market halts and resumes
+    /// - Maintenance windows
+    ///
+    /// # Example
+    /// ```text
+    /// fn on_session_update(&mut self, event: &SessionEvent) {
+    ///     match event {
+    ///         SessionEvent::MarketHalted { instrument_id, reason, .. } => {
+    ///             println!("Market halted for {}: {}", instrument_id.symbol, reason);
+    ///             self.halt_trading = true;
+    ///         }
+    ///         SessionEvent::MarketResumed { .. } => {
+    ///             self.halt_trading = false;
+    ///         }
+    ///         _ => {}
+    ///     }
+    /// }
+    /// ```
+    #[allow(unused_variables)]
+    fn on_session_update(&mut self, event: &SessionEvent) {
+        // Default: no-op
     }
 }

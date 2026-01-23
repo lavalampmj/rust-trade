@@ -1,4 +1,7 @@
 pub(crate) mod base;
+pub mod dispatcher;
+pub mod position;
+pub mod state;
 mod rsi;
 mod sma;
 mod python_bridge;
@@ -9,6 +12,9 @@ mod config;
 mod security_tests;
 
 pub use base::{Signal, Strategy};
+pub use dispatcher::StrategyEventDispatcher;
+pub use position::PositionEvent;
+pub use state::{StrategyState, StrategyStateEvent};
 use rsi::RsiStrategy;
 use sma::SmaStrategy;
 pub use python_loader::{

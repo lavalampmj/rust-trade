@@ -2,6 +2,7 @@ pub mod backfill;
 pub mod backfill_config;
 pub mod cache;
 pub mod dbn_types;
+pub mod events;
 pub mod gap_detection;
 pub mod orderbook;
 pub mod quotes;
@@ -24,3 +25,6 @@ pub use orderbook::{
 
 // Re-export symbol repository
 pub use symbol_repository::SymbolRepository;
+
+// Re-export market data events
+pub use events::{MarketDataEvent, MarketDataType};

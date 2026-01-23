@@ -3,14 +3,19 @@ use pyo3::types::{PyDict, PyTuple};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
+use crate::accounts::AccountEvent;
+use crate::data::events::MarketDataEvent;
 use crate::data::types::{BarData, BarDataMode, BarType, Timeframe, TradeSide};
+use crate::instruments::SessionEvent;
 use crate::orders::{
-    ClientOrderId, Order, OrderCanceled, OrderFilled, OrderRejected, OrderSide, TimeInForce,
+    ClientOrderId, Order, OrderCanceled, OrderEventAny, OrderFilled, OrderRejected, OrderSide, TimeInForce,
 };
 use crate::series::bars_context::BarsContext;
 use crate::series::MaximumBarsLookBack;
 // OHLCData included via BarData.ohlc_bar
 use super::base::{Strategy, Signal};
+use super::position::PositionEvent;
+use super::state::StrategyStateEvent;
 use rust_decimal::Decimal;
 use std::str::FromStr;
 
@@ -1052,6 +1057,333 @@ impl Strategy for PythonStrategy {
                 }
             }
         })
+    }
+
+    // ========================================================================
+    // Event-Driven Handlers (NinjaTrader-style)
+    // ========================================================================
+
+    fn on_order_update(&mut self, event: &OrderEventAny) {
+        Python::with_gil(|py| {
+            let instance = self.py_instance.lock().unwrap();
+            let py_instance = instance.bind(py);
+
+            // Check if method exists
+            if !py_instance.hasattr("on_order_update").unwrap_or(false) {
+                return;
+            }
+
+            let event_dict = PyDict::new_bound(py);
+
+            // Add event type
+            let event_type = match event {
+                OrderEventAny::Initialized(_) => "Initialized",
+                OrderEventAny::Denied(_) => "Denied",
+                OrderEventAny::Submitted(_) => "Submitted",
+                OrderEventAny::Accepted(_) => "Accepted",
+                OrderEventAny::Rejected(_) => "Rejected",
+                OrderEventAny::Canceled(_) => "Canceled",
+                OrderEventAny::Expired(_) => "Expired",
+                OrderEventAny::Triggered(_) => "Triggered",
+                OrderEventAny::PendingUpdate(_) => "PendingUpdate",
+                OrderEventAny::PendingCancel(_) => "PendingCancel",
+                OrderEventAny::ModifyRejected(_) => "ModifyRejected",
+                OrderEventAny::CancelRejected(_) => "CancelRejected",
+                OrderEventAny::Updated(_) => "Updated",
+                OrderEventAny::Filled(_) => "Filled",
+            };
+            let _ = event_dict.set_item("event_type", event_type);
+
+            // Add common fields based on event type
+            match event {
+                OrderEventAny::Submitted(e) => {
+                    let _ = event_dict.set_item("client_order_id", e.client_order_id.as_str());
+                    let _ = event_dict.set_item("timestamp", e.ts_event.to_rfc3339());
+                }
+                OrderEventAny::Accepted(e) => {
+                    let _ = event_dict.set_item("client_order_id", e.client_order_id.as_str());
+                    let _ = event_dict.set_item("venue_order_id", e.venue_order_id.as_str());
+                    let _ = event_dict.set_item("timestamp", e.ts_event.to_rfc3339());
+                }
+                OrderEventAny::Rejected(e) => {
+                    let _ = event_dict.set_item("client_order_id", e.client_order_id.as_str());
+                    let _ = event_dict.set_item("reason", &e.reason);
+                    let _ = event_dict.set_item("timestamp", e.ts_event.to_rfc3339());
+                }
+                OrderEventAny::Canceled(e) => {
+                    let _ = event_dict.set_item("client_order_id", e.client_order_id.as_str());
+                    if let Some(ref venue_id) = e.venue_order_id {
+                        let _ = event_dict.set_item("venue_order_id", venue_id.as_str());
+                    }
+                    let _ = event_dict.set_item("timestamp", e.ts_event.to_rfc3339());
+                }
+                OrderEventAny::Filled(e) => {
+                    let _ = event_dict.set_item("client_order_id", e.client_order_id.as_str());
+                    let _ = event_dict.set_item("venue_order_id", e.venue_order_id.as_str());
+                    let _ = event_dict.set_item("symbol", e.instrument_id.symbol.as_str());
+                    let _ = event_dict.set_item("order_side", match e.order_side {
+                        OrderSide::Buy => "Buy",
+                        OrderSide::Sell => "Sell",
+                    });
+                    let _ = event_dict.set_item("last_qty", e.last_qty.to_string());
+                    let _ = event_dict.set_item("last_px", e.last_px.to_string());
+                    let _ = event_dict.set_item("cum_qty", e.cum_qty.to_string());
+                    let _ = event_dict.set_item("leaves_qty", e.leaves_qty.to_string());
+                    let _ = event_dict.set_item("is_last_fill", e.leaves_qty.is_zero());
+                    let _ = event_dict.set_item("timestamp", e.ts_event.to_rfc3339());
+                }
+                _ => {
+                    // For other event types, just add client_order_id and timestamp
+                    let _ = event_dict.set_item("client_order_id", event.client_order_id().as_str());
+                    let _ = event_dict.set_item("timestamp", event.ts_event().to_rfc3339());
+                }
+            }
+
+            if let Err(e) = py_instance.call_method1("on_order_update", (&event_dict,)) {
+                eprintln!("Python on_order_update error: {}", e);
+            }
+        });
+    }
+
+    fn on_execution(&mut self, event: &OrderFilled) {
+        Python::with_gil(|py| {
+            let instance = self.py_instance.lock().unwrap();
+            let py_instance = instance.bind(py);
+
+            // Check if method exists
+            if !py_instance.hasattr("on_execution").unwrap_or(false) {
+                return;
+            }
+
+            let event_dict = PyDict::new_bound(py);
+            let _ = event_dict.set_item("client_order_id", event.client_order_id.as_str());
+            let _ = event_dict.set_item("venue_order_id", event.venue_order_id.as_str());
+            let _ = event_dict.set_item("symbol", event.instrument_id.symbol.as_str());
+            let _ = event_dict.set_item("order_side", match event.order_side {
+                OrderSide::Buy => "Buy",
+                OrderSide::Sell => "Sell",
+            });
+            let _ = event_dict.set_item("last_qty", event.last_qty.to_string());
+            let _ = event_dict.set_item("last_px", event.last_px.to_string());
+            let _ = event_dict.set_item("cum_qty", event.cum_qty.to_string());
+            let _ = event_dict.set_item("leaves_qty", event.leaves_qty.to_string());
+            let _ = event_dict.set_item("commission", event.commission.to_string());
+            let _ = event_dict.set_item("commission_currency", &event.commission_currency);
+            let _ = event_dict.set_item("is_last_fill", event.leaves_qty.is_zero());
+            let _ = event_dict.set_item("timestamp", event.ts_event.to_rfc3339());
+
+            if let Err(e) = py_instance.call_method1("on_execution", (&event_dict,)) {
+                eprintln!("Python on_execution error: {}", e);
+            }
+        });
+    }
+
+    fn on_position_update(&mut self, event: &PositionEvent) {
+        Python::with_gil(|py| {
+            let instance = self.py_instance.lock().unwrap();
+            let py_instance = instance.bind(py);
+
+            // Check if method exists
+            if !py_instance.hasattr("on_position_update").unwrap_or(false) {
+                return;
+            }
+
+            let event_dict = PyDict::new_bound(py);
+            let _ = event_dict.set_item("position_id", event.position_id.as_str());
+            let _ = event_dict.set_item("account_id", event.account_id.as_str());
+            let _ = event_dict.set_item("symbol", event.symbol());
+            let _ = event_dict.set_item("strategy_id", event.strategy_id.as_str());
+            let _ = event_dict.set_item("side", format!("{:?}", event.side));
+            let _ = event_dict.set_item("quantity", event.quantity.to_string());
+            let _ = event_dict.set_item("avg_entry_price", event.avg_entry_price.to_string());
+            let _ = event_dict.set_item("unrealized_pnl", event.unrealized_pnl.to_string());
+            let _ = event_dict.set_item("realized_pnl", event.realized_pnl.to_string());
+            let _ = event_dict.set_item("commission", event.commission.to_string());
+            let _ = event_dict.set_item("mark_price", event.mark_price.to_string());
+            let _ = event_dict.set_item("notional", event.notional().to_string());
+            let _ = event_dict.set_item("total_pnl", event.total_pnl().to_string());
+            let _ = event_dict.set_item("net_pnl", event.net_pnl().to_string());
+            let _ = event_dict.set_item("is_open", event.is_open());
+            let _ = event_dict.set_item("is_flat", event.is_flat());
+            let _ = event_dict.set_item("is_long", event.is_long());
+            let _ = event_dict.set_item("is_short", event.is_short());
+            let _ = event_dict.set_item("ts_opened", event.ts_opened.to_rfc3339());
+            let _ = event_dict.set_item("timestamp", event.ts_event.to_rfc3339());
+
+            if let Err(e) = py_instance.call_method1("on_position_update", (&event_dict,)) {
+                eprintln!("Python on_position_update error: {}", e);
+            }
+        });
+    }
+
+    fn on_account_update(&mut self, event: &AccountEvent) {
+        Python::with_gil(|py| {
+            let instance = self.py_instance.lock().unwrap();
+            let py_instance = instance.bind(py);
+
+            // Check if method exists
+            if !py_instance.hasattr("on_account_update").unwrap_or(false) {
+                return;
+            }
+
+            let event_dict = PyDict::new_bound(py);
+
+            match event {
+                AccountEvent::Created { account_id, timestamp } => {
+                    let _ = event_dict.set_item("event_type", "Created");
+                    let _ = event_dict.set_item("account_id", account_id.as_str());
+                    let _ = event_dict.set_item("timestamp", timestamp.to_rfc3339());
+                }
+                AccountEvent::BalanceUpdated { account_id, currency, old_balance, new_balance, timestamp } => {
+                    let _ = event_dict.set_item("event_type", "BalanceUpdated");
+                    let _ = event_dict.set_item("account_id", account_id.as_str());
+                    let _ = event_dict.set_item("currency", currency);
+                    let _ = event_dict.set_item("old_total", old_balance.total.to_string());
+                    let _ = event_dict.set_item("old_free", old_balance.free.to_string());
+                    let _ = event_dict.set_item("new_total", new_balance.total.to_string());
+                    let _ = event_dict.set_item("new_free", new_balance.free.to_string());
+                    let _ = event_dict.set_item("timestamp", timestamp.to_rfc3339());
+                }
+                AccountEvent::StateChanged { account_id, old_state, new_state, timestamp } => {
+                    let _ = event_dict.set_item("event_type", "StateChanged");
+                    let _ = event_dict.set_item("account_id", account_id.as_str());
+                    let _ = event_dict.set_item("old_state", format!("{:?}", old_state));
+                    let _ = event_dict.set_item("new_state", format!("{:?}", new_state));
+                    let _ = event_dict.set_item("timestamp", timestamp.to_rfc3339());
+                }
+                AccountEvent::MarginUpdated { account_id, margin_used, margin_available, unrealized_pnl, timestamp } => {
+                    let _ = event_dict.set_item("event_type", "MarginUpdated");
+                    let _ = event_dict.set_item("account_id", account_id.as_str());
+                    let _ = event_dict.set_item("margin_used", margin_used.to_string());
+                    let _ = event_dict.set_item("margin_available", margin_available.to_string());
+                    let _ = event_dict.set_item("unrealized_pnl", unrealized_pnl.to_string());
+                    let _ = event_dict.set_item("timestamp", timestamp.to_rfc3339());
+                }
+            }
+
+            if let Err(e) = py_instance.call_method1("on_account_update", (&event_dict,)) {
+                eprintln!("Python on_account_update error: {}", e);
+            }
+        });
+    }
+
+    fn on_marketdata_update(&mut self, event: &MarketDataEvent) {
+        Python::with_gil(|py| {
+            let instance = self.py_instance.lock().unwrap();
+            let py_instance = instance.bind(py);
+
+            // Check if method exists
+            if !py_instance.hasattr("on_marketdata_update").unwrap_or(false) {
+                return;
+            }
+
+            let event_dict = PyDict::new_bound(py);
+            let _ = event_dict.set_item("data_type", format!("{:?}", event.data_type));
+            let _ = event_dict.set_item("symbol", event.instrument_id.symbol.as_str());
+            let _ = event_dict.set_item("timestamp", event.ts_event.to_rfc3339());
+
+            // Add tick data if present
+            if let Some(ref tick) = event.tick {
+                let tick_dict = PyDict::new_bound(py);
+                let _ = tick_dict.set_item("price", tick.price.to_string());
+                let _ = tick_dict.set_item("quantity", tick.quantity.to_string());
+                let _ = tick_dict.set_item("side", match tick.side {
+                    TradeSide::Buy => "Buy",
+                    TradeSide::Sell => "Sell",
+                });
+                let _ = tick_dict.set_item("trade_id", &tick.trade_id);
+                let _ = tick_dict.set_item("timestamp", tick.timestamp.to_rfc3339());
+                let _ = event_dict.set_item("tick", tick_dict);
+            }
+
+            // Add quote data if present
+            if let Some(ref quote) = event.quote {
+                let quote_dict = PyDict::new_bound(py);
+                let _ = quote_dict.set_item("bid_price", quote.bid_price.to_string());
+                let _ = quote_dict.set_item("bid_size", quote.bid_size.to_string());
+                let _ = quote_dict.set_item("ask_price", quote.ask_price.to_string());
+                let _ = quote_dict.set_item("ask_size", quote.ask_size.to_string());
+                let _ = quote_dict.set_item("timestamp", quote.ts_event.to_rfc3339());
+                let _ = event_dict.set_item("quote", quote_dict);
+            }
+
+            if let Err(e) = py_instance.call_method1("on_marketdata_update", (&event_dict,)) {
+                eprintln!("Python on_marketdata_update error: {}", e);
+            }
+        });
+    }
+
+    fn on_state_change(&mut self, event: &StrategyStateEvent) {
+        Python::with_gil(|py| {
+            let instance = self.py_instance.lock().unwrap();
+            let py_instance = instance.bind(py);
+
+            // Check if method exists
+            if !py_instance.hasattr("on_state_change").unwrap_or(false) {
+                return;
+            }
+
+            let event_dict = PyDict::new_bound(py);
+            let _ = event_dict.set_item("strategy_id", event.strategy_id.as_str());
+            let _ = event_dict.set_item("old_state", format!("{:?}", event.old_state));
+            let _ = event_dict.set_item("new_state", format!("{:?}", event.new_state));
+            if let Some(ref reason) = event.reason {
+                let _ = event_dict.set_item("reason", reason);
+            }
+            let _ = event_dict.set_item("timestamp", event.ts_event.to_rfc3339());
+
+            if let Err(e) = py_instance.call_method1("on_state_change", (&event_dict,)) {
+                eprintln!("Python on_state_change error: {}", e);
+            }
+        });
+    }
+
+    fn on_session_update(&mut self, event: &SessionEvent) {
+        Python::with_gil(|py| {
+            let instance = self.py_instance.lock().unwrap();
+            let py_instance = instance.bind(py);
+
+            // Check if method exists
+            if !py_instance.hasattr("on_session_update").unwrap_or(false) {
+                return;
+            }
+
+            let event_dict = PyDict::new_bound(py);
+
+            match event {
+                SessionEvent::SessionOpened { symbol, session } => {
+                    let _ = event_dict.set_item("event_type", "SessionOpened");
+                    let _ = event_dict.set_item("symbol", symbol);
+                    let _ = event_dict.set_item("session_name", &session.name);
+                    let _ = event_dict.set_item("session_type", format!("{:?}", session.session_type));
+                }
+                SessionEvent::SessionClosed { symbol } => {
+                    let _ = event_dict.set_item("event_type", "SessionClosed");
+                    let _ = event_dict.set_item("symbol", symbol);
+                }
+                SessionEvent::MarketHalted { symbol, reason } => {
+                    let _ = event_dict.set_item("event_type", "MarketHalted");
+                    let _ = event_dict.set_item("symbol", symbol);
+                    let _ = event_dict.set_item("reason", reason);
+                }
+                SessionEvent::MarketResumed { symbol } => {
+                    let _ = event_dict.set_item("event_type", "MarketResumed");
+                    let _ = event_dict.set_item("symbol", symbol);
+                }
+                SessionEvent::MaintenanceStarted { symbol } => {
+                    let _ = event_dict.set_item("event_type", "MaintenanceStarted");
+                    let _ = event_dict.set_item("symbol", symbol);
+                }
+                SessionEvent::MaintenanceEnded { symbol } => {
+                    let _ = event_dict.set_item("event_type", "MaintenanceEnded");
+                    let _ = event_dict.set_item("symbol", symbol);
+                }
+            }
+
+            if let Err(e) = py_instance.call_method1("on_session_update", (&event_dict,)) {
+                eprintln!("Python on_session_update error: {}", e);
+            }
+        });
     }
 }
 
