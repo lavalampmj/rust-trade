@@ -258,6 +258,8 @@ mod tests {
                 tick_count_in_bar: 10,
                 is_synthetic: false,
                 generation_timestamp: Utc::now(),
+                is_session_truncated: false,
+                is_session_aligned: false,
             },
         };
 
@@ -320,6 +322,8 @@ mod tests {
                 tick_count_in_bar: 10,
                 is_synthetic: false,
                 generation_timestamp: Utc::now(),
+                is_session_truncated: false,
+                is_session_aligned: false,
             },
         };
 
@@ -381,6 +385,8 @@ mod tests {
                 tick_count_in_bar: 10,
                 is_synthetic: false,
                 generation_timestamp: Utc::now(),
+                is_session_truncated: false,
+                is_session_aligned: false,
             },
         };
 

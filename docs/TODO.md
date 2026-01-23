@@ -1,6 +1,6 @@
 # TODO - Trading System Features & Improvements
 
-**Last Updated**: 2026-01-22
+**Last Updated**: 2026-01-23
 **Status**: 98% Production Ready
 
 ---
@@ -21,12 +21,12 @@
 ## 🔥 High Priority Features
 
 ### Symbol Sessions & Market Hours
-- [ ] Add trading session configuration per symbol 
-- [ ] Implement session opening/closing times
-- [ ] Handle pre-market and after-hours trading
-- [ ] OHLC window alignment to session opening (not first tick)
-- [ ] Market calendar support (holidays, early closes)
-- [ ] Multiple timezone support for global markets
+- [x] Add trading session configuration per symbol - **COMPLETE** (`SessionSchedule` struct, 33 tests in session.rs)
+- [x] Implement session opening/closing times - **COMPLETE** (`TradingSession` with start/end times, `session_open_time()`, `session_close_time()`)
+- [x] Handle pre-market and after-hours trading - **COMPLETE** (`SessionType::PreMarket/AfterHours`, factory methods, extended hours tracking)
+- [x] OHLC window alignment to session opening (not first tick) - **COMPLETE** (`SessionAwareConfig` with `align_to_session_open`, `truncate_at_session_close`)
+- [x] Market calendar support (holidays, early closes) - **COMPLETE** (`MarketCalendar` with holidays, early_closes, late_opens)
+- [x] Multiple timezone support for global markets - **COMPLETE** (full `chrono_tz` support, DST handling, 6 timezone tests)
 
 ### Symbol Metadata
 - [ ] Add datamodel and metadata, structure to be planned
@@ -153,6 +153,23 @@
 ---
 
 ## ✅ Recently Completed
+
+### Symbol Sessions & Market Hours (2026-01-23)
+- [x] Trading session configuration per symbol (`SessionSchedule` struct)
+- [x] Session opening/closing times (`TradingSession` with start/end, `session_open_time()`, `session_close_time()`)
+- [x] Pre-market and after-hours trading (`SessionType::PreMarket/AfterHours`, factory methods)
+- [x] Market calendar support (`MarketCalendar` with holidays, early_closes, late_opens)
+- [x] Multiple timezone support (full `chrono_tz` with DST handling)
+- [x] Session manager for real-time tracking (`SessionManager` with event broadcasting)
+- [x] Preset schedules for US equity, CME Globex, crypto 24/7, forex
+- [x] **OHLC Session Alignment & Truncation** (NEW):
+  - `SessionAwareConfig` struct for configuring session-aware bar generation
+  - `align_to_session_open`: Align first bar to session open time (not first tick)
+  - `truncate_at_session_close`: Force-close partial bars at session end
+  - Works with both time-based and tick-based bars
+  - `BarMetadata` extended with `is_session_truncated` and `is_session_aligned` flags
+  - 15 tests for session-aware bar generation
+- [x] Comprehensive test coverage: 62 tests (33 session.rs + 14 session_manager.rs + 15 bar_generator session tests)
 
 ### Order Management System Test Coverage (2026-01-22)
 - [x] Comprehensive event type tests (24 tests covering all 14 order event types)

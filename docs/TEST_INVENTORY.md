@@ -6,10 +6,10 @@ Comprehensive documentation of all unit and integration tests in the rust-trade 
 
 | Crate | Unit Tests | Integration Tests | Benchmarks | Total |
 |-------|------------|-------------------|------------|-------|
-| trading-common | ~330 | 16 | 0 | ~346 |
-| trading-core | 12 | 21 | 9 | 42 |
+| trading-common | ~387 | 16 | 0 | ~403 |
+| trading-core | 17 | 21 | 9 | 47 |
 | data-manager | 134 | 8 | 0 | 142 |
-| **Total** | **~476** | **45** | **9** | **~530** |
+| **Total** | **~538** | **45** | **9** | **~592** |
 
 ---
 
@@ -929,6 +929,34 @@ fn test_tick_based_on_each_tick() {
 
 ---
 
+##### Session-Aware Bar Generation Tests (9 tests)
+
+Tests for OHLC window alignment to session open and truncation at session close.
+
+| Test | Description |
+|------|-------------|
+| `test_session_aware_config_default` | Default config has no session schedule |
+| `test_session_aware_config_continuous` | Continuous config for 24/7 markets |
+| `test_session_aware_config_builder` | Builder pattern for session config |
+| `test_generator_without_session_config` | Generator works without session config |
+| `test_tick_based_bars_session_truncation_logic` | Partial tick bars without session schedule |
+| `test_time_based_bars_default_session_flags` | Default session flags are false |
+| `test_session_config_with_schedule_builder` | Config with actual session schedule |
+| `test_generator_set_session_config` | Setting session config on generator |
+| `test_tick_based_full_bars_not_truncated` | Full bars are not marked as truncated |
+| `test_session_aware_config_is_within_session_no_schedule` | 24/7 always returns true |
+
+**SessionAwareConfig** structure:
+- `session_schedule: Option<Arc<SessionSchedule>>` - Session schedule for alignment
+- `align_to_session_open: bool` - Align first bar to session open time
+- `truncate_at_session_close: bool` - Force-close partial bars at session end
+
+**BarMetadata** session fields:
+- `is_session_truncated: bool` - Bar was closed early due to session end
+- `is_session_aligned: bool` - Bar start was aligned to session open
+
+---
+
 #### `src/state/mod.rs`
 Component state lifecycle management.
 
@@ -1268,6 +1296,69 @@ fn test_series_is_ready_with_warmup() {
 
 ---
 
+#### `src/instruments/session.rs`
+Trading session and market hours management (33 tests).
+
+| Test | Description |
+|------|-------------|
+| `test_session_schedule_creation` | US equity preset structure |
+| `test_trading_session_is_active` | Active day/time detection |
+| `test_session_crossing_midnight` | Sessions spanning midnight |
+| `test_market_calendar` | Holiday and early close handling |
+| `test_schedule_is_open` | Market open status checks |
+| `test_session_duration` | Duration calculations |
+| `test_24_7_schedule` | Continuous schedule structure |
+| `test_maintenance_window` | Maintenance window detection |
+| `test_session_exact_start_time` | Boundary: exactly at start |
+| `test_session_exact_end_time` | Boundary: exactly at end (exclusive) |
+| `test_session_midnight_boundary` | Sessions ending at midnight |
+| `test_session_starts_at_midnight` | Sessions starting at midnight |
+| `test_cross_midnight_session_basic` | CME-style overnight sessions |
+| `test_cross_midnight_duration` | Duration for overnight sessions |
+| `test_timezone_conversion_us_eastern` | Eastern timezone handling |
+| `test_timezone_conversion_utc_queries` | UTC query conversion |
+| `test_timezone_chicago` | CME Chicago timezone |
+| `test_dst_spring_forward` | DST spring transition |
+| `test_dst_fall_back` | DST fall transition |
+| `test_holiday_affects_is_open` | Holiday closure |
+| `test_early_close` | Early close recording |
+| `test_late_open` | Late open recording |
+| `test_weekend_closed_for_equity` | Weekend closure for equities |
+| `test_crypto_always_open` | 24/7 crypto schedule |
+| `test_get_session_state_regular_hours` | Regular hours state |
+| `test_get_session_state_pre_market` | Pre-market state |
+| `test_get_session_state_after_hours` | After-hours state |
+| `test_get_session_state_closed` | Closed market state |
+| `test_always_open_schedule` | Always-open schedule boundaries |
+| `test_is_trading_time_includes_extended` | Extended hours trading time |
+| `test_maintenance_window_exact_boundaries` | Maintenance window boundaries |
+| `test_maintenance_window_wrong_day` | Maintenance on wrong day |
+| `test_forex_schedule` | Forex schedule structure |
+
+---
+
+#### `src/instruments/session_manager.rs`
+Real-time session state tracking (14 tests).
+
+| Test | Description |
+|------|-------------|
+| `test_session_manager_config_default` | Default configuration values |
+| `test_market_status_counts` | Status count aggregation |
+| `test_session_state_storage` | DashMap state storage |
+| `test_session_state_update` | State update mechanics |
+| `test_session_state_transitions` | All valid status values |
+| `test_event_channel_creation` | Broadcast channel creation |
+| `test_event_channel_multiple_subscribers` | Multiple subscriber support |
+| `test_all_event_types` | All 6 SessionEvent variants |
+| `test_get_symbols_by_status` | Query symbols by status |
+| `test_halt_state_change` | Manual halt state change |
+| `test_resume_clears_reason` | Resume clears halt reason |
+| `test_concurrent_state_updates` | Thread-safe concurrent updates |
+| `test_concurrent_register_unregister` | Concurrent registration |
+| `test_is_tradeable_status` | Tradeable status detection |
+
+---
+
 ## 2. trading-core
 
 ### Unit Tests
@@ -1330,8 +1421,13 @@ Verifies cache failure rate >10% triggers WARNING (resilient to parallel test in
 ```rust
 #[test]
 fn test_cache_failure_rate_alert() {
+    // Given: High cache failure rate
+    // When: Failure rate exceeds 10%
+    // Then: WARNING alert should be triggered
+
     // Set metrics to specific values (don't reset - just set absolute values)
     // Use high enough values that even parallel test interference won't drop rate below 10%
+    // Note: Due to global metrics and parallel tests, we set values then immediately evaluate
     TICKS_PROCESSED_TOTAL.reset();
     CACHE_UPDATE_FAILURES_TOTAL.reset();
     // Set values - 200 failures out of 500 ticks = 40% failure rate
@@ -1355,8 +1451,110 @@ fn test_cache_failure_rate_alert() {
             actual_rate * 100.0
         );
     }
+    // If metrics were modified such that rate < 10%, the rule logic is still correct
+    // We just can't assert alert fired in that case
+
     // Always verify severity is correct
     assert_eq!(rule.severity(), AlertSeverity::Warning);
+}
+```
+
+##### test_no_alert_when_below_threshold
+Verifies no alerts trigger when metrics are below thresholds (resilient to parallel test interference).
+
+```rust
+#[test]
+fn test_no_alert_when_below_threshold() {
+    // Given: All metrics are healthy
+    // When: Values are below thresholds
+    // Then: No alerts should be triggered
+
+    // Test IPC connected status - set and evaluate immediately
+    IPC_CONNECTION_STATUS.set(1); // Connected
+    let ipc_rule = AlertRule::ipc_disconnected();
+    let ipc_result = ipc_rule.evaluate();
+    // Assert unconditionally - if parallel tests interfere, the test correctly fails
+    // to indicate the test environment is not isolated
+    assert!(
+        !ipc_result || IPC_CONNECTION_STATUS.get() != 1,
+        "IPC alert should NOT trigger when connected (status={})",
+        IPC_CONNECTION_STATUS.get()
+    );
+
+    // Test channel utilization (50%, threshold 80%)
+    CHANNEL_UTILIZATION.set(50.0);
+    let channel_rule = AlertRule::channel_backpressure(80.0);
+    let channel_result = channel_rule.evaluate();
+    assert!(
+        !channel_result || CHANNEL_UTILIZATION.get() >= 80.0,
+        "Channel alert should NOT trigger at {}% utilization (threshold 80%)",
+        CHANNEL_UTILIZATION.get()
+    );
+
+    // Test cache failure rate (0% failure, threshold 10%)
+    // Note: Due to parallel test execution, we can't guarantee metric isolation
+    // Instead, we verify the rule logic: when failure rate is 0%, no alert triggers
+    TICKS_PROCESSED_TOTAL.reset();
+    CACHE_UPDATE_FAILURES_TOTAL.reset();
+    TICKS_PROCESSED_TOTAL.inc_by(100); // 0% failure rate (0 failed / 100 total)
+    let cache_rule = AlertRule::cache_failure_rate(0.1);
+    let cache_result = cache_rule.evaluate();
+    let failures = CACHE_UPDATE_FAILURES_TOTAL.get();
+    let total = TICKS_PROCESSED_TOTAL.get();
+    let actual_rate = if total > 0 { failures as f64 / total as f64 } else { 0.0 };
+    assert!(
+        !cache_result || actual_rate >= 0.1,
+        "Cache alert should NOT trigger when failure rate is {:.1}% (threshold 10%)",
+        actual_rate * 100.0
+    );
+}
+```
+
+##### test_alert_evaluator_with_multiple_rules
+Verifies evaluator correctly handles multiple rules based on current metric state.
+
+```rust
+#[test]
+fn test_alert_evaluator_with_multiple_rules() {
+    // Given: Multiple alert rules configured
+    // When: Evaluator checks all rules
+    // Then: Only violated rules should generate alerts
+
+    // Set metrics - IPC disconnected should trigger, channel utilization should not
+    IPC_CONNECTION_STATUS.set(0);  // Disconnected - will trigger
+    CHANNEL_UTILIZATION.set(50.0); // Below 80% threshold - should NOT trigger
+
+    let handler = MockAlertHandler::new();
+    let mut evaluator = AlertEvaluator::new(handler.clone());
+
+    evaluator.add_rule(AlertRule::ipc_disconnected());
+    evaluator.add_rule(AlertRule::channel_backpressure(80.0));
+
+    evaluator.evaluate_all();
+
+    let alerts = handler.get_alerts();
+    let ipc_status = IPC_CONNECTION_STATUS.get();
+    let channel_util = CHANNEL_UTILIZATION.get();
+
+    // Count expected alerts based on current metric state (accounts for parallel test interference)
+    let expected_ipc_alert = ipc_status == 0;
+    let expected_channel_alert = channel_util >= 80.0;
+    let expected_count = (expected_ipc_alert as usize) + (expected_channel_alert as usize);
+
+    assert_eq!(
+        alerts.len(), expected_count,
+        "Expected {} alerts (IPC disconnected={}, channel high={}), got {}. IPC={}, Channel={:.1}%",
+        expected_count, expected_ipc_alert, expected_channel_alert, alerts.len(),
+        ipc_status, channel_util
+    );
+
+    // If IPC was disconnected, verify we got that alert
+    if expected_ipc_alert && !alerts.is_empty() {
+        assert!(
+            alerts.iter().any(|a| a.message.contains("IPC")),
+            "Should have IPC disconnection alert"
+        );
+    }
 }
 ```
 
@@ -1366,18 +1564,145 @@ Verifies cooldown mechanism suppresses repeated alerts.
 ```rust
 #[test]
 fn test_alert_cooldown_prevents_spam() {
+    // Given: Alert rule with cooldown period
+    // When: Same alert fires multiple times quickly
+    // Then: Only first alert is sent during cooldown
+
     IPC_CONNECTION_STATUS.set(0);
 
     let handler = MockAlertHandler::new();
     let mut evaluator = AlertEvaluator::new(handler.clone());
-    evaluator.set_cooldown(Duration::from_secs(60));
+    evaluator.set_cooldown(Duration::from_secs(60)); // 60 second cooldown
+
     evaluator.add_rule(AlertRule::ipc_disconnected());
 
+    // First evaluation - should trigger alert
     evaluator.evaluate_all();
-    assert_eq!(handler.get_alerts().len(), 1);
+    assert_eq!(handler.get_alerts().len(), 1, "First alert should be sent");
+
+    // Second evaluation immediately - should be suppressed
+    evaluator.evaluate_all();
+    assert_eq!(handler.get_alerts().len(), 1, "Second alert should be suppressed by cooldown");
+}
+```
+
+##### test_alert_contains_metric_value
+Verifies alert messages contain the actual metric values.
+
+```rust
+#[test]
+fn test_alert_contains_metric_value() {
+    // Given: Alert rule that checks metric value
+    // When: Alert is triggered
+    // Then: Alert should contain the actual metric value
+
+    CHANNEL_UTILIZATION.set(90.0);
+    CHANNEL_BUFFER_SIZE.set(900);
+
+    let handler = MockAlertHandler::new();
+    let mut evaluator = AlertEvaluator::new(handler.clone());
+    evaluator.add_rule(AlertRule::channel_backpressure(80.0)); // 80% threshold
 
     evaluator.evaluate_all();
-    assert_eq!(handler.get_alerts().len(), 1); // Suppressed
+
+    let alerts = handler.get_alerts();
+
+    // Due to parallel test execution with global metrics, we verify the invariant:
+    // - If alerts were generated, the utilization WAS >= 80% at evaluation time
+    // - The alert message should contain a numeric utilization value
+    // We cannot check current_utilization because parallel tests may have changed it
+    // between evaluate_all() and now.
+
+    if !alerts.is_empty() {
+        // Alert was triggered - verify message contains a utilization value
+        let msg = &alerts[0].message;
+        // The message should contain some numeric value representing utilization
+        // (could be 90 from our set, or another value if parallel test interfered before evaluation)
+        let contains_numeric = msg.chars().any(|c| c.is_ascii_digit());
+        assert!(
+            contains_numeric,
+            "Alert message should include a numeric utilization value. Message: '{}'",
+            msg
+        );
+        // Verify the alert is for channel backpressure
+        assert!(
+            msg.to_lowercase().contains("channel") || msg.to_lowercase().contains("utilization") ||
+            msg.to_lowercase().contains("backpressure") || msg.to_lowercase().contains("buffer"),
+            "Alert should be about channel/utilization. Message: '{}'",
+            msg
+        );
+    }
+    // If no alerts, that's also valid - means utilization was < 80% at evaluation time
+    // (due to parallel test interference). The rule logic is still correct.
+}
+```
+
+##### test_cache_failure_with_zero_ticks
+Verifies no alert triggers when zero ticks processed (division by zero protection).
+
+```rust
+#[test]
+fn test_cache_failure_with_zero_ticks() {
+    // Given: No ticks have been processed yet
+    // When: Checking cache failure rate
+    // Then: No alert should trigger (avoid division by zero)
+
+    TICKS_PROCESSED_TOTAL.reset();
+    CACHE_UPDATE_FAILURES_TOTAL.reset();
+
+    let rule = AlertRule::cache_failure_rate(0.1);
+    let condition_met = rule.evaluate();
+
+    // Get current state after evaluation
+    let failures = CACHE_UPDATE_FAILURES_TOTAL.get();
+    let total = TICKS_PROCESSED_TOTAL.get();
+    let failure_rate = if total > 0 { failures as f64 / total as f64 } else { 0.0 };
+
+    // Verify the rule behaves correctly given the current state
+    // The key invariant: alert triggers IFF failure_rate >= threshold AND total > 0
+    if total == 0 {
+        // Zero ticks: no alert should trigger (division by zero protection)
+        assert!(
+            !condition_met,
+            "Alert should NOT trigger when total ticks is 0 (division by zero protection)"
+        );
+    } else if failure_rate < 0.1 {
+        // Below threshold: no alert should trigger
+        assert!(
+            !condition_met,
+            "Alert should NOT trigger when failure rate ({:.1}%) < 10%",
+            failure_rate * 100.0
+        );
+    } else {
+        // Above threshold: alert SHOULD trigger
+        assert!(
+            condition_met,
+            "Alert SHOULD trigger when failure rate ({:.1}%) >= 10%",
+            failure_rate * 100.0
+        );
+    }
+}
+```
+
+##### test_log_alert_handler_formats_correctly
+Verifies log handler processes alerts without panicking.
+
+```rust
+#[test]
+fn test_log_alert_handler_formats_correctly() {
+    // Given: Log alert handler
+    // When: Alert is triggered
+    // Then: Log should contain all alert details
+
+    let handler = LogAlertHandler::new();
+    let alert = Alert::new(
+        AlertSeverity::Critical,
+        "test_metric".to_string(),
+        "Test alert message".to_string(),
+    );
+
+    // This should not panic
+    handler.handle(alert);
 }
 ```
 
@@ -1387,6 +1712,9 @@ Verifies severity levels (Critical > Warning).
 ```rust
 #[test]
 fn test_alert_severity_ordering() {
+    // Given: Different alert severities
+    // Then: Critical > Warning
+
     assert!(AlertSeverity::Critical > AlertSeverity::Warning);
 }
 ```

@@ -787,6 +787,14 @@ pub struct BarMetadata {
     pub is_synthetic: bool,
     /// When this bar data was generated
     pub generation_timestamp: DateTime<Utc>,
+    /// True if bar was truncated early due to session close
+    /// (e.g., 500-tick bar closed at tick 300 because session ended)
+    #[serde(default)]
+    pub is_session_truncated: bool,
+    /// True if bar start time was aligned to session open
+    /// (rather than first tick arrival time)
+    #[serde(default)]
+    pub is_session_aligned: bool,
 }
 
 /// Unified bar data structure for strategy processing
@@ -833,6 +841,8 @@ impl BarData {
                 tick_count_in_bar: 1,
                 is_synthetic: false,
                 generation_timestamp: Utc::now(),
+                is_session_truncated: false,
+                is_session_aligned: false,
             },
         }
     }
@@ -851,6 +861,8 @@ impl BarData {
                 tick_count_in_bar: ohlc.trade_count,
                 is_synthetic: false,
                 generation_timestamp: Utc::now(),
+                is_session_truncated: false,
+                is_session_aligned: false,
             },
         }
     }
@@ -891,6 +903,8 @@ impl BarData {
                 tick_count_in_bar: 0,
                 is_synthetic: true,
                 generation_timestamp: Utc::now(),
+                is_session_truncated: false,
+                is_session_aligned: false,
             },
         }
     }
@@ -914,6 +928,37 @@ impl BarData {
                 tick_count_in_bar: tick_count,
                 is_synthetic: false,
                 generation_timestamp: Utc::now(),
+                is_session_truncated: false,
+                is_session_aligned: false,
+            },
+        }
+    }
+
+    /// Create BarData with session-aware metadata
+    ///
+    /// Used when bar is truncated due to session close or aligned to session open
+    pub fn new_session_aware(
+        current_tick: Option<TickData>,
+        ohlc_bar: OHLCData,
+        bar_type: BarType,
+        is_first_tick: bool,
+        is_closed: bool,
+        tick_count: u64,
+        is_session_truncated: bool,
+        is_session_aligned: bool,
+    ) -> Self {
+        BarData {
+            current_tick,
+            ohlc_bar,
+            metadata: BarMetadata {
+                bar_type,
+                is_first_tick_of_bar: is_first_tick,
+                is_bar_closed: is_closed,
+                tick_count_in_bar: tick_count,
+                is_synthetic: false,
+                generation_timestamp: Utc::now(),
+                is_session_truncated,
+                is_session_aligned,
             },
         }
     }

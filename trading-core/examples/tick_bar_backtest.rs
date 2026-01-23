@@ -195,6 +195,8 @@ async fn main() -> Result<(), String> {
                 tick_count_in_bar: bar.trade_count as u64,
                 is_synthetic: false,
                 generation_timestamp: Utc::now(),
+                is_session_truncated: false,
+                is_session_aligned: false,
             },
         };
 
