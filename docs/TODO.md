@@ -1,6 +1,6 @@
 # TODO - Trading System Features & Improvements
 
-**Last Updated**: 2026-01-17
+**Last Updated**: 2026-01-22
 **Status**: 98% Production Ready
 
 ---
@@ -21,7 +21,7 @@
 ## 🔥 High Priority Features
 
 ### Symbol Sessions & Market Hours
-- [ ] Add trading session configuration per symbol (not 24/7 for all markets)
+- [ ] Add trading session configuration per symbol 
 - [ ] Implement session opening/closing times
 - [ ] Handle pre-market and after-hours trading
 - [ ] OHLC window alignment to session opening (not first tick)
@@ -43,7 +43,7 @@
   - Option A: Pre-computed OHLC table (fast queries, storage overhead)
   - Option B: On-demand aggregation (no storage, slower queries)
   - Option C: Hybrid (store 1m candles, aggregate for higher timeframes)
-- [ ] Database-side OHLC aggregation using PostgreSQL
+- [ ] Database-side OHLC aggregation using TimeScaledDB
 - [ ] OHLC materialized views or tables
 - [ ] OHLC cache strategy (if using on-the-fly)
 - [ ] Historical OHLC backfill process
@@ -154,6 +154,25 @@
 
 ## ✅ Recently Completed
 
+### Order Management System Test Coverage (2026-01-22)
+- [x] Comprehensive event type tests (24 tests covering all 14 order event types)
+- [x] OrderManager integration tests (21 tests for full order lifecycle)
+- [x] Concurrency tests for OrderManager (7 tests for thread safety)
+- [x] Python bridge error recovery with circuit breaker pattern
+- [x] Error statistics tracking and monitoring callbacks
+- [x] Configurable error thresholds and auto-disable on consecutive failures
+- [x] Error recovery tests (9 tests)
+- [x] Total: 321 tests passing in trading-common (up from ~150)
+
+### Order Management System Architecture (2026-01-21)
+- [x] Comprehensive OMS with ~14K lines of new code
+- [x] Order types: Market, Limit, Stop, StopLimit, TrailingStop
+- [x] Order lifecycle with event sourcing pattern
+- [x] Thread-safe OrderManager with async API
+- [x] Python strategy order management methods (7 new methods)
+- [x] Rust/Python parity for strategy framework
+- [x] Full documentation in `docs/architecture/order-management-system.md`
+
 ### Alerting System (2026-01-17)
 - [x] Comprehensive alerting system with 6 alert rules (TDD approach)
 - [x] Connection pool saturation alerts (WARNING at 80%, CRITICAL at 95%)
@@ -220,10 +239,13 @@
 - [x] .env gitignore verification
 - [x] Database indexes verified
 
-### Test Coverage (2026-01-16)
+### Test Coverage (2026-01-16 - 2026-01-22)
 - [x] Write tests for MarketDataService (9 tests)
 - [x] Write tests for PaperTradingProcessor (13 tests)
 - [x] Fix failing repository tests
+- [x] Add comprehensive OMS test coverage (61 new tests) - **2026-01-22**
+- [x] Add Python bridge error recovery tests (9 tests) - **2026-01-22**
+- [x] Total workspace tests: 684 passing
 
 ### Performance (2026-01-16)
 - [x] Implement backpressure mechanism
