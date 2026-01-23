@@ -6,10 +6,12 @@ Comprehensive documentation of all unit and integration tests in the rust-trade 
 
 | Crate | Unit Tests | Integration Tests | Benchmarks | Total |
 |-------|------------|-------------------|------------|-------|
-| trading-common | ~387 | 21 | 0 | ~408 |
+| trading-common | ~566 | 21 | 0 | ~587 |
 | trading-core | 17 | 21 | 9 | 47 |
 | data-manager | 134 | 8 | 0 | 142 |
-| **Total** | **~538** | **50** | **9** | **~597** |
+| **Total** | **~717** | **50** | **9** | **~776** |
+
+*Note: trading-common includes 179 transform module tests.*
 
 ---
 
@@ -1507,6 +1509,292 @@ Real-time session state tracking (14 tests).
 | `test_concurrent_state_updates` | Thread-safe concurrent updates |
 | `test_concurrent_register_unregister` | Concurrent registration |
 | `test_is_tradeable_status` | Tradeable status detection |
+
+---
+
+#### `src/transforms/` (179 tests)
+Transform framework for indicator composition and chaining.
+
+##### Module Overview
+
+| Module | Tests | Description |
+|--------|-------|-------------|
+| `mod.rs` | 4 | Core Transform trait, SeriesValue implementations |
+| `source.rs` | 10 | PriceSource enum for input selection |
+| `atr.rs` | 12 | Average True Range transform |
+| `ema.rs` | 15 | Exponential Moving Average transform |
+| `registry.rs` | 15 | TransformRegistry for named transform management |
+| `sma.rs` | 16 | Simple Moving Average transform |
+| `rsi.rs` | 16 | Relative Strength Index transform |
+| `cross.rs` | 18 | CrossAbove/CrossBelow threshold detection |
+| `compose.rs` | 22 | Transform composition (SmaOf, EmaOf, etc.) |
+| `extremes.rs` | 25 | Highest/Lowest rolling extremes |
+| `change.rs` | 26 | Change/RateOfChange momentum transforms |
+
+##### Core Transform Trait (mod.rs)
+
+Tests for Transform trait and SeriesValue implementations.
+
+```rust
+#[test]
+fn test_series_with_usize() {
+    let mut series: Series<usize> = Series::new("count");
+    series.push(0);
+    series.push(1);
+    series.push(5);
+    assert_eq!(series[0], 5);
+}
+
+#[test]
+fn test_series_with_tuple_2() {
+    let mut series: Series<(Decimal, Decimal)> = Series::new("bands");
+    series.push((Decimal::from(110), Decimal::from(90)));
+    let (upper, lower) = series[0];
+    assert_eq!(upper, Decimal::from(110));
+}
+
+#[test]
+fn test_series_with_tuple_3() {
+    let mut series: Series<(Decimal, Decimal, Decimal)> = Series::new("macd");
+    series.push((Decimal::from(5), Decimal::from(3), Decimal::from(2)));
+    let (macd, signal, histogram) = series[0];
+    assert_eq!(macd, Decimal::from(5));
+}
+```
+
+##### PriceSource (source.rs - 10 tests)
+
+Tests for PriceSource enum supporting different input price selections.
+
+| Test | Description |
+|------|-------------|
+| `test_price_source_close` | Close price retrieval |
+| `test_price_source_open` | Open price retrieval |
+| `test_price_source_high` | High price retrieval |
+| `test_price_source_low` | Low price retrieval |
+| `test_price_source_volume` | Volume retrieval |
+| `test_price_source_typical` | Typical price (H+L+C)/3 |
+| `test_price_source_weighted_close` | Weighted close (H+L+2C)/4 |
+| `test_price_source_median` | Median price (H+L)/2 |
+| `test_price_source_highest` | Rolling highest of source |
+| `test_price_source_lowest` | Rolling lowest of source |
+
+##### SMA Transform (sma.rs - 16 tests)
+
+Tests for Simple Moving Average transform.
+
+| Test | Description |
+|------|-------------|
+| `test_sma_basic` | Basic SMA calculation |
+| `test_sma_insufficient_data` | Returns None with insufficient data |
+| `test_sma_exact_period` | SMA with exact period data |
+| `test_sma_warmup_period` | Warmup period correctness |
+| `test_sma_name` | Transform name generation |
+| `test_sma_reset` | State reset functionality |
+| `test_sma_historical_access` | Historical value access via get() |
+| `test_sma_zero_period_panics` | Panic on invalid period |
+| `test_sma_source_name` | Name with custom source |
+| `test_sma_source_accessor` | Source accessor method |
+| `test_sma_of_high_prices` | SMA of high prices |
+
+##### EMA Transform (ema.rs - 15 tests)
+
+Tests for Exponential Moving Average transform.
+
+| Test | Description |
+|------|-------------|
+| `test_ema_first_value` | First EMA equals first price |
+| `test_ema_converges_to_constant` | EMA converges to constant input |
+| `test_ema_responds_to_price_changes` | EMA responds faster to recent prices |
+| `test_ema_smoothing_factor` | Correct smoothing factor 2/(period+1) |
+| `test_ema_warmup_period` | Warmup period correctness |
+| `test_ema_name` | Transform name generation |
+| `test_ema_reset` | State reset clears all internal state |
+| `test_ema_historical_access` | Historical value access |
+| `test_ema_zero_period_panics` | Panic on invalid period |
+| `test_ema_source_name` | Name with custom source |
+| `test_ema_source_accessor` | Source accessor method |
+
+##### RSI Transform (rsi.rs - 16 tests)
+
+Tests for Relative Strength Index transform.
+
+| Test | Description |
+|------|-------------|
+| `test_rsi_warmup_period` | Warmup = period + 1 |
+| `test_rsi_name` | Transform name generation |
+| `test_rsi_insufficient_data` | Returns None with insufficient data |
+| `test_rsi_all_gains` | RSI = 100 when all gains |
+| `test_rsi_all_losses` | RSI = 0 when all losses |
+| `test_rsi_equal_gains_losses` | RSI = 50 when gains equal losses |
+| `test_rsi_bounded_0_to_100` | RSI always between 0 and 100 |
+| `test_rsi_no_change` | RSI = 50 with no price change |
+| `test_rsi_smoothing` | Wilder's smoothing method |
+| `test_rsi_reset` | State reset clears gains/losses |
+| `test_rsi_historical_access` | Historical value access |
+| `test_rsi_period_accessor` | Period accessor method |
+| `test_rsi_zero_period_panics` | Panic on invalid period |
+| `test_rsi_is_ready` | Ready check with BarsContext |
+| `test_rsi_source_name` | Name with custom source |
+| `test_rsi_source_accessor` | Source accessor method |
+
+##### ATR Transform (atr.rs - 12 tests)
+
+Tests for Average True Range transform.
+
+| Test | Description |
+|------|-------------|
+| `test_atr_single_bar` | ATR with single bar (H-L) |
+| `test_atr_multiple_bars` | ATR with multiple bars |
+| `test_atr_gap_up` | True range with gap up |
+| `test_atr_gap_down` | True range with gap down |
+| `test_atr_warmup_period` | Warmup = period + 1 |
+| `test_atr_name` | Transform name generation |
+| `test_atr_reset` | State reset functionality |
+| `test_atr_insufficient_data` | Returns None with insufficient data |
+| `test_atr_historical_access` | Historical value access |
+| `test_atr_zero_period_panics` | Panic on invalid period |
+
+##### Extremes (extremes.rs - 25 tests)
+
+Tests for Highest/Lowest rolling extremes.
+
+| Test | Description |
+|------|-------------|
+| `test_highest_basic` | Basic highest calculation |
+| `test_highest_insufficient_data` | Returns None with insufficient data |
+| `test_highest_exact_period` | Highest with exact period data |
+| `test_highest_warmup_period` | Warmup period correctness |
+| `test_highest_name` | Transform name generation |
+| `test_highest_reset` | State reset functionality |
+| `test_highest_historical_access` | Historical value access |
+| `test_highest_zero_period_panics` | Panic on invalid period |
+| `test_lowest_basic` | Basic lowest calculation |
+| `test_lowest_insufficient_data` | Returns None with insufficient data |
+| `test_lowest_exact_period` | Lowest with exact period data |
+| `test_lowest_warmup_period` | Warmup period correctness |
+| `test_lowest_name` | Transform name generation |
+| `test_lowest_reset` | State reset functionality |
+| `test_lowest_historical_access` | Historical value access |
+| `test_lowest_zero_period_panics` | Panic on invalid period |
+| `test_highest_lowest_same_data` | Equal when all values same |
+| `test_donchian_channel_simulation` | Donchian channel simulation |
+| `test_highest_high_source` | Highest with High source |
+| `test_lowest_low_source` | Lowest with Low source |
+| `test_highest_source_name` | Name with custom source |
+| `test_lowest_source_name` | Name with custom source |
+| `test_highest_source_accessor` | Source accessor method |
+| `test_lowest_source_accessor` | Source accessor method |
+| `test_true_donchian_channel` | True Donchian (HH/LL) |
+
+##### Change/ROC (change.rs - 26 tests)
+
+Tests for Change and Rate of Change momentum transforms.
+
+| Test | Description |
+|------|-------------|
+| `test_change_basic` | Basic change calculation |
+| `test_change_negative` | Negative change calculation |
+| `test_change_no_change` | Zero change when prices equal |
+| `test_change_longer_period` | Change with longer period |
+| `test_change_insufficient_data` | Returns None with insufficient data |
+| `test_change_warmup_period` | Warmup = period + 1 |
+| `test_change_name` | Transform name generation |
+| `test_change_reset` | State reset functionality |
+| `test_change_default_period` | Default period (1) factory |
+| `test_change_zero_period_panics` | Panic on invalid period |
+| `test_roc_basic` | Basic ROC calculation |
+| `test_roc_negative` | Negative ROC calculation |
+| `test_roc_no_change` | Zero ROC when prices equal |
+| `test_roc_longer_period` | ROC with longer period |
+| `test_roc_insufficient_data` | Returns None with insufficient data |
+| `test_roc_division_by_zero` | Returns None when prev = 0 |
+| `test_roc_warmup_period` | Warmup = period + 1 |
+| `test_roc_name` | Transform name generation |
+| `test_roc_reset` | State reset functionality |
+| `test_roc_historical_access` | Historical value access |
+| `test_roc_zero_period_panics` | Panic on invalid period |
+| `test_change_and_roc_relationship` | ROC = Change/Prev * 100 |
+| `test_change_source_name` | Name with custom source |
+| `test_change_source_accessor` | Source accessor method |
+| `test_roc_source_name` | Name with custom source |
+| `test_roc_source_accessor` | Source accessor method |
+
+##### Cross Detection (cross.rs - 18 tests)
+
+Tests for CrossAbove/CrossBelow threshold detection.
+
+| Test | Description |
+|------|-------------|
+| `test_cross_above_basic` | Cross above detection |
+| `test_cross_above_no_cross` | No cross when below threshold |
+| `test_cross_above_already_above` | No cross when already above |
+| `test_cross_above_equal_then_above` | Cross from equal to above |
+| `test_cross_above_warmup_period` | Warmup = 2 bars |
+| `test_cross_above_name` | Transform name generation |
+| `test_cross_above_reset` | State reset functionality |
+| `test_cross_above_historical_access` | Historical value access |
+| `test_cross_below_basic` | Cross below detection |
+| `test_cross_below_no_cross` | No cross when above threshold |
+| `test_cross_below_already_below` | No cross when already below |
+| `test_cross_below_equal_then_below` | Cross from equal to below |
+| `test_cross_below_warmup_period` | Warmup = 2 bars |
+| `test_cross_below_name` | Transform name generation |
+| `test_cross_below_reset` | State reset functionality |
+| `test_cross_below_historical_access` | Historical value access |
+| `test_cross_above_and_below_same_data` | Mutually exclusive crossings |
+| `test_cross_threshold_accessor` | Threshold accessor method |
+
+##### Transform Composition (compose.rs - 22 tests)
+
+Tests for transform composition (indicator-on-indicator).
+
+| Test | Description |
+|------|-------------|
+| `test_sma_of_sma_warmup` | Chained warmup propagation |
+| `test_sma_of_rsi` | SMA smoothing RSI output |
+| `test_ema_of_sma` | EMA of SMA composition |
+| `test_sma_of_change` | SMA of Change momentum |
+| `test_deep_chaining` | 3+ level transform chains |
+| `test_highest_of_rsi` | Highest of RSI values |
+| `test_lowest_of_rsi` | Lowest of RSI values |
+| `test_cross_of_composed` | Cross detection on composed output |
+| `test_composed_reset` | Reset propagates through chain |
+| `test_composed_historical_access` | Historical access on composed |
+| `test_sma_of_creates_correct_type` | Type-safe composition |
+| `test_ema_of_creates_correct_type` | Type-safe composition |
+| `test_fluent_api` | `rsi.sma(3)` fluent syntax |
+| `test_composed_name_generation` | Auto-generated names |
+| `test_warmup_accumulates_correctly` | Warmup = sum of all stages |
+| `test_multiple_compositions_same_source` | Fan-out from single source |
+| `test_composed_is_ready` | Ready check propagation |
+| `test_composed_output_series` | Output series access |
+| `test_composed_current` | Current value access |
+| `test_composed_get` | Historical get access |
+| `test_transform_ext_trait` | TransformExt trait methods |
+| `test_composed_compute_returns_none_until_ready` | None during warmup |
+
+##### TransformRegistry (registry.rs - 15 tests)
+
+Tests for named transform management.
+
+| Test | Description |
+|------|-------------|
+| `test_registry_new` | Empty registry creation |
+| `test_registry_register` | Transform registration |
+| `test_registry_get` | Transform retrieval by name |
+| `test_registry_get_nonexistent` | None for missing transform |
+| `test_registry_update` | Update all registered transforms |
+| `test_registry_is_ready` | Ready check for all transforms |
+| `test_registry_max_warmup` | Maximum warmup across transforms |
+| `test_registry_reset` | Reset all transforms |
+| `test_registry_names` | List registered transform names |
+| `test_registry_len` | Count registered transforms |
+| `test_registry_is_empty` | Empty check |
+| `test_registry_remove` | Transform removal |
+| `test_registry_clear` | Clear all transforms |
+| `test_registry_with_composed` | Registry with composed transforms |
+| `test_registry_update_order` | Update order independence |
 
 ---
 
