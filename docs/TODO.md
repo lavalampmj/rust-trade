@@ -29,12 +29,13 @@
 - [x] Multiple timezone support for global markets - **COMPLETE** (full `chrono_tz` support, DST handling, 6 timezone tests)
 
 ### Symbol Metadata
-- [ ] Add datamodel and metadata, structure to be planned
+- [x] Add datamodel and metadata, structure to be planned - **COMPLETE** (`SymbolDefinition` with 70+ Databento-aligned fields, `SymbolInfo`, `VenueConfig`, `TradingSpecs`, 8 tests)
+- [x] Symbol Registry with concurrent caching - **COMPLETE** (`SymbolRegistry` with DashMap, lazy loading, 25+ tests including concurrency)
 
 ### Futures Symbology and Support
-- [ ] Create Continiuous Contract Symbol and map underlying contracts
-- [ ] Create back adjusted Continuous Contract
-- [ ] Create automatic rollover method for front underying symbol
+- [x] Create Continuous Contract Symbol and map underlying contracts - **COMPLETE** (`ContinuousSymbol` parser for Databento format `ES.c.0`, `ContinuousContract` mapping, 40+ tests)
+- [x] Create back adjusted Continuous Contract - **COMPLETE** (`AdjustmentFactor` with ratio/difference methods, cumulative adjustment, price adjustment helpers)
+- [x] Create automatic rollover method for front underlying symbol - **COMPLETE** (`RollManager` with calendar/volume/OI roll detection, event broadcasting, 35+ tests)
 
 ### OHLC Data Management
 - [ ] Open of Session for first bar, have OHLC realtime-timer loop set from open session time
@@ -153,6 +154,27 @@
 ---
 
 ## ✅ Recently Completed
+
+### Symbol Metadata & Futures Symbology (2026-01-23)
+- [x] **Symbol Metadata** (Databento-aligned):
+  - `SymbolDefinition`: 70+ field comprehensive symbol model
+  - `SymbolInfo`: Asset/instrument classification with CFI codes
+  - `VenueConfig`: MIC codes, publisher IDs, rate limits
+  - `TradingSpecs`: Tick size, lot size, fees, margin, order types
+  - `SymbolRegistry`: Thread-safe DashMap cache with statistics
+  - 33+ tests (8 symbol_definition + 25 registry with concurrency)
+- [x] **Futures Symbology** (Databento continuous format):
+  - `ContinuousSymbol`: Parser for `ES.c.0` format (base.rule.rank)
+  - `ContinuousContract`: Maps continuous symbols to underlying contracts
+  - `AdjustmentFactor`: Ratio and difference back-adjustment methods
+  - `RollManager`: Automatic roll detection (calendar/volume/OI)
+  - `RollEvent`: Event broadcasting for roll notifications
+  - 75+ tests (40 continuous.rs + 35 roll_manager.rs)
+- [x] **Contract Specifications**:
+  - `ContractSpec`: Expiration, multiplier, settlement, margin
+  - Month code utilities: `month_to_code()`, `code_to_month()`
+  - Symbol parsing: `parse_contract_symbol("ESH6")` → (ES, 3, 2006)
+  - 10 tests for contract manipulation
 
 ### Symbol Sessions & Market Hours (2026-01-23)
 - [x] Trading session configuration per symbol (`SessionSchedule` struct)
