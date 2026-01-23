@@ -38,8 +38,8 @@
 - [x] Create automatic rollover method for front underlying symbol - **COMPLETE** (`RollManager` with calendar/volume/OI roll detection, event broadcasting, 35+ tests)
 
 ### OHLC Data Management
-- [ ] Open of Session for first bar, have OHLC realtime-timer loop set from open session time
-- [ ] Close of Session for cutting last bar short
+- [x] Open of Session for first bar, have OHLC realtime-timer loop set from open session time - **COMPLETE** (`RealtimeOHLCGenerator` with `SessionAwareConfig`, session open alignment)
+- [x] Close of Session for cutting last bar short - **COMPLETE** (`RealtimeOHLCGenerator` with session close truncation, `is_session_truncated` flag)
 - [ ] Design decision: Database storage vs on-the-fly generation
   - Option A: Pre-computed OHLC table (fast queries, storage overhead)
   - Option B: On-demand aggregation (no storage, slower queries)
@@ -154,6 +154,29 @@
 ---
 
 ## ✅ Recently Completed
+
+### RealtimeOHLCGenerator Session-Aware Support (2026-01-23)
+- [x] **Session-Aware Bar Generation** (parity with `HistoricalOHLCGenerator`):
+  - `SessionAwareConfig` integration from `trading-common`
+  - `is_session_aligned` flag in `BarBuilder` struct
+  - Session state tracking: `is_first_bar_of_session`, `current_session_open`, `current_session_close`
+- [x] **New Constructors & Methods**:
+  - `with_session_config()`: Create generator with session configuration
+  - `set_session_config()`: Runtime session config updates
+  - `on_session_start()`: Notify new session start for proper alignment
+  - Helper methods: `get_session_open_for_tick()`, `get_current_session_close()`, `align_to_session_open_time()`
+- [x] **Session Open Alignment**:
+  - First bar of session aligns to session open time (not first tick arrival)
+  - `is_session_aligned` flag propagated to `BarData` metadata
+- [x] **Session Close Truncation**:
+  - Force-close partial bars at session end (both time-based and tick-based)
+  - `is_session_truncated` flag propagated to `BarData` metadata
+  - `check_timer_close()` updated to detect session close
+- [x] **Backward Compatibility**:
+  - Default `SessionAwareConfig::default()` maintains 24/7 behavior
+  - All existing constructors unchanged
+  - Session flags default to `false` when not using session-aware features
+- [x] **Test Coverage**: 16 tests (6 existing + 10 new session-aware tests)
 
 ### Transform Framework for Indicator Composition (2026-01-23)
 - [x] **Core Transform Trait**:
@@ -329,7 +352,7 @@
 - [x] Fix failing repository tests
 - [x] Add comprehensive OMS test coverage (61 new tests) - **2026-01-22**
 - [x] Add Python bridge error recovery tests (9 tests) - **2026-01-22**
-- [x] Total workspace tests: 684 passing
+- [x] Total workspace tests: 776 passing
 
 ### Performance (2026-01-16)
 - [x] Implement backpressure mechanism
