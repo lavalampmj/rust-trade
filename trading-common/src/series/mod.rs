@@ -3,6 +3,8 @@
 
 pub mod bars_context;
 
+pub use bars_context::BarsContext;
+
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use std::collections::VecDeque;
@@ -16,13 +18,20 @@ pub trait SeriesValue: Clone + Default + Send + Sync + 'static {}
 // Implement SeriesValue for common types
 impl SeriesValue for Decimal {}
 impl SeriesValue for f64 {}
+impl SeriesValue for f32 {}
 impl SeriesValue for i64 {}
 impl SeriesValue for i32 {}
+impl SeriesValue for isize {}
 impl SeriesValue for u64 {}
 impl SeriesValue for u32 {}
+impl SeriesValue for usize {}
 impl SeriesValue for bool {}
 impl SeriesValue for DateTime<Utc> {}
 impl<T: SeriesValue> SeriesValue for Option<T> {}
+
+// Tuple implementations for multi-value transforms (e.g., Bollinger Bands, MACD)
+impl<T: SeriesValue, U: SeriesValue> SeriesValue for (T, U) {}
+impl<T: SeriesValue, U: SeriesValue, V: SeriesValue> SeriesValue for (T, U, V) {}
 
 /// Controls memory management for series data
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,7 +116,11 @@ impl<T: SeriesValue> Series<T> {
     /// - `name`: Series name for identification
     /// - `max_lookback`: Maximum lookback configuration (FIFO eviction)
     /// - `warmup_period`: Number of samples needed before is_ready() returns true
-    pub fn with_warmup(name: &str, max_lookback: MaximumBarsLookBack, warmup_period: usize) -> Self {
+    pub fn with_warmup(
+        name: &str,
+        max_lookback: MaximumBarsLookBack,
+        warmup_period: usize,
+    ) -> Self {
         let capacity = match max_lookback {
             MaximumBarsLookBack::Fixed(n) => n,
             MaximumBarsLookBack::Infinite => 256, // Initial capacity
@@ -379,7 +392,8 @@ mod tests {
 
     #[test]
     fn test_series_fifo_eviction() {
-        let mut series: Series<Decimal> = Series::with_lookback("test", MaximumBarsLookBack::Fixed(3));
+        let mut series: Series<Decimal> =
+            Series::with_lookback("test", MaximumBarsLookBack::Fixed(3));
 
         series.push(Decimal::from(1));
         series.push(Decimal::from(2));
@@ -530,11 +544,17 @@ mod tests {
 
         // Forward iteration: oldest to newest
         let forward: Vec<Decimal> = series.iter().cloned().collect();
-        assert_eq!(forward, vec![Decimal::from(1), Decimal::from(2), Decimal::from(3)]);
+        assert_eq!(
+            forward,
+            vec![Decimal::from(1), Decimal::from(2), Decimal::from(3)]
+        );
 
         // Reverse iteration: newest to oldest
         let reverse: Vec<Decimal> = series.iter_reverse().cloned().collect();
-        assert_eq!(reverse, vec![Decimal::from(3), Decimal::from(2), Decimal::from(1)]);
+        assert_eq!(
+            reverse,
+            vec![Decimal::from(3), Decimal::from(2), Decimal::from(1)]
+        );
     }
 
     #[test]
@@ -594,11 +614,8 @@ mod tests {
 
     #[test]
     fn test_series_reset_preserves_warmup() {
-        let mut series: Series<Decimal> = Series::with_warmup(
-            "test",
-            MaximumBarsLookBack::default(),
-            5,
-        );
+        let mut series: Series<Decimal> =
+            Series::with_warmup("test", MaximumBarsLookBack::default(), 5);
 
         // Push some values and verify ready
         for i in 1..=5 {
@@ -622,12 +639,53 @@ mod tests {
     #[test]
     fn test_series_is_ready_zero_warmup() {
         // Zero warmup means always ready (edge case)
-        let series: Series<Decimal> = Series::with_warmup(
-            "test",
-            MaximumBarsLookBack::default(),
-            0,
-        );
+        let series: Series<Decimal> =
+            Series::with_warmup("test", MaximumBarsLookBack::default(), 0);
 
         assert!(series.is_ready()); // Ready even when empty
+    }
+
+    #[test]
+    fn test_series_with_usize() {
+        let mut series: Series<usize> = Series::new("count");
+
+        series.push(0);
+        series.push(1);
+        series.push(5);
+
+        assert_eq!(series[0], 5);
+        assert_eq!(series[1], 1);
+        assert_eq!(series[2], 0);
+    }
+
+    #[test]
+    fn test_series_with_tuple_2() {
+        // Useful for transforms like Bollinger Bands (upper, lower)
+        let mut series: Series<(Decimal, Decimal)> = Series::new("bands");
+
+        series.push((Decimal::from(110), Decimal::from(90)));
+        series.push((Decimal::from(112), Decimal::from(88)));
+
+        let (upper, lower) = series[0];
+        assert_eq!(upper, Decimal::from(112));
+        assert_eq!(lower, Decimal::from(88));
+
+        let (prev_upper, prev_lower) = series[1];
+        assert_eq!(prev_upper, Decimal::from(110));
+        assert_eq!(prev_lower, Decimal::from(90));
+    }
+
+    #[test]
+    fn test_series_with_tuple_3() {
+        // Useful for transforms like MACD (macd, signal, histogram)
+        let mut series: Series<(Decimal, Decimal, Decimal)> = Series::new("macd");
+
+        series.push((Decimal::from(5), Decimal::from(3), Decimal::from(2)));
+        series.push((Decimal::from(6), Decimal::from(4), Decimal::from(2)));
+
+        let (macd, signal, histogram) = series[0];
+        assert_eq!(macd, Decimal::from(6));
+        assert_eq!(signal, Decimal::from(4));
+        assert_eq!(histogram, Decimal::from(2));
     }
 }
