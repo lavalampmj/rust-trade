@@ -117,7 +117,7 @@
 
 ### Broker and Data Vendor Integration
 - [ ] Multiple exchange support (Coinbase, Kraken, Databento etc.)
-- [ ] Exchange API key management
+- [ ] Venue (Broker and Data Provider) API key management
 - [ ] Live trading (beyond paper trading)
 - [ ] Order execution with retry logic
 - [ ] Slippage tracking
@@ -128,8 +128,8 @@
 - [ ] Factor analysis
 - [ ] Market regime detection
 - [ ] Anomaly detection
-- [ ] Indicator on Indicator, series output of one as series input of another, all series bound to input series ordering
-- [ ] Implement Indicators 
+- [x] Indicator on Indicator, series output of one as series input of another, all series bound to input series ordering - **COMPLETE** (Transform framework with composition)
+- [x] Implement Indicators - **COMPLETE** (SMA, EMA, RSI, ATR, Highest, Lowest, Change, ROC, CrossAbove, CrossBelow) 
 
 ### Python Strategy Enhancements
 - [x] Python strategy sandboxing (security) - **COMPLETE** (3 phases: hash verification, import blocking, resource monitoring)
@@ -154,6 +154,46 @@
 ---
 
 ## ✅ Recently Completed
+
+### Transform Framework for Indicator Composition (2026-01-23)
+- [x] **Core Transform Trait**:
+  - `Transform` trait with stateful internal output buffers
+  - O(1) per-bar updates for indicators like EMA
+  - Historical value access via `get(bars_ago)`
+  - Automatic warmup period propagation in chains
+- [x] **Built-in Transforms** (10 indicators):
+  - `Sma`: Simple Moving Average
+  - `Ema`: Exponential Moving Average
+  - `Rsi`: Relative Strength Index (0-100 bounded)
+  - `Atr`: Average True Range
+  - `Highest`: Rolling maximum
+  - `Lowest`: Rolling minimum
+  - `Change`: Price difference (momentum)
+  - `RateOfChange`: Percentage change
+  - `CrossAbove`: Threshold crossing detection (returns bool)
+  - `CrossBelow`: Threshold crossing detection (returns bool)
+- [x] **PriceSource** (custom input series):
+  - `PriceSource` enum: `Open`, `High`, `Low`, `Close`, `Volume`, `Typical`, `WeightedClose`, `Median`
+  - All transforms support `with_source(period, source)` constructor
+  - Example: `Sma::with_source(20, PriceSource::High)` for SMA of highs
+  - Enables true Donchian channels: `Highest::with_source(20, PriceSource::High)`
+- [x] **Transform Composition** (chaining API):
+  - `TransformExt` trait for fluent chaining: `Rsi::new(14).sma(3)`
+  - `SmaOf<T>`: SMA of any Decimal transform
+  - `EmaOf<T>`: EMA of any Decimal transform
+  - `HighestOf<T>`: Highest of any Decimal transform
+  - `LowestOf<T>`: Lowest of any Decimal transform
+  - Automatic warmup propagation: RSI(14).sma(3).highest(10) = 28 bars
+- [x] **TransformRegistry**:
+  - Dynamic named transform registration
+  - Batch update of all transforms
+  - `max_warmup()` and `all_ready()` helpers
+- [x] **SeriesValue Extensions**:
+  - Added `usize`/`isize` for counting transforms
+  - Added tuples `(T, U)` and `(T, U, V)` for multi-value outputs
+  - Enables Bollinger Bands `(upper, lower)` and MACD `(macd, signal, histogram)`
+- [x] **Test Coverage**: 179 tests across all transforms
+- [x] **Integration**: Added to `trading-common` as `pub mod transforms`
 
 ### Symbol Metadata & Futures Symbology (2026-01-23)
 - [x] **Symbol Metadata** (Databento-aligned):
