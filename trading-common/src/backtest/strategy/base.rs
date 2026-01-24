@@ -186,6 +186,22 @@ pub trait Strategy: Send + Sync {
         SessionAwareConfig::default()
     }
 
+    /// Account ID this strategy uses for trading.
+    ///
+    /// When multi-account support is enabled, orders from this strategy will
+    /// be routed to the specified account. Returns an empty string by default,
+    /// which means use the exchange's default account.
+    ///
+    /// # Example
+    /// ```text
+    /// fn account_id(&self) -> &str {
+    ///     "SIM-AGGRESSIVE"  // Use aggressive trading account
+    /// }
+    /// ```
+    fn account_id(&self) -> &str {
+        "" // Default: use exchange's default account
+    }
+
     // ========================================================================
     // Order Event Handlers (Optional - for advanced order management)
     // ========================================================================

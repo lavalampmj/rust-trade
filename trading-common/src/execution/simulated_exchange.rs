@@ -49,11 +49,11 @@ use rust_decimal::Decimal;
 use super::inflight_queue::{InflightQueue, TradingCommand};
 use super::latency_model::{LatencyModel, NoLatencyModel};
 use super::matching::{MatchResult, MatchingEngineConfig, OrderMatchingEngine};
-use crate::accounts::Account;
+use crate::accounts::{Account, AccountsConfig};
 use crate::data::types::OHLCData;
 use crate::orders::{
-    ClientOrderId, EventId, InstrumentId, Order, OrderAccepted, OrderCanceled, OrderEventAny,
-    OrderFilled, OrderRejected, OrderSide, VenueOrderId,
+    AccountId, ClientOrderId, EventId, InstrumentId, Order, OrderAccepted, OrderCanceled,
+    OrderEventAny, OrderFilled, OrderRejected, OrderSide, VenueOrderId,
 };
 use crate::risk::{FeeModel, ZeroFeeModel};
 
@@ -115,7 +115,7 @@ struct StoredOrder {
 /// - Latency modeling (orders don't fill instantly)
 /// - Per-instrument matching engines
 /// - Pluggable fill and fee models
-/// - Optional account integration for balance tracking
+/// - Multi-account support for balance tracking
 #[derive(Debug)]
 pub struct SimulatedExchange {
     /// Venue name
@@ -134,10 +134,12 @@ pub struct SimulatedExchange {
     config: SimulatedExchangeConfig,
     /// Order ID to stored order mapping (for fills and cancels)
     stored_orders: HashMap<ClientOrderId, StoredOrder>,
-    /// Optional account for balance tracking and margin management
-    account: Option<Account>,
-    /// Track locked amounts per order (for unlocking on cancel/reject)
-    locked_amounts: HashMap<ClientOrderId, Decimal>,
+    /// Multiple accounts for balance tracking (keyed by AccountId)
+    accounts: HashMap<AccountId, Account>,
+    /// Default account ID for orders without explicit account_id
+    default_account_id: Option<AccountId>,
+    /// Track locked amounts per order with associated account (for unlocking on cancel/reject)
+    locked_amounts: HashMap<ClientOrderId, (AccountId, Decimal)>,
 }
 
 impl SimulatedExchange {
@@ -160,7 +162,8 @@ impl SimulatedExchange {
             current_time_ns: 0,
             config,
             stored_orders: HashMap::new(),
-            account: None,
+            accounts: HashMap::new(),
+            default_account_id: None,
             locked_amounts: HashMap::new(),
         }
     }
@@ -177,25 +180,100 @@ impl SimulatedExchange {
         self
     }
 
-    /// Set the account for balance tracking.
+    /// Set a single account for balance tracking (legacy compatibility).
     ///
     /// When an account is configured, the exchange will:
     /// - Lock funds when orders are accepted
     /// - Release funds when orders are canceled/rejected
     /// - Deduct funds when orders are filled
+    ///
+    /// This also sets this account as the default account.
     pub fn with_account(mut self, account: Account) -> Self {
-        self.account = Some(account);
+        let account_id = account.id.clone();
+        self.accounts.insert(account_id.clone(), account);
+        self.default_account_id = Some(account_id);
         self
     }
 
-    /// Get a reference to the account (if configured).
-    pub fn account(&self) -> Option<&Account> {
-        self.account.as_ref()
+    /// Add multiple accounts from a vector.
+    ///
+    /// Use this with `AccountsConfig::build_accounts()` to load accounts from config.
+    pub fn with_accounts(mut self, accounts: Vec<Account>) -> Self {
+        for account in accounts {
+            self.accounts.insert(account.id.clone(), account);
+        }
+        self
     }
 
-    /// Get a mutable reference to the account (if configured).
-    pub fn account_mut(&mut self) -> Option<&mut Account> {
-        self.account.as_mut()
+    /// Load accounts from configuration.
+    ///
+    /// This is a convenience method that builds accounts from config and sets
+    /// the default account ID.
+    pub fn with_accounts_config(mut self, config: &AccountsConfig) -> Self {
+        let accounts = config.build_accounts();
+        for account in accounts {
+            self.accounts.insert(account.id.clone(), account);
+        }
+        self.default_account_id = Some(config.default_account_id());
+        self
+    }
+
+    /// Set the default account ID for orders without explicit account_id.
+    pub fn with_default_account(mut self, account_id: AccountId) -> Self {
+        self.default_account_id = Some(account_id);
+        self
+    }
+
+    /// Get a reference to an account by ID.
+    pub fn account(&self, account_id: &AccountId) -> Option<&Account> {
+        self.accounts.get(account_id)
+    }
+
+    /// Get a mutable reference to an account by ID.
+    pub fn account_mut(&mut self, account_id: &AccountId) -> Option<&mut Account> {
+        self.accounts.get_mut(account_id)
+    }
+
+    /// Get a reference to the default account (if configured).
+    pub fn default_account(&self) -> Option<&Account> {
+        self.default_account_id
+            .as_ref()
+            .and_then(|id| self.accounts.get(id))
+    }
+
+    /// Get a mutable reference to the default account (if configured).
+    pub fn default_account_mut(&mut self) -> Option<&mut Account> {
+        if let Some(id) = self.default_account_id.clone() {
+            self.accounts.get_mut(&id)
+        } else {
+            None
+        }
+    }
+
+    /// Get an iterator over all accounts.
+    pub fn all_accounts(&self) -> impl Iterator<Item = &Account> {
+        self.accounts.values()
+    }
+
+    /// Get the number of configured accounts.
+    pub fn account_count(&self) -> usize {
+        self.accounts.len()
+    }
+
+    /// Resolve account ID for an order.
+    ///
+    /// If the order has an explicit account_id (not empty or "default"), use it.
+    /// Otherwise, fall back to the exchange's default account ID.
+    fn resolve_account_id(&self, order: &Order) -> AccountId {
+        let order_account = order.account_id.as_str();
+        // Treat empty string or "default" as meaning "use exchange default"
+        if order_account.is_empty() || order_account == "default" {
+            self.default_account_id
+                .clone()
+                .unwrap_or_else(|| AccountId::new("DEFAULT"))
+        } else {
+            order.account_id.clone()
+        }
     }
 
     // === TIME MANAGEMENT ===
@@ -383,8 +461,9 @@ impl SimulatedExchange {
         // Generate venue order ID
         let venue_order_id = VenueOrderId(format!("SIM-{}", uuid::Uuid::new_v4()));
 
-        // If account is configured, lock funds for buy orders
-        if let Some(account) = &mut self.account {
+        // If accounts are configured, lock funds for buy orders
+        let resolved_account_id = self.resolve_account_id(&order);
+        if let Some(account) = self.accounts.get_mut(&resolved_account_id) {
             if order.side == OrderSide::Buy {
                 // Calculate required funds: price * quantity
                 // For market orders, we'd need a reference price - use 0 for now (caller should set limit)
@@ -402,15 +481,20 @@ impl SimulatedExchange {
                                 event_id: EventId(uuid::Uuid::new_v4()),
                                 client_order_id: order.client_order_id.clone(),
                                 account_id: order.account_id.clone(),
-                                reason: format!("Insufficient funds: {}", e),
+                                reason: format!(
+                                    "Insufficient funds in account {}: {}",
+                                    resolved_account_id, e
+                                ),
                                 ts_event: self.current_datetime(),
                                 ts_init: Utc::now(),
                             }));
                             return events;
                         }
-                        // Track locked amount for later unlock on cancel
-                        self.locked_amounts
-                            .insert(order.client_order_id.clone(), required);
+                        // Track locked amount with account ID for later unlock on cancel
+                        self.locked_amounts.insert(
+                            order.client_order_id.clone(),
+                            (resolved_account_id.clone(), required),
+                        );
                     }
                 }
             }
@@ -420,8 +504,8 @@ impl SimulatedExchange {
         stored_order.venue_order_id = Some(venue_order_id.clone());
         if let Err(e) = stored_order.transition_to(OrderStatus::Accepted) {
             // Unlock funds if we locked them
-            if let Some(locked) = self.locked_amounts.remove(&order.client_order_id) {
-                if let Some(account) = &mut self.account {
+            if let Some((account_id, locked)) = self.locked_amounts.remove(&order.client_order_id) {
+                if let Some(account) = self.accounts.get_mut(&account_id) {
                     let currency = &account.base_currency.clone();
                     if let Some(balance) = account.balance_mut(currency) {
                         let _ = balance.unlock(locked);
@@ -536,9 +620,9 @@ impl SimulatedExchange {
             if let Some(OrderEventAny::Canceled(_)) = events.first() {
                 self.stored_orders.remove(client_order_id);
 
-                // Unlock any funds that were locked for this order
-                if let Some(locked) = self.locked_amounts.remove(client_order_id) {
-                    if let Some(account) = &mut self.account {
+                // Unlock any funds that were locked for this order (from correct account)
+                if let Some((account_id, locked)) = self.locked_amounts.remove(client_order_id) {
+                    if let Some(account) = self.accounts.get_mut(&account_id) {
                         let currency = &account.base_currency.clone();
                         if let Some(balance) = account.balance_mut(currency) {
                             let _ = balance.unlock(locked);
@@ -573,7 +657,10 @@ impl SimulatedExchange {
                     client_order_id.clone(),
                     Some(stored.venue_order_id.clone()),
                     stored.order.account_id.clone(),
-                    format!("Order cannot be modified in status: {:?}", stored.order.status),
+                    format!(
+                        "Order cannot be modified in status: {:?}",
+                        stored.order.status
+                    ),
                 )));
                 return events;
             }
@@ -606,16 +693,18 @@ impl SimulatedExchange {
 
             // Handle balance adjustment for buy orders if price/quantity changed
             if stored.order.side == OrderSide::Buy {
-                if let Some(account) = &mut self.account {
-                    let old_locked = self.locked_amounts.get(client_order_id).copied();
-                    let old_price = stored.order.price.unwrap_or(Decimal::ZERO);
-                    let old_qty = stored.order.quantity;
+                // Get the account ID from existing locked amounts
+                if let Some((account_id, old_locked_amt)) =
+                    self.locked_amounts.get(client_order_id).cloned()
+                {
+                    if let Some(account) = self.accounts.get_mut(&account_id) {
+                        let old_price = stored.order.price.unwrap_or(Decimal::ZERO);
+                        let old_qty = stored.order.quantity;
 
-                    let final_price = new_price.unwrap_or(old_price);
-                    let final_qty = new_quantity.unwrap_or(old_qty);
-                    let new_required = final_price * final_qty;
+                        let final_price = new_price.unwrap_or(old_price);
+                        let final_qty = new_quantity.unwrap_or(old_qty);
+                        let new_required = final_price * final_qty;
 
-                    if let Some(old_locked_amt) = old_locked {
                         let currency = &account.base_currency.clone();
                         if let Some(balance) = account.balance_mut(currency) {
                             if new_required > old_locked_amt {
@@ -627,17 +716,22 @@ impl SimulatedExchange {
                                             client_order_id.clone(),
                                             Some(stored.venue_order_id.clone()),
                                             stored.order.account_id.clone(),
-                                            format!("Insufficient funds for modification: {}", e),
+                                            format!(
+                                                "Insufficient funds in account {} for modification: {}",
+                                                account_id, e
+                                            ),
                                         ),
                                     ));
                                     return events;
                                 }
-                                self.locked_amounts.insert(client_order_id.clone(), new_required);
+                                self.locked_amounts
+                                    .insert(client_order_id.clone(), (account_id, new_required));
                             } else if new_required < old_locked_amt {
                                 // Release excess locked
                                 let excess = old_locked_amt - new_required;
                                 let _ = balance.unlock(excess);
-                                self.locked_amounts.insert(client_order_id.clone(), new_required);
+                                self.locked_amounts
+                                    .insert(client_order_id.clone(), (account_id, new_required));
                             }
                         }
                     }
@@ -778,9 +872,9 @@ impl SimulatedExchange {
         for (order_id, side) in orders_to_remove {
             self.stored_orders.remove(&order_id);
 
-            // Handle account balance updates for filled orders
-            if let Some(locked) = self.locked_amounts.remove(&order_id) {
-                if let Some(account) = &mut self.account {
+            // Handle account balance updates for filled orders (from correct account)
+            if let Some((account_id, locked)) = self.locked_amounts.remove(&order_id) {
+                if let Some(account) = self.accounts.get_mut(&account_id) {
                     let currency = &account.base_currency.clone();
                     if let Some(balance) = account.balance_mut(currency) {
                         match side {
@@ -825,7 +919,11 @@ impl SimulatedExchange {
     /// Check if an order exists (either pending or in matching engine).
     pub fn has_order(&self, client_order_id: &ClientOrderId) -> bool {
         // Check inflight queue
-        if !self.inflight_queue.get_pending_for_order(client_order_id).is_empty() {
+        if !self
+            .inflight_queue
+            .get_pending_for_order(client_order_id)
+            .is_empty()
+        {
             return true;
         }
 
@@ -838,11 +936,16 @@ impl SimulatedExchange {
     /// Returns a clone of the order with its current state (including fill info).
     /// Returns None if the order has been fully filled or doesn't exist.
     pub fn get_order(&self, client_order_id: &ClientOrderId) -> Option<Order> {
-        self.stored_orders.get(client_order_id).map(|s| s.order.clone())
+        self.stored_orders
+            .get(client_order_id)
+            .map(|s| s.order.clone())
     }
 
     /// Get order fill information (cumulative quantity filled).
-    pub fn get_order_fill_info(&self, client_order_id: &ClientOrderId) -> Option<(Decimal, Decimal)> {
+    pub fn get_order_fill_info(
+        &self,
+        client_order_id: &ClientOrderId,
+    ) -> Option<(Decimal, Decimal)> {
         self.stored_orders.get(client_order_id).map(|s| {
             let cum_qty = s.cum_qty;
             let leaves_qty = (s.order.quantity - cum_qty).max(Decimal::ZERO);
@@ -883,7 +986,8 @@ impl SimulatedExchange {
         }
 
         // Expire found orders
-        for (client_order_id, venue_order_id, account_id, instrument_id, side) in expired_ids {
+        for (client_order_id, venue_order_id, order_account_id, instrument_id, side) in expired_ids
+        {
             // Remove from matching engine
             if let Some(engine) = self.matching_engines.get_mut(&instrument_id) {
                 engine.cancel_order(&client_order_id);
@@ -892,10 +996,11 @@ impl SimulatedExchange {
             // Remove from stored orders
             self.stored_orders.remove(&client_order_id);
 
-            // Unlock any locked funds
-            if let Some(locked) = self.locked_amounts.remove(&client_order_id) {
+            // Unlock any locked funds (from correct account)
+            if let Some((locked_account_id, locked)) = self.locked_amounts.remove(&client_order_id)
+            {
                 if side == OrderSide::Buy {
-                    if let Some(account) = &mut self.account {
+                    if let Some(account) = self.accounts.get_mut(&locked_account_id) {
                         let currency = &account.base_currency.clone();
                         if let Some(balance) = account.balance_mut(currency) {
                             let _ = balance.unlock(locked);
@@ -908,7 +1013,7 @@ impl SimulatedExchange {
             events.push(OrderEventAny::Expired(OrderExpired::new(
                 client_order_id,
                 Some(venue_order_id),
-                account_id,
+                order_account_id,
             )));
         }
 
@@ -933,12 +1038,28 @@ impl SimulatedExchange {
 
     /// Get current locked amount for an order.
     pub fn get_locked_amount(&self, client_order_id: &ClientOrderId) -> Option<Decimal> {
-        self.locked_amounts.get(client_order_id).copied()
+        self.locked_amounts
+            .get(client_order_id)
+            .map(|(_, amount)| *amount)
+    }
+
+    /// Get current locked amount and account ID for an order.
+    pub fn get_locked_info(&self, client_order_id: &ClientOrderId) -> Option<(AccountId, Decimal)> {
+        self.locked_amounts.get(client_order_id).cloned()
     }
 
     /// Get total locked amount across all orders.
     pub fn total_locked(&self) -> Decimal {
-        self.locked_amounts.values().sum()
+        self.locked_amounts.values().map(|(_, amount)| amount).sum()
+    }
+
+    /// Get total locked amount for a specific account.
+    pub fn total_locked_for_account(&self, account_id: &AccountId) -> Decimal {
+        self.locked_amounts
+            .values()
+            .filter(|(id, _)| id == account_id)
+            .map(|(_, amount)| *amount)
+            .sum()
     }
 }
 
@@ -1192,5 +1313,238 @@ mod tests {
         let bar2 = create_bar("BTCUSDT", dec!(49000));
         let fills = exchange.process_bar(&bar2);
         assert_eq!(fills.len(), 1);
+    }
+
+    // =========================================================================
+    // Multi-Account Tests
+    // =========================================================================
+
+    fn create_account(id: &str, balance: Decimal) -> Account {
+        let mut account = Account::simulated(id, "USDT");
+        account.deposit("USDT", balance);
+        account
+    }
+
+    fn create_limit_order_with_account(
+        symbol: &str,
+        side: OrderSide,
+        price: Decimal,
+        account_id: &str,
+    ) -> Order {
+        Order::limit(symbol, side, dec!(1.0), price)
+            .with_venue(TEST_VENUE)
+            .with_account_id(account_id)
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn test_multi_account_setup() {
+        let account1 = create_account("ACCOUNT-A", dec!(100000));
+        let account2 = create_account("ACCOUNT-B", dec!(50000));
+
+        let exchange = SimulatedExchange::new(TEST_VENUE)
+            .with_accounts(vec![account1, account2])
+            .with_default_account(AccountId::new("ACCOUNT-A"));
+
+        assert_eq!(exchange.account_count(), 2);
+        assert!(exchange.account(&AccountId::new("ACCOUNT-A")).is_some());
+        assert!(exchange.account(&AccountId::new("ACCOUNT-B")).is_some());
+        assert!(exchange.default_account().is_some());
+        assert_eq!(exchange.default_account().unwrap().id.as_str(), "ACCOUNT-A");
+    }
+
+    #[test]
+    fn test_multi_account_balance_isolation() {
+        let account_a = create_account("ACCOUNT-A", dec!(100000));
+        let account_b = create_account("ACCOUNT-B", dec!(50000));
+
+        let mut exchange = SimulatedExchange::new(TEST_VENUE)
+            .with_accounts(vec![account_a, account_b])
+            .with_default_account(AccountId::new("ACCOUNT-A"));
+
+        // Submit order for ACCOUNT-A
+        let order_a =
+            create_limit_order_with_account("BTCUSDT", OrderSide::Buy, dec!(50000), "ACCOUNT-A");
+        exchange.submit_order(order_a);
+        exchange.process_inflight_commands();
+
+        // Check that ACCOUNT-A has locked funds
+        let total_locked_a = exchange.total_locked_for_account(&AccountId::new("ACCOUNT-A"));
+        assert_eq!(total_locked_a, dec!(50000)); // 1.0 * 50000
+
+        // Check that ACCOUNT-B has no locked funds
+        let total_locked_b = exchange.total_locked_for_account(&AccountId::new("ACCOUNT-B"));
+        assert_eq!(total_locked_b, dec!(0));
+
+        // Verify account balances
+        let acc_a = exchange.account(&AccountId::new("ACCOUNT-A")).unwrap();
+        assert_eq!(acc_a.balance("USDT").unwrap().locked, dec!(50000));
+        assert_eq!(acc_a.balance("USDT").unwrap().free, dec!(50000));
+
+        let acc_b = exchange.account(&AccountId::new("ACCOUNT-B")).unwrap();
+        assert_eq!(acc_b.balance("USDT").unwrap().locked, dec!(0));
+        assert_eq!(acc_b.balance("USDT").unwrap().free, dec!(50000));
+    }
+
+    #[test]
+    fn test_default_account_fallback() {
+        let account = create_account("DEFAULT", dec!(100000));
+
+        let mut exchange = SimulatedExchange::new(TEST_VENUE).with_account(account); // Uses with_account which sets default
+
+        // Order without explicit account_id should use default
+        let order = create_limit_order("BTCUSDT", OrderSide::Buy, dec!(50000));
+        exchange.submit_order(order);
+        exchange.process_inflight_commands();
+
+        // Check locked amount is in default account
+        let total_locked = exchange.total_locked_for_account(&AccountId::new("DEFAULT"));
+        assert_eq!(total_locked, dec!(50000));
+    }
+
+    #[test]
+    fn test_cross_account_rejection() {
+        // ACCOUNT-A has enough, ACCOUNT-B does not
+        let account_a = create_account("ACCOUNT-A", dec!(100000));
+        let account_b = create_account("ACCOUNT-B", dec!(1000)); // Only 1000
+
+        let mut exchange = SimulatedExchange::new(TEST_VENUE)
+            .with_accounts(vec![account_a, account_b])
+            .with_default_account(AccountId::new("ACCOUNT-A"));
+
+        // Submit order for ACCOUNT-B (should fail - insufficient funds)
+        let order_b =
+            create_limit_order_with_account("BTCUSDT", OrderSide::Buy, dec!(50000), "ACCOUNT-B");
+        exchange.submit_order(order_b);
+        let events = exchange.process_inflight_commands();
+
+        // Should be rejected
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], OrderEventAny::Rejected(_)));
+
+        // ACCOUNT-A should still be able to place orders
+        let order_a =
+            create_limit_order_with_account("BTCUSDT", OrderSide::Buy, dec!(50000), "ACCOUNT-A");
+        exchange.submit_order(order_a);
+        let events = exchange.process_inflight_commands();
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], OrderEventAny::Accepted(_)));
+    }
+
+    #[test]
+    fn test_account_specific_cancel_unlocks() {
+        let account_a = create_account("ACCOUNT-A", dec!(100000));
+        let account_b = create_account("ACCOUNT-B", dec!(100000));
+
+        let mut exchange = SimulatedExchange::new(TEST_VENUE)
+            .with_accounts(vec![account_a, account_b])
+            .with_default_account(AccountId::new("ACCOUNT-A"));
+
+        // Submit orders for both accounts
+        let order_a =
+            create_limit_order_with_account("BTCUSDT", OrderSide::Buy, dec!(50000), "ACCOUNT-A");
+        let order_b =
+            create_limit_order_with_account("BTCUSDT", OrderSide::Buy, dec!(40000), "ACCOUNT-B");
+
+        let order_a_id = order_a.client_order_id.clone();
+
+        exchange.submit_order(order_a);
+        exchange.submit_order(order_b);
+        exchange.process_inflight_commands();
+
+        // Verify both accounts have locked funds
+        assert_eq!(
+            exchange.total_locked_for_account(&AccountId::new("ACCOUNT-A")),
+            dec!(50000)
+        );
+        assert_eq!(
+            exchange.total_locked_for_account(&AccountId::new("ACCOUNT-B")),
+            dec!(40000)
+        );
+
+        // Cancel order A
+        exchange.cancel_order(order_a_id);
+        exchange.process_inflight_commands();
+
+        // ACCOUNT-A should have unlocked, ACCOUNT-B still locked
+        assert_eq!(
+            exchange.total_locked_for_account(&AccountId::new("ACCOUNT-A")),
+            dec!(0)
+        );
+        assert_eq!(
+            exchange.total_locked_for_account(&AccountId::new("ACCOUNT-B")),
+            dec!(40000)
+        );
+
+        // Verify ACCOUNT-A balance is restored
+        let acc_a = exchange.account(&AccountId::new("ACCOUNT-A")).unwrap();
+        assert_eq!(acc_a.balance("USDT").unwrap().free, dec!(100000));
+        assert_eq!(acc_a.balance("USDT").unwrap().locked, dec!(0));
+    }
+
+    #[test]
+    fn test_accounts_config_loading() {
+        use crate::accounts::{AccountsConfig, DefaultAccountConfig, SimulationAccountConfig};
+
+        let config = AccountsConfig {
+            default: DefaultAccountConfig {
+                id: "DEFAULT".to_string(),
+                currency: "USDT".to_string(),
+                initial_balance: dec!(100000),
+            },
+            simulation: vec![SimulationAccountConfig {
+                id: "AGGRESSIVE".to_string(),
+                currency: "USDT".to_string(),
+                initial_balance: dec!(50000),
+                strategies: vec!["momentum".to_string()],
+            }],
+        };
+
+        let exchange = SimulatedExchange::new(TEST_VENUE).with_accounts_config(&config);
+
+        assert_eq!(exchange.account_count(), 2);
+        assert!(exchange.account(&AccountId::new("DEFAULT")).is_some());
+        assert!(exchange.account(&AccountId::new("AGGRESSIVE")).is_some());
+
+        // Verify balances
+        let default_acc = exchange.account(&AccountId::new("DEFAULT")).unwrap();
+        assert_eq!(default_acc.total_base(), dec!(100000));
+
+        let agg_acc = exchange.account(&AccountId::new("AGGRESSIVE")).unwrap();
+        assert_eq!(agg_acc.total_base(), dec!(50000));
+    }
+
+    #[test]
+    fn test_all_accounts_iterator() {
+        let account1 = create_account("ACC-1", dec!(100000));
+        let account2 = create_account("ACC-2", dec!(50000));
+        let account3 = create_account("ACC-3", dec!(25000));
+
+        let exchange =
+            SimulatedExchange::new(TEST_VENUE).with_accounts(vec![account1, account2, account3]);
+
+        let total_balance: Decimal = exchange.all_accounts().map(|a| a.total_base()).sum();
+        assert_eq!(total_balance, dec!(175000));
+    }
+
+    #[test]
+    fn test_get_locked_info() {
+        let account = create_account("MY-ACCOUNT", dec!(100000));
+
+        let mut exchange = SimulatedExchange::new(TEST_VENUE).with_account(account);
+
+        let order =
+            create_limit_order_with_account("BTCUSDT", OrderSide::Buy, dec!(50000), "MY-ACCOUNT");
+        let order_id = order.client_order_id.clone();
+
+        exchange.submit_order(order);
+        exchange.process_inflight_commands();
+
+        // Get locked info should return both account ID and amount
+        let (account_id, amount) = exchange.get_locked_info(&order_id).unwrap();
+        assert_eq!(account_id.as_str(), "MY-ACCOUNT");
+        assert_eq!(amount, dec!(50000));
     }
 }

@@ -1,3 +1,38 @@
+# =============================================================================
+# SIMULATION ACCOUNTS CONFIGURATION
+# =============================================================================
+
+# Default account used when no account_id specified on order
+[accounts.default]
+id = "SIM-001"
+currency = "USDT"
+initial_balance = "100000"
+
+# Additional simulation accounts (array of tables)
+# Uncomment to enable multi-account support
+
+# [[accounts.simulation]]
+# id = "SIM-AGGRESSIVE"
+# currency = "USDT"
+# initial_balance = "50000"
+# strategies = ["momentum", "breakout"]  # Strategies that use this account
+
+# [[accounts.simulation]]
+# id = "SIM-CONSERVATIVE"
+# currency = "USDT"
+# initial_balance = "200000"
+# strategies = ["mean_reversion", "rsi"]  # Strategies that use this account
+
+# [[accounts.simulation]]
+# id = "SIM-SHARED"
+# currency = "USDT"
+# initial_balance = "75000"
+# strategies = ["scalper_a", "scalper_b"]  # Multiple strategies share account
+
+# =============================================================================
+# TRADING PAIRS CONFIGURATION
+# =============================================================================
+
 # Trading pairs to monitor - Top 10 volume pairs on Binance
 symbols = [
     "BTCUSDT",   # Bitcoin - #1 volume ($871M/day, 19% dominance)

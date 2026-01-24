@@ -239,7 +239,14 @@ impl Strategy for FillCounterStrategy {
 // Test Data Helpers
 // ============================================================================
 
-fn create_ohlc_bar(symbol: &str, open: Decimal, high: Decimal, low: Decimal, close: Decimal, offset_secs: i64) -> OHLCData {
+fn create_ohlc_bar(
+    symbol: &str,
+    open: Decimal,
+    high: Decimal,
+    low: Decimal,
+    close: Decimal,
+    offset_secs: i64,
+) -> OHLCData {
     OHLCData {
         timestamp: Utc::now() + Duration::seconds(offset_secs),
         symbol: symbol.to_string(),
@@ -253,7 +260,10 @@ fn create_ohlc_bar(symbol: &str, open: Decimal, high: Decimal, low: Decimal, clo
     }
 }
 
-fn create_price_series(symbol: &str, prices: &[(Decimal, Decimal, Decimal, Decimal)]) -> Vec<OHLCData> {
+fn create_price_series(
+    symbol: &str,
+    prices: &[(Decimal, Decimal, Decimal, Decimal)],
+) -> Vec<OHLCData> {
     prices
         .iter()
         .enumerate()
@@ -277,12 +287,15 @@ fn test_exchange_integration_basic() {
         .with_exchange(exchange);
 
     // Price sequence that triggers buy then sell
-    let bars = create_price_series("BTCUSDT", &[
-        (dec!(49500), dec!(49700), dec!(49300), dec!(49500)),  // Buy signal
-        (dec!(49600), dec!(49800), dec!(49400), dec!(49600)),  // Order fills
-        (dec!(51200), dec!(51400), dec!(51000), dec!(51200)),  // Sell signal
-        (dec!(51300), dec!(51500), dec!(51100), dec!(51300)),  // Order fills
-    ]);
+    let bars = create_price_series(
+        "BTCUSDT",
+        &[
+            (dec!(49500), dec!(49700), dec!(49300), dec!(49500)), // Buy signal
+            (dec!(49600), dec!(49800), dec!(49400), dec!(49600)), // Order fills
+            (dec!(51200), dec!(51400), dec!(51000), dec!(51200)), // Sell signal
+            (dec!(51300), dec!(51500), dec!(51100), dec!(51300)), // Order fills
+        ],
+    );
 
     let result = engine.run_with_exchange(BacktestData::OHLCBars(bars));
 
@@ -298,20 +311,22 @@ fn test_exchange_with_fixed_latency() {
 
     // 30-second latency
     let latency_model = FixedLatencyModel::new(30_000_000_000);
-    let exchange = SimulatedExchange::new(venue)
-        .with_latency_model(Box::new(latency_model));
+    let exchange = SimulatedExchange::new(venue).with_latency_model(Box::new(latency_model));
 
     let mut engine = BacktestEngine::new(strategy, config)
         .unwrap()
         .with_exchange(exchange);
 
     // With 30-second latency and 60-second bars, orders should fill on next bar
-    let bars = create_price_series("BTCUSDT", &[
-        (dec!(49500), dec!(49700), dec!(49300), dec!(49500)),
-        (dec!(49600), dec!(49800), dec!(49400), dec!(49600)),
-        (dec!(51200), dec!(51400), dec!(51000), dec!(51200)),
-        (dec!(51300), dec!(51500), dec!(51100), dec!(51300)),
-    ]);
+    let bars = create_price_series(
+        "BTCUSDT",
+        &[
+            (dec!(49500), dec!(49700), dec!(49300), dec!(49500)),
+            (dec!(49600), dec!(49800), dec!(49400), dec!(49600)),
+            (dec!(51200), dec!(51400), dec!(51000), dec!(51200)),
+            (dec!(51300), dec!(51500), dec!(51100), dec!(51300)),
+        ],
+    );
 
     let result = engine.run_with_exchange(BacktestData::OHLCBars(bars));
 
@@ -327,23 +342,25 @@ fn test_exchange_with_variable_latency() {
 
     // Variable latency with 10-50ms range
     let latency_model = VariableLatencyModel::new(
-        10_000_000,  // 10ms min
-        50_000_000,  // 50ms max
-        42,          // seed for reproducibility
+        10_000_000, // 10ms min
+        50_000_000, // 50ms max
+        42,         // seed for reproducibility
     );
-    let exchange = SimulatedExchange::new(venue)
-        .with_latency_model(Box::new(latency_model));
+    let exchange = SimulatedExchange::new(venue).with_latency_model(Box::new(latency_model));
 
     let mut engine = BacktestEngine::new(strategy, config)
         .unwrap()
         .with_exchange(exchange);
 
-    let bars = create_price_series("BTCUSDT", &[
-        (dec!(49500), dec!(49700), dec!(49300), dec!(49500)),
-        (dec!(49600), dec!(49800), dec!(49400), dec!(49600)),
-        (dec!(51200), dec!(51400), dec!(51000), dec!(51200)),
-        (dec!(51300), dec!(51500), dec!(51100), dec!(51300)),
-    ]);
+    let bars = create_price_series(
+        "BTCUSDT",
+        &[
+            (dec!(49500), dec!(49700), dec!(49300), dec!(49500)),
+            (dec!(49600), dec!(49800), dec!(49400), dec!(49600)),
+            (dec!(51200), dec!(51400), dec!(51000), dec!(51200)),
+            (dec!(51300), dec!(51500), dec!(51100), dec!(51300)),
+        ],
+    );
 
     let result = engine.run_with_exchange(BacktestData::OHLCBars(bars));
 
@@ -366,10 +383,13 @@ fn test_limit_order_fills_when_price_touched() {
         .with_exchange(exchange);
 
     // Limit order placed at close-100, bar low should touch it
-    let bars = create_price_series("BTCUSDT", &[
-        (dec!(50000), dec!(50200), dec!(49800), dec!(50000)),  // Order placed at 49900
-        (dec!(50100), dec!(50300), dec!(49700), dec!(50100)),  // Low 49700 < limit 49900, fill
-    ]);
+    let bars = create_price_series(
+        "BTCUSDT",
+        &[
+            (dec!(50000), dec!(50200), dec!(49800), dec!(50000)), // Order placed at 49900
+            (dec!(50100), dec!(50300), dec!(49700), dec!(50100)), // Low 49700 < limit 49900, fill
+        ],
+    );
 
     let result = engine.run_with_exchange(BacktestData::OHLCBars(bars));
 
@@ -389,10 +409,13 @@ fn test_limit_order_no_fill_when_price_not_touched() {
         .with_exchange(exchange);
 
     // Limit order placed at close-100, but bar low doesn't reach it
-    let bars = create_price_series("BTCUSDT", &[
-        (dec!(50000), dec!(50200), dec!(49950), dec!(50000)),  // Order placed at 49900
-        (dec!(50100), dec!(50300), dec!(49950), dec!(50100)),  // Low 49950 > limit 49900, no fill
-    ]);
+    let bars = create_price_series(
+        "BTCUSDT",
+        &[
+            (dec!(50000), dec!(50200), dec!(49950), dec!(50000)), // Order placed at 49900
+            (dec!(50100), dec!(50300), dec!(49950), dec!(50100)), // Low 49950 > limit 49900, no fill
+        ],
+    );
 
     let result = engine.run_with_exchange(BacktestData::OHLCBars(bars));
 
@@ -407,18 +430,21 @@ fn test_probabilistic_fill_model_reproducibility() {
 
     // Create probabilistic fill model with fixed seed
     let _fill_model = ProbabilisticFillModel::new(
-        0.8,  // 80% chance to fill limit orders
-        0.2,  // 20% chance of slippage
-        2,    // max 2 ticks slippage
-        42,   // seed
+        0.8, // 80% chance to fill limit orders
+        0.2, // 20% chance of slippage
+        2,   // max 2 ticks slippage
+        42,  // seed
     );
 
-    let bars = create_price_series("BTCUSDT", &[
-        (dec!(50000), dec!(50200), dec!(49800), dec!(50000)),
-        (dec!(50100), dec!(50300), dec!(49700), dec!(50100)),
-        (dec!(51200), dec!(51400), dec!(51000), dec!(51200)),
-        (dec!(51300), dec!(51500), dec!(51100), dec!(51300)),
-    ]);
+    let bars = create_price_series(
+        "BTCUSDT",
+        &[
+            (dec!(50000), dec!(50200), dec!(49800), dec!(50000)),
+            (dec!(50100), dec!(50300), dec!(49700), dec!(50100)),
+            (dec!(51200), dec!(51400), dec!(51000), dec!(51200)),
+            (dec!(51300), dec!(51500), dec!(51100), dec!(51300)),
+        ],
+    );
 
     // Run twice with same seed - results should be identical
     let mut results = Vec::new();
@@ -451,19 +477,21 @@ fn test_percentage_fee_model() {
 
     // 0.1% maker/taker fees
     let fee_model = PercentageFeeModel::new(dec!(0.001), dec!(0.001));
-    let exchange = SimulatedExchange::new(venue)
-        .with_fee_model(Box::new(fee_model));
+    let exchange = SimulatedExchange::new(venue).with_fee_model(Box::new(fee_model));
 
     let mut engine = BacktestEngine::new(strategy, config)
         .unwrap()
         .with_exchange(exchange);
 
-    let bars = create_price_series("BTCUSDT", &[
-        (dec!(49500), dec!(49700), dec!(49300), dec!(49500)),
-        (dec!(49600), dec!(49800), dec!(49400), dec!(49600)),
-        (dec!(51200), dec!(51400), dec!(51000), dec!(51200)),
-        (dec!(51300), dec!(51500), dec!(51100), dec!(51300)),
-    ]);
+    let bars = create_price_series(
+        "BTCUSDT",
+        &[
+            (dec!(49500), dec!(49700), dec!(49300), dec!(49500)),
+            (dec!(49600), dec!(49800), dec!(49400), dec!(49600)),
+            (dec!(51200), dec!(51400), dec!(51000), dec!(51200)),
+            (dec!(51300), dec!(51500), dec!(51100), dec!(51300)),
+        ],
+    );
 
     let result = engine.run_with_exchange(BacktestData::OHLCBars(bars));
 
@@ -480,24 +508,26 @@ fn test_tiered_fee_model() {
 
     // Tiered fees based on volume
     let tiers = vec![
-        FeeTier::new("Tier1", dec!(0), dec!(0.001), dec!(0.002)),         // < 1000: 0.1%/0.2%
-        FeeTier::new("Tier2", dec!(1000), dec!(0.0008), dec!(0.0015)),    // 1000-10000: 0.08%/0.15%
-        FeeTier::new("Tier3", dec!(10000), dec!(0.0005), dec!(0.001)),    // > 10000: 0.05%/0.1%
+        FeeTier::new("Tier1", dec!(0), dec!(0.001), dec!(0.002)), // < 1000: 0.1%/0.2%
+        FeeTier::new("Tier2", dec!(1000), dec!(0.0008), dec!(0.0015)), // 1000-10000: 0.08%/0.15%
+        FeeTier::new("Tier3", dec!(10000), dec!(0.0005), dec!(0.001)), // > 10000: 0.05%/0.1%
     ];
     let fee_model = TieredFeeModel::new(tiers);
-    let exchange = SimulatedExchange::new(venue)
-        .with_fee_model(Box::new(fee_model));
+    let exchange = SimulatedExchange::new(venue).with_fee_model(Box::new(fee_model));
 
     let mut engine = BacktestEngine::new(strategy, config)
         .unwrap()
         .with_exchange(exchange);
 
-    let bars = create_price_series("BTCUSDT", &[
-        (dec!(49500), dec!(49700), dec!(49300), dec!(49500)),
-        (dec!(49600), dec!(49800), dec!(49400), dec!(49600)),
-        (dec!(51200), dec!(51400), dec!(51000), dec!(51200)),
-        (dec!(51300), dec!(51500), dec!(51100), dec!(51300)),
-    ]);
+    let bars = create_price_series(
+        "BTCUSDT",
+        &[
+            (dec!(49500), dec!(49700), dec!(49300), dec!(49500)),
+            (dec!(49600), dec!(49800), dec!(49400), dec!(49600)),
+            (dec!(51200), dec!(51400), dec!(51000), dec!(51200)),
+            (dec!(51300), dec!(51500), dec!(51100), dec!(51300)),
+        ],
+    );
 
     let result = engine.run_with_exchange(BacktestData::OHLCBars(bars));
 
@@ -520,10 +550,13 @@ fn test_strategy_receives_fill_callbacks() {
         .unwrap()
         .with_exchange(exchange);
 
-    let bars = create_price_series("BTCUSDT", &[
-        (dec!(49500), dec!(49700), dec!(49300), dec!(49500)),  // Order submitted
-        (dec!(49600), dec!(49800), dec!(49400), dec!(49600)),  // Order fills
-    ]);
+    let bars = create_price_series(
+        "BTCUSDT",
+        &[
+            (dec!(49500), dec!(49700), dec!(49300), dec!(49500)), // Order submitted
+            (dec!(49600), dec!(49800), dec!(49400), dec!(49600)), // Order fills
+        ],
+    );
 
     let _result = engine.run_with_exchange(BacktestData::OHLCBars(bars));
 
@@ -537,7 +570,10 @@ fn test_strategy_receives_fill_callbacks() {
 
 #[test]
 fn test_contingent_manager_oto_triggers_children() {
-    use trading_common::orders::{ContingentAction, OrderEventAny, OrderFilled, EventId, VenueOrderId, AccountId, TradeId, LiquiditySide};
+    use trading_common::orders::{
+        AccountId, ContingentAction, EventId, LiquiditySide, OrderEventAny, OrderFilled, TradeId,
+        VenueOrderId,
+    };
 
     let mut manager = ContingentOrderManager::new();
 
@@ -593,7 +629,10 @@ fn test_contingent_manager_oto_triggers_children() {
 
 #[test]
 fn test_contingent_manager_oco_cancels_siblings() {
-    use trading_common::orders::{ContingentAction, OrderEventAny, OrderFilled, EventId, VenueOrderId, AccountId, TradeId, LiquiditySide};
+    use trading_common::orders::{
+        AccountId, ContingentAction, EventId, LiquiditySide, OrderEventAny, OrderFilled, TradeId,
+        VenueOrderId,
+    };
 
     let mut manager = ContingentOrderManager::new();
 
@@ -664,10 +703,13 @@ fn test_insufficient_funds_rejected() {
         .with_exchange(exchange);
 
     // Try to buy $50000 worth with only $100
-    let bars = create_price_series("BTCUSDT", &[
-        (dec!(49500), dec!(49700), dec!(49300), dec!(49500)),
-        (dec!(49600), dec!(49800), dec!(49400), dec!(49600)),
-    ]);
+    let bars = create_price_series(
+        "BTCUSDT",
+        &[
+            (dec!(49500), dec!(49700), dec!(49300), dec!(49500)),
+            (dec!(49600), dec!(49800), dec!(49400), dec!(49600)),
+        ],
+    );
 
     let result = engine.run_with_exchange(BacktestData::OHLCBars(bars));
 
@@ -754,10 +796,38 @@ fn test_multiple_symbols() {
 
     // Use different symbols in different bars
     let bars = vec![
-        create_ohlc_bar("BTCUSDT", dec!(50000), dec!(50200), dec!(49800), dec!(50000), 0),
-        create_ohlc_bar("BTCUSDT", dec!(50100), dec!(50300), dec!(49900), dec!(50100), 60),
-        create_ohlc_bar("ETHUSDT", dec!(3000), dec!(3050), dec!(2950), dec!(3000), 120),
-        create_ohlc_bar("ETHUSDT", dec!(3010), dec!(3060), dec!(2960), dec!(3010), 180),
+        create_ohlc_bar(
+            "BTCUSDT",
+            dec!(50000),
+            dec!(50200),
+            dec!(49800),
+            dec!(50000),
+            0,
+        ),
+        create_ohlc_bar(
+            "BTCUSDT",
+            dec!(50100),
+            dec!(50300),
+            dec!(49900),
+            dec!(50100),
+            60,
+        ),
+        create_ohlc_bar(
+            "ETHUSDT",
+            dec!(3000),
+            dec!(3050),
+            dec!(2950),
+            dec!(3000),
+            120,
+        ),
+        create_ohlc_bar(
+            "ETHUSDT",
+            dec!(3010),
+            dec!(3060),
+            dec!(2960),
+            dec!(3010),
+            180,
+        ),
     ];
 
     let result = engine.run_with_exchange(BacktestData::OHLCBars(bars));
@@ -837,11 +907,14 @@ fn test_stop_order_triggers_and_fills() {
         .with_exchange(exchange);
 
     // Price rises above stop trigger
-    let bars = create_price_series("BTCUSDT", &[
-        (dec!(50000), dec!(50100), dec!(49900), dec!(50000)),  // Stop placed at 50200
-        (dec!(50150), dec!(50300), dec!(50100), dec!(50150)),  // High 50300 > stop 50200, triggers
-        (dec!(50200), dec!(50400), dec!(50100), dec!(50200)),  // Order fills
-    ]);
+    let bars = create_price_series(
+        "BTCUSDT",
+        &[
+            (dec!(50000), dec!(50100), dec!(49900), dec!(50000)), // Stop placed at 50200
+            (dec!(50150), dec!(50300), dec!(50100), dec!(50150)), // High 50300 > stop 50200, triggers
+            (dec!(50200), dec!(50400), dec!(50100), dec!(50200)), // Order fills
+        ],
+    );
 
     let result = engine.run_with_exchange(BacktestData::OHLCBars(bars));
 
@@ -891,7 +964,7 @@ fn test_order_state_updated_after_fill() {
         timeframe: Timeframe::OneMinute,
         open: dec!(50100),
         high: dec!(50200),
-        low: dec!(49500),  // Below limit price
+        low: dec!(49500), // Below limit price
         close: dec!(49800),
         volume: dec!(100),
         trade_count: 10,
@@ -986,10 +1059,13 @@ fn test_commission_accuracy() {
         .with_exchange(exchange);
 
     // Create bars that trigger a buy
-    let bars = create_price_series("BTCUSDT", &[
-        (dec!(49500), dec!(49700), dec!(49300), dec!(49500)), // Buy triggered
-        (dec!(49600), dec!(49800), dec!(49400), dec!(49600)), // Buy fills
-    ]);
+    let bars = create_price_series(
+        "BTCUSDT",
+        &[
+            (dec!(49500), dec!(49700), dec!(49300), dec!(49500)), // Buy triggered
+            (dec!(49600), dec!(49800), dec!(49400), dec!(49600)), // Buy fills
+        ],
+    );
 
     let result = engine.run_with_exchange(BacktestData::OHLCBars(bars));
 
@@ -1145,9 +1221,9 @@ fn test_portfolio_execute_with_locked_funds() {
     let result = portfolio.execute_buy_with_locked_funds(
         "BTCUSDT".to_string(),
         dec!(10),
-        dec!(100),       // price
-        dec!(1),         // commission
-        lock_amount,     // locked amount
+        dec!(100),   // price
+        dec!(1),     // commission
+        lock_amount, // locked amount
     );
     assert!(result.is_ok());
 
@@ -1243,7 +1319,7 @@ fn test_exchange_with_account_balance_locking() {
 
     // Verify initial state
     {
-        let acc = exchange.account().unwrap();
+        let acc = exchange.default_account().unwrap();
         assert_eq!(acc.total_base(), dec!(100000));
         assert_eq!(acc.free_base(), dec!(100000));
     }
@@ -1264,11 +1340,11 @@ fn test_exchange_with_account_balance_locking() {
 
     // Verify funds are locked
     {
-        let acc = exchange.account().unwrap();
+        let acc = exchange.default_account().unwrap();
         let balance = acc.balance("USD").unwrap();
         assert_eq!(balance.total, dec!(100000));
         assert_eq!(balance.locked, dec!(50000)); // 1 * 50000
-        assert_eq!(balance.free, dec!(50000));   // 100000 - 50000
+        assert_eq!(balance.free, dec!(50000)); // 100000 - 50000
     }
 
     // Verify locked amount is tracked
@@ -1339,7 +1415,7 @@ fn test_exchange_with_account_unlocks_on_cancel() {
 
     // Verify locked
     {
-        let acc = exchange.account().unwrap();
+        let acc = exchange.default_account().unwrap();
         assert_eq!(acc.balance("USD").unwrap().locked, dec!(50000));
     }
 
@@ -1352,7 +1428,7 @@ fn test_exchange_with_account_unlocks_on_cancel() {
 
     // Verify funds unlocked
     {
-        let acc = exchange.account().unwrap();
+        let acc = exchange.default_account().unwrap();
         let balance = acc.balance("USD").unwrap();
         assert_eq!(balance.locked, dec!(0));
         assert_eq!(balance.free, dec!(100000));
@@ -1385,7 +1461,15 @@ fn test_exchange_with_account_fills_from_locked() {
     exchange.process_inflight_commands();
 
     // Verify locked
-    assert_eq!(exchange.account().unwrap().balance("USD").unwrap().locked, dec!(50000));
+    assert_eq!(
+        exchange
+            .default_account()
+            .unwrap()
+            .balance("USD")
+            .unwrap()
+            .locked,
+        dec!(50000)
+    );
 
     // Process bar that fills the order
     let bar = OHLCData {
@@ -1394,7 +1478,7 @@ fn test_exchange_with_account_fills_from_locked() {
         timeframe: Timeframe::OneMinute,
         open: dec!(50100),
         high: dec!(50200),
-        low: dec!(49500),  // Below limit price
+        low: dec!(49500), // Below limit price
         close: dec!(49800),
         volume: dec!(100),
         trade_count: 10,
@@ -1408,11 +1492,11 @@ fn test_exchange_with_account_fills_from_locked() {
 
     // Verify locked funds consumed (fill from locked reduces total)
     {
-        let acc = exchange.account().unwrap();
+        let acc = exchange.default_account().unwrap();
         let balance = acc.balance("USD").unwrap();
         assert_eq!(balance.locked, dec!(0)); // No longer locked
         assert_eq!(balance.total, dec!(50000)); // 100000 - 50000 consumed
-        assert_eq!(balance.free, dec!(50000));  // All remaining is free
+        assert_eq!(balance.free, dec!(50000)); // All remaining is free
     }
     assert_eq!(exchange.total_locked(), dec!(0));
 }
@@ -1512,7 +1596,7 @@ fn test_order_modification_with_account() {
     // Verify initial locked amount
     assert_eq!(exchange.get_locked_amount(&order_id), Some(dec!(50000)));
     {
-        let acc = exchange.account().unwrap();
+        let acc = exchange.default_account().unwrap();
         assert_eq!(acc.balance("USD").unwrap().locked, dec!(50000));
         assert_eq!(acc.balance("USD").unwrap().free, dec!(50000));
     }
@@ -1527,7 +1611,7 @@ fn test_order_modification_with_account() {
     // Verify increased locked amount
     assert_eq!(exchange.get_locked_amount(&order_id), Some(dec!(60000)));
     {
-        let acc = exchange.account().unwrap();
+        let acc = exchange.default_account().unwrap();
         assert_eq!(acc.balance("USD").unwrap().locked, dec!(60000));
         assert_eq!(acc.balance("USD").unwrap().free, dec!(40000));
     }
@@ -1542,7 +1626,7 @@ fn test_order_modification_with_account() {
     // Verify decreased locked amount
     assert_eq!(exchange.get_locked_amount(&order_id), Some(dec!(40000)));
     {
-        let acc = exchange.account().unwrap();
+        let acc = exchange.default_account().unwrap();
         assert_eq!(acc.balance("USD").unwrap().locked, dec!(40000));
         assert_eq!(acc.balance("USD").unwrap().free, dec!(60000));
     }
@@ -1590,7 +1674,11 @@ fn test_gtd_order_expiration() {
     };
 
     // Advance time but still before expiry
-    exchange.advance_time((Utc::now() + Duration::seconds(30)).timestamp_nanos_opt().unwrap() as u64);
+    exchange.advance_time(
+        (Utc::now() + Duration::seconds(30))
+            .timestamp_nanos_opt()
+            .unwrap() as u64,
+    );
     let events = exchange.process_bar(&bar1);
 
     // No fills or expirations
@@ -1611,7 +1699,11 @@ fn test_gtd_order_expiration() {
     };
 
     // Advance time past expiry
-    exchange.advance_time((expire_time + Duration::seconds(10)).timestamp_nanos_opt().unwrap() as u64);
+    exchange.advance_time(
+        (expire_time + Duration::seconds(10))
+            .timestamp_nanos_opt()
+            .unwrap() as u64,
+    );
     let events = exchange.process_bar(&bar2);
 
     // Should have expiration event
@@ -1657,7 +1749,7 @@ fn test_gtd_order_expiration_unlocks_funds() {
 
     // Verify funds locked
     {
-        let acc = exchange.account().unwrap();
+        let acc = exchange.default_account().unwrap();
         assert_eq!(acc.balance("USD").unwrap().locked, dec!(50000));
     }
 
@@ -1674,7 +1766,11 @@ fn test_gtd_order_expiration_unlocks_funds() {
         trade_count: 10,
     };
 
-    exchange.advance_time((expire_time + Duration::seconds(10)).timestamp_nanos_opt().unwrap() as u64);
+    exchange.advance_time(
+        (expire_time + Duration::seconds(10))
+            .timestamp_nanos_opt()
+            .unwrap() as u64,
+    );
     let events = exchange.process_bar(&bar);
 
     // Should have expiration
@@ -1683,7 +1779,7 @@ fn test_gtd_order_expiration_unlocks_funds() {
 
     // Funds should be unlocked
     {
-        let acc = exchange.account().unwrap();
+        let acc = exchange.default_account().unwrap();
         assert_eq!(acc.balance("USD").unwrap().locked, dec!(0));
         assert_eq!(acc.balance("USD").unwrap().free, dec!(100000));
     }

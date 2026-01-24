@@ -35,6 +35,7 @@
 //! ```
 
 mod account;
+pub mod config;
 mod types;
 
 // Re-export types
@@ -42,3 +43,6 @@ pub use types::{AccountState, AccountType, MarginMode, PositionMode};
 
 // Re-export account structs
 pub use account::{Account, AccountBalance, AccountEvent, MarginAccount};
+
+// Re-export config types
+pub use config::{AccountsConfig, DefaultAccountConfig, SimulationAccountConfig};

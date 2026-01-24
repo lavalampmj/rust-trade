@@ -1,3 +1,4 @@
+use crate::accounts::AccountsConfig;
 use crate::backtest::{
     bar_generator::HistoricalOHLCGenerator, metrics::BacktestMetrics, portfolio::Portfolio,
     strategy::Strategy,
@@ -5,7 +6,8 @@ use crate::backtest::{
 use crate::data::types::{BarData, OHLCData, TickData};
 use crate::execution::{LatencyModel, SimulatedExchange};
 use crate::orders::{
-    ClientOrderId, ContingentAction, ContingentOrderManager, Order, OrderEventAny, OrderList, OrderSide,
+    ClientOrderId, ContingentAction, ContingentOrderManager, Order, OrderEventAny, OrderList,
+    OrderSide,
 };
 use crate::risk::FeeModel;
 use crate::series::bars_context::BarsContext;
@@ -124,6 +126,19 @@ impl BacktestEngine {
     pub fn with_fee_model(mut self, model: Box<dyn FeeModel>) -> Self {
         if let Some(exchange) = self.exchange.take() {
             self.exchange = Some(exchange.with_fee_model(model));
+        }
+        self
+    }
+
+    /// Load accounts from configuration into the exchange.
+    ///
+    /// This creates accounts from the config and adds them to the exchange,
+    /// also setting the default account ID.
+    ///
+    /// Returns self unchanged if no exchange is configured.
+    pub fn with_accounts_config(mut self, config: &AccountsConfig) -> Self {
+        if let Some(exchange) = self.exchange.take() {
+            self.exchange = Some(exchange.with_accounts_config(config));
         }
         self
     }
@@ -331,7 +346,10 @@ impl BacktestEngine {
         println!("Initial capital: ${}", self.portfolio.initial_capital);
         println!(
             "Exchange: {}",
-            self.exchange.as_ref().map(|e| e.venue.as_str()).unwrap_or("SIMULATED")
+            self.exchange
+                .as_ref()
+                .map(|e| e.venue.as_str())
+                .unwrap_or("SIMULATED")
         );
         println!("{}", "=".repeat(60));
 
@@ -372,7 +390,11 @@ impl BacktestEngine {
         let mut last_progress = 0;
 
         for bar_data in bar_events {
-            let timestamp_ns = bar_data.ohlc_bar.timestamp.timestamp_nanos_opt().unwrap_or(0) as u64;
+            let timestamp_ns = bar_data
+                .ohlc_bar
+                .timestamp
+                .timestamp_nanos_opt()
+                .unwrap_or(0) as u64;
 
             // === Step 1: Exchange advances time and processes inflight commands ===
             let mut fill_events = Vec::new();
@@ -414,7 +436,9 @@ impl BacktestEngine {
             }
 
             // Handle order cancellations
-            let cancellations = self.strategy.get_cancellations(&bar_data, &mut self.bars_context);
+            let cancellations = self
+                .strategy
+                .get_cancellations(&bar_data, &mut self.bars_context);
             for order_id in cancellations {
                 if let Some(exchange) = self.exchange.as_mut() {
                     exchange.cancel_order(order_id);
@@ -428,7 +452,11 @@ impl BacktestEngine {
             if progress != last_progress && progress % 10 == 0 {
                 let current_value = self.portfolio.total_value();
                 let current_pnl = self.portfolio.total_pnl();
-                let open_orders = self.exchange.as_ref().map(|e| e.open_order_count()).unwrap_or(0);
+                let open_orders = self
+                    .exchange
+                    .as_ref()
+                    .map(|e| e.open_order_count())
+                    .unwrap_or(0);
                 println!(
                     "Progress: {}% | Portfolio: ${} | P&L: ${} | Open Orders: {}",
                     progress, current_value, current_pnl, open_orders
@@ -487,7 +515,10 @@ impl BacktestEngine {
             println!("\nFinal state:");
             println!("  Open orders remaining: {}", exchange.open_order_count());
             if !self.locked_amounts.is_empty() {
-                println!("  Locked funds remaining: {} orders", self.locked_amounts.len());
+                println!(
+                    "  Locked funds remaining: {} orders",
+                    self.locked_amounts.len()
+                );
             }
         }
 
@@ -606,7 +637,10 @@ impl BacktestEngine {
                     );
                 }
 
-                println!("Order rejected: {} - {}", reject.client_order_id, reject.reason);
+                println!(
+                    "Order rejected: {} - {}",
+                    reject.client_order_id, reject.reason
+                );
                 self.strategy.on_order_rejected(reject);
             }
             OrderEventAny::Accepted(_) => {
@@ -1094,8 +1128,8 @@ mod tests {
         // Note: With no latency, orders are accepted on bar N but fill on bar N+1
         // when the next bar processes the matching engine
         let bars = vec![
-            create_ohlc_bar("BTCUSDT", dec!(49500), 0),   // Bar 0: Buy signal submitted
-            create_ohlc_bar("BTCUSDT", dec!(50500), 60),  // Bar 1: Buy fills (from bar 0)
+            create_ohlc_bar("BTCUSDT", dec!(49500), 0), // Bar 0: Buy signal submitted
+            create_ohlc_bar("BTCUSDT", dec!(50500), 60), // Bar 1: Buy fills (from bar 0)
             create_ohlc_bar("BTCUSDT", dec!(51500), 120), // Bar 2: Sell signal submitted
             create_ohlc_bar("BTCUSDT", dec!(51600), 180), // Bar 3: Sell fills (from bar 2)
         ];
@@ -1123,8 +1157,8 @@ mod tests {
 
         // Create bars with 60-second spacing
         let bars = vec![
-            create_ohlc_bar("BTCUSDT", dec!(49500), 0),   // Buy signal submitted
-            create_ohlc_bar("BTCUSDT", dec!(49600), 60),  // Buy fills after latency
+            create_ohlc_bar("BTCUSDT", dec!(49500), 0), // Buy signal submitted
+            create_ohlc_bar("BTCUSDT", dec!(49600), 60), // Buy fills after latency
             create_ohlc_bar("BTCUSDT", dec!(51500), 120), // Sell signal submitted
             create_ohlc_bar("BTCUSDT", dec!(51600), 180), // Sell fills after latency
         ];
@@ -1149,8 +1183,8 @@ mod tests {
             .with_exchange(exchange);
 
         let bars = vec![
-            create_ohlc_bar("BTCUSDT", dec!(49500), 0),   // Buy signal submitted
-            create_ohlc_bar("BTCUSDT", dec!(49600), 60),  // Buy fills
+            create_ohlc_bar("BTCUSDT", dec!(49500), 0), // Buy signal submitted
+            create_ohlc_bar("BTCUSDT", dec!(49600), 60), // Buy fills
             create_ohlc_bar("BTCUSDT", dec!(51500), 120), // Sell signal submitted
             create_ohlc_bar("BTCUSDT", dec!(51600), 180), // Sell fills
         ];
