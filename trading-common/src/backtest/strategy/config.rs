@@ -86,8 +86,8 @@ impl StrategiesConfig {
             .map_err(|e| format!("Failed to read config file '{}': {}", config_path, e))?;
 
         // Parse as TOML
-        let config_value: toml::Value = toml::from_str(&content)
-            .map_err(|e| format!("Failed to parse TOML: {}", e))?;
+        let config_value: toml::Value =
+            toml::from_str(&content).map_err(|e| format!("Failed to parse TOML: {}", e))?;
 
         // Extract strategies section
         let strategies_table = config_value
@@ -95,7 +95,9 @@ impl StrategiesConfig {
             .ok_or_else(|| "No [strategies] section found in config".to_string())?;
 
         // Deserialize to StrategiesConfig
-        let mut strategies_config: StrategiesConfig = strategies_table.clone().try_into()
+        let mut strategies_config: StrategiesConfig = strategies_table
+            .clone()
+            .try_into()
             .map_err(|e| format!("Failed to deserialize strategies config: {}", e))?;
 
         // Resolve python_dir relative to config file's project root if it's a relative path

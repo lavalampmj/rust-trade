@@ -370,13 +370,7 @@ mod tests {
     use crate::data::types::{OHLCData, Timeframe};
     use std::str::FromStr;
 
-    fn create_bar_data(
-        open: &str,
-        high: &str,
-        low: &str,
-        close: &str,
-        volume: &str,
-    ) -> BarData {
+    fn create_bar_data(open: &str, high: &str, low: &str, close: &str, volume: &str) -> BarData {
         let ohlc = OHLCData::new(
             Utc::now(),
             "BTCUSDT".to_string(),

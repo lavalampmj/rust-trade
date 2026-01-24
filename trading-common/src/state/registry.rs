@@ -144,17 +144,17 @@ impl StateRegistry {
     }
 
     /// Register a component with an initial state.
-    pub fn register(
-        &self,
-        id: ComponentId,
-        initial_state: ComponentState,
-    ) -> StateResult<()> {
+    pub fn register(&self, id: ComponentId, initial_state: ComponentState) -> StateResult<()> {
         if self.states.contains_key(&id) {
             return Err(StateError::AlreadyRegistered(id));
         }
 
-        self.states.insert(id.clone(), ComponentStateEntry::new(initial_state));
-        debug!("Registered component: {} with state {:?}", id, initial_state);
+        self.states
+            .insert(id.clone(), ComponentStateEntry::new(initial_state));
+        debug!(
+            "Registered component: {} with state {:?}",
+            id, initial_state
+        );
         Ok(())
     }
 
@@ -261,7 +261,10 @@ impl StateRegistry {
         // Broadcast event (ignore send errors - no receivers is ok)
         let _ = self.event_tx.send(event.clone());
 
-        debug!("Component {} transitioned: {:?} -> {:?}", id, current, target);
+        debug!(
+            "Component {} transitioned: {:?} -> {:?}",
+            id, current, target
+        );
         Ok(event)
     }
 
@@ -380,7 +383,10 @@ impl StateRegistry {
 
     /// Get all registered component IDs.
     pub fn get_all_ids(&self) -> Vec<ComponentId> {
-        self.states.iter().map(|entry| entry.key().clone()).collect()
+        self.states
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
     }
 
     /// Get number of registered components.
@@ -443,7 +449,9 @@ mod tests {
         let registry = StateRegistry::default();
         let id = test_id("test");
 
-        registry.register(id.clone(), ComponentState::Undefined).unwrap();
+        registry
+            .register(id.clone(), ComponentState::Undefined)
+            .unwrap();
         assert_eq!(registry.get_state(&id), Some(ComponentState::Undefined));
     }
 
@@ -452,7 +460,9 @@ mod tests {
         let registry = StateRegistry::default();
         let id = test_id("test");
 
-        registry.register(id.clone(), ComponentState::Undefined).unwrap();
+        registry
+            .register(id.clone(), ComponentState::Undefined)
+            .unwrap();
 
         let result = registry.register(id.clone(), ComponentState::Undefined);
         assert!(matches!(result, Err(StateError::AlreadyRegistered(_))));
@@ -463,7 +473,9 @@ mod tests {
         let registry = StateRegistry::default();
         let id = test_id("test");
 
-        registry.register(id.clone(), ComponentState::Undefined).unwrap();
+        registry
+            .register(id.clone(), ComponentState::Undefined)
+            .unwrap();
         registry.unregister(&id).unwrap();
 
         assert_eq!(registry.get_state(&id), None);
@@ -474,7 +486,9 @@ mod tests {
         let registry = StateRegistry::default();
         let id = test_id("test");
 
-        registry.register(id.clone(), ComponentState::Undefined).unwrap();
+        registry
+            .register(id.clone(), ComponentState::Undefined)
+            .unwrap();
 
         let event = registry
             .transition(&id, ComponentState::SetDefaults, None)
@@ -490,7 +504,9 @@ mod tests {
         let registry = StateRegistry::default();
         let id = test_id("test");
 
-        registry.register(id.clone(), ComponentState::Undefined).unwrap();
+        registry
+            .register(id.clone(), ComponentState::Undefined)
+            .unwrap();
 
         let result = registry.transition(&id, ComponentState::Realtime, None);
         assert!(matches!(result, Err(StateError::InvalidTransition { .. })));
@@ -501,10 +517,16 @@ mod tests {
         let registry = StateRegistry::default();
         let id = test_id("test");
 
-        registry.register(id.clone(), ComponentState::Configure).unwrap();
+        registry
+            .register(id.clone(), ComponentState::Configure)
+            .unwrap();
 
         let event = registry
-            .transition(&id, ComponentState::Faulted, Some("Connection lost".to_string()))
+            .transition(
+                &id,
+                ComponentState::Faulted,
+                Some("Connection lost".to_string()),
+            )
             .unwrap();
 
         assert_eq!(event.reason.as_deref(), Some("Connection lost"));
@@ -560,7 +582,9 @@ mod tests {
         let child1 = ComponentId::indicator("child1");
         let child2 = ComponentId::indicator("child2");
 
-        registry.register(parent.clone(), ComponentState::Undefined).unwrap();
+        registry
+            .register(parent.clone(), ComponentState::Undefined)
+            .unwrap();
         registry
             .register_with_parent(child1.clone(), ComponentState::Undefined, parent.clone())
             .unwrap();
@@ -582,7 +606,9 @@ mod tests {
         let registry = StateRegistry::default();
         let id = test_id("test");
 
-        registry.register(id.clone(), ComponentState::Undefined).unwrap();
+        registry
+            .register(id.clone(), ComponentState::Undefined)
+            .unwrap();
 
         let mut rx = registry.subscribe();
 
@@ -600,7 +626,9 @@ mod tests {
         let registry = Arc::new(StateRegistry::default());
         let id = test_id("test");
 
-        registry.register(id.clone(), ComponentState::Undefined).unwrap();
+        registry
+            .register(id.clone(), ComponentState::Undefined)
+            .unwrap();
 
         // Spawn task to transition after delay
         let registry_clone = registry.clone();
@@ -625,7 +653,9 @@ mod tests {
         let registry = StateRegistry::default();
         let id = test_id("test");
 
-        registry.register(id.clone(), ComponentState::Undefined).unwrap();
+        registry
+            .register(id.clone(), ComponentState::Undefined)
+            .unwrap();
 
         let result = registry
             .wait_for_state(&id, ComponentState::SetDefaults, Duration::from_millis(50))
@@ -639,7 +669,9 @@ mod tests {
         let registry = StateRegistry::default();
         let id = test_id("test");
 
-        registry.register(id.clone(), ComponentState::SetDefaults).unwrap();
+        registry
+            .register(id.clone(), ComponentState::SetDefaults)
+            .unwrap();
 
         // Should return immediately
         let result = registry
@@ -654,11 +686,17 @@ mod tests {
         let registry = StateRegistry::default();
         let id = test_id("test");
 
-        registry.register(id.clone(), ComponentState::Undefined).unwrap();
+        registry
+            .register(id.clone(), ComponentState::Undefined)
+            .unwrap();
 
         // Force invalid transition
         let event = registry
-            .force_transition(&id, ComponentState::Realtime, Some("Force test".to_string()))
+            .force_transition(
+                &id,
+                ComponentState::Realtime,
+                Some("Force test".to_string()),
+            )
             .unwrap();
 
         assert_eq!(event.new_state, ComponentState::Realtime);
@@ -670,9 +708,15 @@ mod tests {
         let registry = StateRegistry::default();
         let id = test_id("test");
 
-        registry.register(id.clone(), ComponentState::Undefined).unwrap();
-        registry.transition(&id, ComponentState::SetDefaults, None).unwrap();
-        registry.transition(&id, ComponentState::Configure, None).unwrap();
+        registry
+            .register(id.clone(), ComponentState::Undefined)
+            .unwrap();
+        registry
+            .transition(&id, ComponentState::SetDefaults, None)
+            .unwrap();
+        registry
+            .transition(&id, ComponentState::Configure, None)
+            .unwrap();
 
         let entry = registry.get_entry(&id).unwrap();
         assert_eq!(entry.state, ComponentState::Configure);
@@ -683,8 +727,12 @@ mod tests {
     fn test_registry_clear() {
         let registry = StateRegistry::default();
 
-        registry.register(test_id("a"), ComponentState::Undefined).unwrap();
-        registry.register(test_id("b"), ComponentState::Undefined).unwrap();
+        registry
+            .register(test_id("a"), ComponentState::Undefined)
+            .unwrap();
+        registry
+            .register(test_id("b"), ComponentState::Undefined)
+            .unwrap();
 
         assert_eq!(registry.len(), 2);
 

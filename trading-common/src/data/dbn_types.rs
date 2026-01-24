@@ -211,11 +211,7 @@ pub fn create_trade_msg_from_decimals(
     let instrument_id = symbol_to_instrument_id(symbol, exchange);
 
     // Convert size to u32 (assuming reasonable trade sizes)
-    let size_u32 = size
-        .round()
-        .to_string()
-        .parse::<u32>()
-        .unwrap_or(0);
+    let size_u32 = size.round().to_string().parse::<u32>().unwrap_or(0);
 
     create_trade_msg(
         ts_event_nanos,
@@ -253,9 +249,18 @@ mod tests {
         assert_eq!(TradeSideCompat::Sell.to_dbn_char(), b'A' as i8);
         assert_eq!(TradeSideCompat::None.to_dbn_char(), b'N' as i8);
 
-        assert_eq!(TradeSideCompat::from_dbn_char(b'B' as i8), TradeSideCompat::Buy);
-        assert_eq!(TradeSideCompat::from_dbn_char(b'A' as i8), TradeSideCompat::Sell);
-        assert_eq!(TradeSideCompat::from_dbn_char(b'N' as i8), TradeSideCompat::None);
+        assert_eq!(
+            TradeSideCompat::from_dbn_char(b'B' as i8),
+            TradeSideCompat::Buy
+        );
+        assert_eq!(
+            TradeSideCompat::from_dbn_char(b'A' as i8),
+            TradeSideCompat::Sell
+        );
+        assert_eq!(
+            TradeSideCompat::from_dbn_char(b'N' as i8),
+            TradeSideCompat::None
+        );
     }
 
     #[test]

@@ -14,11 +14,11 @@ use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::env;
 use std::str::FromStr;
+use std::sync::Arc;
 use trading_common::backtest::{Portfolio, Signal};
-use trading_common::data::cache::{TieredCache, TickDataCache};
+use trading_common::data::cache::{TickDataCache, TieredCache};
 use trading_common::data::repository::TickDataRepository;
 use trading_common::data::types::{BarData, BarMetadata, BarType, Timeframe};
-use std::sync::Arc;
 use trading_common::series::bars_context::BarsContext;
 
 #[tokio::main]
@@ -253,22 +253,13 @@ async fn main() -> Result<(), String> {
     println!();
     println!("Initial Capital: ${:.2}", initial_capital);
     println!("Final Value: ${:.2}", portfolio.total_value());
-    println!(
-        "Total P&L: ${:.2}",
-        portfolio.total_pnl()
-    );
-    println!(
-        "Total Realized P&L: ${:.2}",
-        portfolio.total_realized_pnl()
-    );
+    println!("Total P&L: ${:.2}", portfolio.total_pnl());
+    println!("Total Realized P&L: ${:.2}", portfolio.total_realized_pnl());
     println!(
         "Total Unrealized P&L: ${:.2}",
         portfolio.total_unrealized_pnl()
     );
-    println!(
-        "Total Commission: ${:.2}",
-        portfolio.total_commission()
-    );
+    println!("Total Commission: ${:.2}", portfolio.total_commission());
     println!(
         "Return: {:.2}%",
         ((portfolio.total_value() - initial_capital) / initial_capital) * Decimal::from(100)

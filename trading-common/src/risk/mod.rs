@@ -50,8 +50,8 @@ pub use types::{RiskCheckResult, RiskCheckType, RiskLevel, TradingState};
 
 // Re-export fee models
 pub use fee_model::{
-    FeeModel, FeeTier, FixedFeeModel, HybridFeeModel, PercentageFeeModel, TieredFeeModel,
-    ZeroFeeModel, infer_liquidity_side,
+    infer_liquidity_side, FeeModel, FeeTier, FixedFeeModel, HybridFeeModel, PercentageFeeModel,
+    TieredFeeModel, ZeroFeeModel,
 };
 
 // Re-export risk engine

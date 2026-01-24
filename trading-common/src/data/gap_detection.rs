@@ -24,7 +24,7 @@
 //! let detector = GapDetector::new(config);
 //! ```
 
-use chrono::{DateTime, Duration, Utc, Weekday, Datelike, Timelike};
+use chrono::{DateTime, Datelike, Duration, Timelike, Utc, Weekday};
 use std::collections::HashMap;
 
 use super::backfill::DataGap;
@@ -278,9 +278,7 @@ impl GapDetector {
         }
 
         // Sort by symbol then start time
-        all_gaps.sort_by(|a, b| {
-            a.symbol.cmp(&b.symbol).then(a.start.cmp(&b.start))
-        });
+        all_gaps.sort_by(|a, b| a.symbol.cmp(&b.symbol).then(a.start.cmp(&b.start)));
 
         all_gaps
     }
@@ -319,8 +317,7 @@ impl GapDetector {
         let estimated_records =
             (duration_minutes as f64 * self.config.expected_ticks_per_minute) as u64;
 
-        DataGap::new(symbol.to_string(), start, end)
-            .with_estimated_records(estimated_records)
+        DataGap::new(symbol.to_string(), start, end).with_estimated_records(estimated_records)
     }
 
     /// Merge adjacent or overlapping gaps for the same symbol
@@ -361,9 +358,7 @@ impl GapDetector {
 
     /// Get total estimated records across all gaps
     pub fn total_estimated_records(gaps: &[DataGap]) -> u64 {
-        gaps.iter()
-            .filter_map(|g| g.estimated_records)
-            .sum()
+        gaps.iter().filter_map(|g| g.estimated_records).sum()
     }
 
     /// Get total duration across all gaps (minutes)
@@ -375,9 +370,9 @@ impl GapDetector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::types::TradeSide;
     use chrono::TimeZone;
     use rust_decimal::Decimal;
-    use crate::data::types::TradeSide;
 
     fn create_tick(symbol: &str, timestamp: DateTime<Utc>) -> TickData {
         TickData::with_details(
@@ -528,7 +523,11 @@ mod tests {
 
         let gaps = vec![
             DataGap::new("ES".to_string(), start, start + Duration::minutes(10)),
-            DataGap::new("ES".to_string(), start + Duration::minutes(10), start + Duration::minutes(20)),
+            DataGap::new(
+                "ES".to_string(),
+                start + Duration::minutes(10),
+                start + Duration::minutes(20),
+            ),
             DataGap::new("NQ".to_string(), start, start + Duration::minutes(15)),
         ];
 
@@ -566,8 +565,12 @@ mod tests {
         let gaps = vec![
             DataGap::new("ES".to_string(), start, start + Duration::minutes(10))
                 .with_estimated_records(1000),
-            DataGap::new("ES".to_string(), start + Duration::minutes(20), start + Duration::minutes(30))
-                .with_estimated_records(1000),
+            DataGap::new(
+                "ES".to_string(),
+                start + Duration::minutes(20),
+                start + Duration::minutes(30),
+            )
+            .with_estimated_records(1000),
         ];
 
         assert_eq!(GapDetector::total_duration_minutes(&gaps), 20);

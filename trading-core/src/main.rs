@@ -70,13 +70,15 @@ fn print_usage() {
     println!("  cargo run --help                       # Show this help message");
     println!();
     println!("Note: Live data is received from data-manager via IPC.");
-    println!("      Ensure data-manager is running: cd data-manager && cargo run serve --live --ipc");
+    println!(
+        "      Ensure data-manager is running: cd data-manager && cargo run serve --live --ipc"
+    );
     println!();
 }
 
 fn run_hash_strategy_command(args: &[String]) {
-    use trading_common::backtest::strategy::calculate_file_hash;
     use std::path::Path;
+    use trading_common::backtest::strategy::calculate_file_hash;
 
     if args.len() < 3 {
         eprintln!("❌ Error: Missing file path argument");
@@ -85,7 +87,9 @@ fn run_hash_strategy_command(args: &[String]) {
         eprintln!("  cargo run --bin trading-core -- hash-strategy <file_path>");
         eprintln!();
         eprintln!("Example:");
-        eprintln!("  cargo run --bin trading-core -- hash-strategy strategies/examples/example_sma.py");
+        eprintln!(
+            "  cargo run --bin trading-core -- hash-strategy strategies/examples/example_sma.py"
+        );
         std::process::exit(1);
     }
 

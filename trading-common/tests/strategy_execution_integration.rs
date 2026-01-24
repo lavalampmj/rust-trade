@@ -848,3 +848,244 @@ fn test_stop_order_triggers_and_fills() {
     // Stop order should have triggered and filled
     assert_eq!(result.total_trades, 1);
 }
+
+// ============================================================================
+// Critical Fix Verification Tests
+// ============================================================================
+
+/// Test that order state is properly updated after fill
+/// (Verifies fix for: Order state never updated by SimulatedExchange)
+#[test]
+fn test_order_state_updated_after_fill() {
+    use trading_common::orders::{OrderEventAny, OrderStatus};
+
+    let venue = "TEST";
+    let mut exchange = SimulatedExchange::new(venue);
+
+    // Submit a limit order
+    let order = Order::limit("BTCUSDT", OrderSide::Buy, dec!(1), dec!(50000))
+        .with_venue(venue)
+        .build()
+        .unwrap();
+    let order_id = order.client_order_id.clone();
+
+    exchange.submit_order(order);
+    exchange.process_inflight_commands();
+
+    // Verify order is in exchange
+    assert!(exchange.has_order(&order_id));
+
+    // Get initial order state
+    let stored_order = exchange.get_order(&order_id);
+    assert!(stored_order.is_some());
+    let initial_order = stored_order.unwrap();
+    assert_eq!(initial_order.filled_qty, dec!(0));
+    assert_eq!(initial_order.leaves_qty, dec!(1));
+    assert_eq!(initial_order.status, OrderStatus::Initialized);
+
+    // Process bar that should fill the order (low at 49500 < limit 50000)
+    let bar = OHLCData {
+        timestamp: Utc::now(),
+        symbol: "BTCUSDT".to_string(),
+        timeframe: Timeframe::OneMinute,
+        open: dec!(50100),
+        high: dec!(50200),
+        low: dec!(49500),  // Below limit price
+        close: dec!(49800),
+        volume: dec!(100),
+        trade_count: 10,
+    };
+
+    let events = exchange.process_bar(&bar);
+
+    // Should have a fill event
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        OrderEventAny::Filled(fill) => {
+            // Verify fill event has correct cumulative quantities
+            assert_eq!(fill.cum_qty, dec!(1));
+            assert_eq!(fill.leaves_qty, dec!(0));
+            assert_eq!(fill.last_qty, dec!(1));
+        }
+        _ => panic!("Expected Filled event"),
+    }
+
+    // Order should be removed from exchange (fully filled)
+    assert!(!exchange.has_order(&order_id));
+}
+
+/// Test that cumulative quantities are tracked correctly for fills
+/// (Verifies fix for: cum_qty hardcoded / partial fills broken)
+#[test]
+fn test_cumulative_fill_quantities() {
+    use trading_common::orders::OrderEventAny;
+
+    let venue = "TEST";
+    let mut exchange = SimulatedExchange::new(venue);
+
+    // Submit a larger order
+    let order = Order::limit("BTCUSDT", OrderSide::Buy, dec!(5), dec!(50000))
+        .with_venue(venue)
+        .build()
+        .unwrap();
+    let order_id = order.client_order_id.clone();
+
+    exchange.submit_order(order);
+    exchange.process_inflight_commands();
+
+    // Get initial fill info
+    let fill_info = exchange.get_order_fill_info(&order_id);
+    assert!(fill_info.is_some());
+    let (cum_qty, leaves_qty) = fill_info.unwrap();
+    assert_eq!(cum_qty, dec!(0));
+    assert_eq!(leaves_qty, dec!(5));
+
+    // Process bar that fills
+    let bar = OHLCData {
+        timestamp: Utc::now(),
+        symbol: "BTCUSDT".to_string(),
+        timeframe: Timeframe::OneMinute,
+        open: dec!(50100),
+        high: dec!(50200),
+        low: dec!(49500),
+        close: dec!(49800),
+        volume: dec!(100),
+        trade_count: 10,
+    };
+
+    let events = exchange.process_bar(&bar);
+
+    // Verify fill event has correct quantities
+    assert_eq!(events.len(), 1);
+    if let OrderEventAny::Filled(fill) = &events[0] {
+        // Full fill should show all qty filled
+        assert_eq!(fill.cum_qty, dec!(5));
+        assert_eq!(fill.leaves_qty, dec!(0));
+        assert_eq!(fill.last_qty, dec!(5));
+    }
+}
+
+/// Test that commission is accurately calculated without double-counting
+/// (Verifies fix for: Commission double-counting)
+#[test]
+fn test_commission_accuracy() {
+    let venue = "TEST";
+
+    // Use a percentage fee model with known rate
+    let fee_rate = dec!(0.001); // 0.1%
+    let fee_model = PercentageFeeModel::new(fee_rate, fee_rate);
+
+    let strategy = Box::new(ThresholdStrategy::new(dec!(50000), dec!(51000), venue));
+    let config = BacktestConfig::new(dec!(100000));
+
+    let exchange = SimulatedExchange::new(venue).with_fee_model(Box::new(fee_model));
+
+    let mut engine = BacktestEngine::new(strategy, config)
+        .unwrap()
+        .with_exchange(exchange);
+
+    // Create bars that trigger a buy
+    let bars = create_price_series("BTCUSDT", &[
+        (dec!(49500), dec!(49700), dec!(49300), dec!(49500)), // Buy triggered
+        (dec!(49600), dec!(49800), dec!(49400), dec!(49600)), // Buy fills
+    ]);
+
+    let result = engine.run_with_exchange(BacktestData::OHLCBars(bars));
+
+    // Verify 1 trade executed
+    assert_eq!(result.total_trades, 1);
+
+    // Calculate expected commission:
+    // Buy 1 @ ~49500 = $49500 notional * 0.1% = $49.50 (approximately)
+    // Should be close to this value, accounting for fill price variation
+    assert!(result.total_commission > dec!(0));
+    assert!(result.total_commission < dec!(100)); // Sanity check
+
+    // Most importantly: commission should NOT be double the expected amount
+    // If double-counting occurred, we'd see ~$99 instead of ~$49.50
+    // The expected commission for 1 unit at ~$49,500 at 0.1% is ~$49.50
+    let expected_approx = dec!(49.6); // 49600 * 0.001
+    let tolerance = dec!(5); // Allow for price variation
+
+    // Check we're in the right ballpark (not doubled)
+    let diff = (result.total_commission - expected_approx).abs();
+    assert!(
+        diff < tolerance,
+        "Commission {} deviates too much from expected {} (diff: {}). May indicate double-counting.",
+        result.total_commission, expected_approx, diff
+    );
+}
+
+/// Test that venue_order_id is set on orders after acceptance
+#[test]
+fn test_venue_order_id_set_on_acceptance() {
+    let venue = "TEST";
+    let mut exchange = SimulatedExchange::new(venue);
+
+    let order = Order::limit("BTCUSDT", OrderSide::Buy, dec!(1), dec!(50000))
+        .with_venue(venue)
+        .build()
+        .unwrap();
+    let order_id = order.client_order_id.clone();
+
+    // Initially no venue order ID
+    assert!(order.venue_order_id.is_none());
+
+    exchange.submit_order(order);
+    let events = exchange.process_inflight_commands();
+
+    // Should get accepted event with venue order ID
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        trading_common::orders::OrderEventAny::Accepted(accepted) => {
+            // Venue order ID should be set
+            assert!(!accepted.venue_order_id.0.is_empty());
+            assert!(accepted.venue_order_id.0.starts_with("SIM-"));
+        }
+        _ => panic!("Expected Accepted event"),
+    }
+
+    // Get stored order and verify venue_order_id was set
+    let stored = exchange.get_order(&order_id).unwrap();
+    assert!(stored.venue_order_id.is_some());
+}
+
+/// Test that buy and sell with explicit commission work correctly
+#[test]
+fn test_portfolio_with_explicit_commission() {
+    use trading_common::backtest::portfolio::Portfolio;
+
+    let mut portfolio = Portfolio::new(dec!(10000));
+
+    // Execute buy with explicit commission
+    let result = portfolio.execute_buy_with_commission(
+        "BTCUSDT".to_string(),
+        dec!(1),
+        dec!(100),
+        dec!(0.10), // $0.10 commission
+    );
+    assert!(result.is_ok());
+
+    // Verify cash deducted correctly: 100 + 0.10 = 100.10
+    assert_eq!(portfolio.cash, dec!(10000) - dec!(100) - dec!(0.10));
+
+    // Verify commission tracked in trade
+    assert_eq!(portfolio.trades.len(), 1);
+    assert_eq!(portfolio.trades[0].commission, dec!(0.10));
+
+    // Execute sell with explicit commission
+    let result = portfolio.execute_sell_with_commission(
+        "BTCUSDT".to_string(),
+        dec!(1),
+        dec!(110),
+        dec!(0.11), // $0.11 commission
+    );
+    assert!(result.is_ok());
+
+    // Verify cash: initial - 100.10 + 110 - 0.11 = 9809.79
+    let expected_cash = dec!(10000) - dec!(100.10) + dec!(110) - dec!(0.11);
+    assert_eq!(portfolio.cash, expected_cash);
+
+    // Total commission should be 0.10 + 0.11 = 0.21
+    assert_eq!(portfolio.total_commission(), dec!(0.21));
+}

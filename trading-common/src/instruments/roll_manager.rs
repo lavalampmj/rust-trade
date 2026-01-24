@@ -38,8 +38,8 @@ use rust_decimal::Decimal;
 use tokio::sync::broadcast;
 use tracing::{debug, info};
 
-use super::contract::ContinuousRollMethod;
 use super::continuous::{AdjustmentFactor, ContinuousSymbol, RollEvent};
+use super::contract::ContinuousRollMethod;
 use crate::orders::InstrumentId;
 
 /// Configuration for the roll manager
@@ -158,7 +158,10 @@ impl RollManager {
         let state = ContinuousContractState::new(symbol);
         self.states.insert(continuous_symbol.to_string(), state);
 
-        debug!("Registered continuous contract for tracking: {}", continuous_symbol);
+        debug!(
+            "Registered continuous contract for tracking: {}",
+            continuous_symbol
+        );
         Ok(())
     }
 
@@ -210,15 +213,9 @@ impl RollManager {
         let state = self.states.get(continuous_symbol)?;
 
         let should_roll = match state.continuous_symbol.roll_method {
-            ContinuousRollMethod::Calendar => {
-                self.check_calendar_roll(&state, now)
-            }
-            ContinuousRollMethod::Volume => {
-                self.check_volume_roll(&state)
-            }
-            ContinuousRollMethod::OpenInterest => {
-                self.check_oi_roll(&state)
-            }
+            ContinuousRollMethod::Calendar => self.check_calendar_roll(&state, now),
+            ContinuousRollMethod::Volume => self.check_volume_roll(&state),
+            ContinuousRollMethod::OpenInterest => self.check_oi_roll(&state),
         };
 
         if should_roll {
@@ -353,7 +350,9 @@ impl RollManager {
 
     /// Get the cumulative adjustment factor for a continuous symbol
     pub fn get_adjustment_factor(&self, continuous_symbol: &str) -> Option<Decimal> {
-        self.states.get(continuous_symbol).map(|s| s.adjustment_factor)
+        self.states
+            .get(continuous_symbol)
+            .map(|s| s.adjustment_factor)
     }
 
     /// Apply adjustment factor to a price
@@ -512,7 +511,8 @@ mod tests {
         let next = InstrumentId::new("ESM6", "GLBX");
         let expiration = NaiveDate::from_ymd_opt(2026, 3, 20);
 
-        let result = manager.set_contracts("ES.c.0", current.clone(), Some(next.clone()), expiration);
+        let result =
+            manager.set_contracts("ES.c.0", current.clone(), Some(next.clone()), expiration);
         assert!(result.is_ok());
 
         // Verify contracts were set
@@ -542,7 +542,9 @@ mod tests {
 
         // After setting
         let current = InstrumentId::new("ESH6", "GLBX");
-        manager.set_contracts("ES.c.0", current.clone(), None, None).unwrap();
+        manager
+            .set_contracts("ES.c.0", current.clone(), None, None)
+            .unwrap();
 
         assert_eq!(manager.get_current_contract("ES.c.0"), Some(current));
 
@@ -561,7 +563,9 @@ mod tests {
 
         let current = InstrumentId::new("ESH6", "GLBX");
         let next = InstrumentId::new("ESM6", "GLBX");
-        manager.set_contracts("ES.c.0", current.clone(), Some(next.clone()), None).unwrap();
+        manager
+            .set_contracts("ES.c.0", current.clone(), Some(next.clone()), None)
+            .unwrap();
 
         // Update current contract volume
         manager.update_volume(&current, Decimal::new(100000, 0));
@@ -583,7 +587,9 @@ mod tests {
 
         let current = InstrumentId::new("ESH6", "GLBX");
         let next = InstrumentId::new("ESM6", "GLBX");
-        manager.set_contracts("ES.n.0", current.clone(), Some(next.clone()), None).unwrap();
+        manager
+            .set_contracts("ES.n.0", current.clone(), Some(next.clone()), None)
+            .unwrap();
 
         manager.update_open_interest(&current, Decimal::new(500000, 0));
         manager.update_open_interest(&next, Decimal::new(300000, 0));
@@ -611,12 +617,17 @@ mod tests {
 
         // Expiration in 3 days (within 5-day threshold)
         let expiration = (Utc::now() + Duration::days(3)).date_naive();
-        manager.set_contracts("ES.c.0", current, Some(next), Some(expiration)).unwrap();
+        manager
+            .set_contracts("ES.c.0", current, Some(next), Some(expiration))
+            .unwrap();
 
         let result = manager.check_roll("ES.c.0", Utc::now());
         assert!(result.is_some());
 
-        if let Some(RollEvent::RollScheduled { continuous_symbol, .. }) = result {
+        if let Some(RollEvent::RollScheduled {
+            continuous_symbol, ..
+        }) = result
+        {
             assert_eq!(continuous_symbol, "ES.c.0");
         } else {
             panic!("Expected RollScheduled event");
@@ -637,7 +648,9 @@ mod tests {
 
         // Expiration in 10 days (outside 5-day threshold)
         let expiration = (Utc::now() + Duration::days(10)).date_naive();
-        manager.set_contracts("ES.c.0", current, Some(next), Some(expiration)).unwrap();
+        manager
+            .set_contracts("ES.c.0", current, Some(next), Some(expiration))
+            .unwrap();
 
         let result = manager.check_roll("ES.c.0", Utc::now());
         assert!(result.is_none());
@@ -657,7 +670,9 @@ mod tests {
 
         // Expiration exactly at threshold boundary
         let expiration = (Utc::now() + Duration::days(5)).date_naive();
-        manager.set_contracts("ES.c.0", current, Some(next), Some(expiration)).unwrap();
+        manager
+            .set_contracts("ES.c.0", current, Some(next), Some(expiration))
+            .unwrap();
 
         // At exactly threshold, should trigger roll
         let result = manager.check_roll("ES.c.0", Utc::now());
@@ -673,7 +688,9 @@ mod tests {
         let next = InstrumentId::new("ESM6", "GLBX");
 
         // No expiration set
-        manager.set_contracts("ES.c.0", current, Some(next), None).unwrap();
+        manager
+            .set_contracts("ES.c.0", current, Some(next), None)
+            .unwrap();
 
         let result = manager.check_roll("ES.c.0", Utc::now());
         assert!(result.is_none()); // Can't roll without expiration info
@@ -694,7 +711,9 @@ mod tests {
 
         let current = InstrumentId::new("ESH6", "GLBX");
         let next = InstrumentId::new("ESM6", "GLBX");
-        manager.set_contracts("ES.v.0", current.clone(), Some(next.clone()), None).unwrap();
+        manager
+            .set_contracts("ES.v.0", current.clone(), Some(next.clone()), None)
+            .unwrap();
 
         // Current: 100k, Next: 160k (1.6x > 1.5x threshold)
         manager.update_volume(&current, Decimal::new(100000, 0));
@@ -715,7 +734,9 @@ mod tests {
 
         let current = InstrumentId::new("ESH6", "GLBX");
         let next = InstrumentId::new("ESM6", "GLBX");
-        manager.set_contracts("ES.v.0", current.clone(), Some(next.clone()), None).unwrap();
+        manager
+            .set_contracts("ES.v.0", current.clone(), Some(next.clone()), None)
+            .unwrap();
 
         // Current: 100k, Next: 140k (1.4x < 1.5x threshold)
         manager.update_volume(&current, Decimal::new(100000, 0));
@@ -732,7 +753,9 @@ mod tests {
 
         let current = InstrumentId::new("ESH6", "GLBX");
         let next = InstrumentId::new("ESM6", "GLBX");
-        manager.set_contracts("ES.v.0", current.clone(), Some(next.clone()), None).unwrap();
+        manager
+            .set_contracts("ES.v.0", current.clone(), Some(next.clone()), None)
+            .unwrap();
 
         // Current: 0, Next: 100k - should not panic (division by zero)
         manager.update_volume(&current, Decimal::ZERO);
@@ -757,7 +780,9 @@ mod tests {
 
         let current = InstrumentId::new("ESH6", "GLBX");
         let next = InstrumentId::new("ESM6", "GLBX");
-        manager.set_contracts("ES.n.0", current.clone(), Some(next.clone()), None).unwrap();
+        manager
+            .set_contracts("ES.n.0", current.clone(), Some(next.clone()), None)
+            .unwrap();
 
         // Current: 500k, Next: 800k (1.6x > 1.5x threshold)
         manager.update_open_interest(&current, Decimal::new(500000, 0));
@@ -778,7 +803,9 @@ mod tests {
 
         let current = InstrumentId::new("ESH6", "GLBX");
         let next = InstrumentId::new("ESM6", "GLBX");
-        manager.set_contracts("ES.c.0", current.clone(), Some(next.clone()), None).unwrap();
+        manager
+            .set_contracts("ES.c.0", current.clone(), Some(next.clone()), None)
+            .unwrap();
 
         // Set some volume/OI for the contracts
         manager.update_volume(&current, Decimal::new(100000, 0));
@@ -813,7 +840,11 @@ mod tests {
     fn test_execute_roll_not_found() {
         let manager = RollManager::new();
 
-        let result = manager.execute_roll("NONEXISTENT.c.0", Decimal::new(100, 0), Decimal::new(101, 0));
+        let result = manager.execute_roll(
+            "NONEXISTENT.c.0",
+            Decimal::new(100, 0),
+            Decimal::new(101, 0),
+        );
         assert!(matches!(result, Err(RollManagerError::NotFound(_))));
     }
 
@@ -824,7 +855,9 @@ mod tests {
 
         let current = InstrumentId::new("ESH6", "GLBX");
         let next = InstrumentId::new("ESM6", "GLBX");
-        manager.set_contracts("ES.c.0", current, Some(next), None).unwrap();
+        manager
+            .set_contracts("ES.c.0", current, Some(next), None)
+            .unwrap();
 
         // Zero current price should return adjustment of 1.0
         let result = manager.execute_roll("ES.c.0", Decimal::ZERO, Decimal::new(4510, 0));
@@ -842,12 +875,18 @@ mod tests {
         let u = InstrumentId::new("ESU6", "GLBX");
 
         // First roll: H6 -> M6
-        manager.set_contracts("ES.c.0", h, Some(m.clone()), None).unwrap();
-        manager.execute_roll("ES.c.0", Decimal::new(4500, 0), Decimal::new(4510, 0)).unwrap();
+        manager
+            .set_contracts("ES.c.0", h, Some(m.clone()), None)
+            .unwrap();
+        manager
+            .execute_roll("ES.c.0", Decimal::new(4500, 0), Decimal::new(4510, 0))
+            .unwrap();
 
         // Second roll: M6 -> U6
         manager.set_contracts("ES.c.0", m, Some(u), None).unwrap();
-        manager.execute_roll("ES.c.0", Decimal::new(4510, 0), Decimal::new(4525, 0)).unwrap();
+        manager
+            .execute_roll("ES.c.0", Decimal::new(4510, 0), Decimal::new(4525, 0))
+            .unwrap();
 
         // Cumulative adjustment should be product of individual adjustments
         let state = manager.get_state("ES.c.0").unwrap();
@@ -880,10 +919,14 @@ mod tests {
 
         let current = InstrumentId::new("ESH6", "GLBX");
         let next = InstrumentId::new("ESM6", "GLBX");
-        manager.set_contracts("ES.c.0", current, Some(next), None).unwrap();
+        manager
+            .set_contracts("ES.c.0", current, Some(next), None)
+            .unwrap();
 
         // Execute roll
-        manager.execute_roll("ES.c.0", Decimal::new(4500, 0), Decimal::new(4510, 0)).unwrap();
+        manager
+            .execute_roll("ES.c.0", Decimal::new(4500, 0), Decimal::new(4510, 0))
+            .unwrap();
 
         // Adjust a raw price
         let raw_price = Decimal::new(4520, 0);
@@ -913,14 +956,18 @@ mod tests {
 
         // Set up for calendar roll
         let expiration = (Utc::now() + Duration::days(2)).date_naive();
-        manager.set_contracts("ES.c.0", current, Some(next), Some(expiration)).unwrap();
+        manager
+            .set_contracts("ES.c.0", current, Some(next), Some(expiration))
+            .unwrap();
 
         // Trigger roll check - should emit RollScheduled
         let _roll_event = manager.check_roll("ES.c.0", Utc::now());
 
         // Should have received the event (non-blocking check)
         match rx.try_recv() {
-            Ok(RollEvent::RollScheduled { continuous_symbol, .. }) => {
+            Ok(RollEvent::RollScheduled {
+                continuous_symbol, ..
+            }) => {
                 assert_eq!(continuous_symbol, "ES.c.0");
             }
             _ => {} // Event might be None if check_roll didn't trigger

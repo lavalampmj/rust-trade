@@ -10,9 +10,9 @@ use std::collections::HashMap;
 use std::fmt;
 
 use super::types::{
-    AccountId, ClientOrderId, ContingencyType, InstrumentId, LiquiditySide, OrderListId,
-    OrderSide, OrderStatus, OrderType, PositionId, StrategyId, TimeInForce, TradeId,
-    TrailingOffsetType, TriggerType, VenueOrderId,
+    AccountId, ClientOrderId, ContingencyType, InstrumentId, LiquiditySide, OrderListId, OrderSide,
+    OrderStatus, OrderType, PositionId, StrategyId, TimeInForce, TradeId, TrailingOffsetType,
+    TriggerType, VenueOrderId,
 };
 
 /// A trading order with full lifecycle tracking.
@@ -135,11 +135,7 @@ pub struct Order {
 
 impl Order {
     /// Create a new market order builder
-    pub fn market(
-        symbol: impl Into<String>,
-        side: OrderSide,
-        quantity: Decimal,
-    ) -> OrderBuilder {
+    pub fn market(symbol: impl Into<String>, side: OrderSide, quantity: Decimal) -> OrderBuilder {
         OrderBuilder::new(OrderType::Market, symbol, side, quantity)
     }
 
@@ -160,8 +156,7 @@ impl Order {
         quantity: Decimal,
         trigger_price: Decimal,
     ) -> OrderBuilder {
-        OrderBuilder::new(OrderType::Stop, symbol, side, quantity)
-            .with_trigger_price(trigger_price)
+        OrderBuilder::new(OrderType::Stop, symbol, side, quantity).with_trigger_price(trigger_price)
     }
 
     /// Create a new stop-limit order builder
@@ -289,9 +284,8 @@ impl Order {
         // Update average price (volume-weighted)
         let total_filled = self.filled_qty + fill_qty;
         if let Some(current_avg) = self.avg_px {
-            self.avg_px = Some(
-                (current_avg * self.filled_qty + fill_price * fill_qty) / total_filled,
-            );
+            self.avg_px =
+                Some((current_avg * self.filled_qty + fill_price * fill_qty) / total_filled);
         } else {
             self.avg_px = Some(fill_price);
         }
@@ -636,9 +630,7 @@ impl OrderBuilder {
         }
 
         let now = Utc::now();
-        let client_order_id = self
-            .client_order_id
-            .unwrap_or_else(ClientOrderId::generate);
+        let client_order_id = self.client_order_id.unwrap_or_else(ClientOrderId::generate);
 
         Ok(Order {
             client_order_id,
@@ -765,10 +757,15 @@ mod tests {
 
     #[test]
     fn test_stop_limit_order_creation() {
-        let order =
-            Order::stop_limit("ETHUSDT", OrderSide::Sell, dec!(2.0), dec!(2500), dec!(2510))
-                .build()
-                .unwrap();
+        let order = Order::stop_limit(
+            "ETHUSDT",
+            OrderSide::Sell,
+            dec!(2.0),
+            dec!(2500),
+            dec!(2510),
+        )
+        .build()
+        .unwrap();
 
         assert_eq!(order.order_type, OrderType::StopLimit);
         assert_eq!(order.price, Some(dec!(2500)));
@@ -777,18 +774,21 @@ mod tests {
 
     #[test]
     fn test_missing_price_validation() {
-        let result = OrderBuilder::new(OrderType::Limit, "BTCUSDT", OrderSide::Buy, dec!(1.0))
-            .build(); // Missing price
+        let result =
+            OrderBuilder::new(OrderType::Limit, "BTCUSDT", OrderSide::Buy, dec!(1.0)).build(); // Missing price
 
         assert!(matches!(result, Err(OrderError::MissingPrice { .. })));
     }
 
     #[test]
     fn test_missing_trigger_price_validation() {
-        let result = OrderBuilder::new(OrderType::Stop, "BTCUSDT", OrderSide::Sell, dec!(1.0))
-            .build(); // Missing trigger price
+        let result =
+            OrderBuilder::new(OrderType::Stop, "BTCUSDT", OrderSide::Sell, dec!(1.0)).build(); // Missing trigger price
 
-        assert!(matches!(result, Err(OrderError::MissingTriggerPrice { .. })));
+        assert!(matches!(
+            result,
+            Err(OrderError::MissingTriggerPrice { .. })
+        ));
     }
 
     #[test]
@@ -925,7 +925,10 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(order.get_tag("source"), Some(&"signal-generator".to_string()));
+        assert_eq!(
+            order.get_tag("source"),
+            Some(&"signal-generator".to_string())
+        );
 
         order.set_tag("execution_id", "12345");
         assert_eq!(order.get_tag("execution_id"), Some(&"12345".to_string()));

@@ -173,10 +173,30 @@ impl TieredFeeModel {
     /// Create Binance spot tiers
     pub fn binance_spot_tiers() -> Self {
         Self::new(vec![
-            FeeTier::new("VIP0", Decimal::ZERO, Decimal::new(1, 3), Decimal::new(1, 3)),
-            FeeTier::new("VIP1", Decimal::new(1_000_000, 0), Decimal::new(9, 4), Decimal::new(1, 3)),
-            FeeTier::new("VIP2", Decimal::new(5_000_000, 0), Decimal::new(8, 4), Decimal::new(1, 3)),
-            FeeTier::new("VIP3", Decimal::new(20_000_000, 0), Decimal::new(7, 4), Decimal::new(9, 4)),
+            FeeTier::new(
+                "VIP0",
+                Decimal::ZERO,
+                Decimal::new(1, 3),
+                Decimal::new(1, 3),
+            ),
+            FeeTier::new(
+                "VIP1",
+                Decimal::new(1_000_000, 0),
+                Decimal::new(9, 4),
+                Decimal::new(1, 3),
+            ),
+            FeeTier::new(
+                "VIP2",
+                Decimal::new(5_000_000, 0),
+                Decimal::new(8, 4),
+                Decimal::new(1, 3),
+            ),
+            FeeTier::new(
+                "VIP3",
+                Decimal::new(20_000_000, 0),
+                Decimal::new(7, 4),
+                Decimal::new(9, 4),
+            ),
         ])
     }
 
@@ -301,11 +321,7 @@ pub struct HybridFeeModel {
 
 impl HybridFeeModel {
     /// Create a new hybrid fee model
-    pub fn new(
-        maker_rate: Decimal,
-        taker_rate: Decimal,
-        fixed_per_fill: Decimal,
-    ) -> Self {
+    pub fn new(maker_rate: Decimal, taker_rate: Decimal, fixed_per_fill: Decimal) -> Self {
         Self {
             percentage: PercentageFeeModel::new(maker_rate, taker_rate),
             fixed_per_fill,
@@ -335,7 +351,9 @@ impl FeeModel for HybridFeeModel {
         order: &Order,
         liquidity_side: LiquiditySide,
     ) -> Decimal {
-        let percentage_fee = self.percentage.calculate_fee(fill_qty, fill_price, order, liquidity_side);
+        let percentage_fee =
+            self.percentage
+                .calculate_fee(fill_qty, fill_price, order, liquidity_side);
         let mut total = percentage_fee + self.fixed_per_fill;
         total = total.max(self.min_fee);
         if let Some(max) = self.max_fee {
@@ -473,7 +491,10 @@ mod tests {
 
     #[test]
     fn test_infer_liquidity_side() {
-        assert_eq!(infer_liquidity_side(OrderType::Market), LiquiditySide::Taker);
+        assert_eq!(
+            infer_liquidity_side(OrderType::Market),
+            LiquiditySide::Taker
+        );
         assert_eq!(infer_liquidity_side(OrderType::Limit), LiquiditySide::Maker);
         assert_eq!(infer_liquidity_side(OrderType::Stop), LiquiditySide::Taker);
     }

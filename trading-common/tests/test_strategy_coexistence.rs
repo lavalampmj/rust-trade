@@ -1,11 +1,11 @@
-/// Test that Rust and Python strategies can coexist and both work correctly
-use trading_common::backtest::strategy;
-use trading_common::backtest::engine::{BacktestConfig, BacktestData, BacktestEngine};
-use trading_common::data::types::{TickData, TradeSide};
 use chrono::Utc;
 use rust_decimal::Decimal;
-use std::str::FromStr;
 use std::env;
+use std::str::FromStr;
+use trading_common::backtest::engine::{BacktestConfig, BacktestData, BacktestEngine};
+/// Test that Rust and Python strategies can coexist and both work correctly
+use trading_common::backtest::strategy;
+use trading_common::data::types::{TickData, TradeSide};
 
 fn get_config_path() -> String {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
@@ -37,20 +37,34 @@ fn test_both_rust_and_python_strategies_work() {
 
     // Verify both Rust and Python strategies are available
     let strategies = strategy::list_strategies();
-    assert!(strategies.len() >= 3, "Should have at least 3 strategies (sma, rsi, sma_python)");
+    assert!(
+        strategies.len() >= 3,
+        "Should have at least 3 strategies (sma, rsi, sma_python)"
+    );
 
-    let rust_strategies: Vec<_> = strategies.iter()
+    let rust_strategies: Vec<_> = strategies
+        .iter()
         .filter(|s| matches!(s.strategy_type, strategy::StrategyType::Rust))
         .collect();
-    let python_strategies: Vec<_> = strategies.iter()
+    let python_strategies: Vec<_> = strategies
+        .iter()
         .filter(|s| matches!(s.strategy_type, strategy::StrategyType::Python))
         .collect();
 
-    assert!(rust_strategies.len() >= 2, "Should have at least 2 Rust strategies");
-    assert!(python_strategies.len() >= 1, "Should have at least 1 Python strategy");
+    assert!(
+        rust_strategies.len() >= 2,
+        "Should have at least 2 Rust strategies"
+    );
+    assert!(
+        python_strategies.len() >= 1,
+        "Should have at least 1 Python strategy"
+    );
 
-    println!("Found {} Rust strategies and {} Python strategies",
-             rust_strategies.len(), python_strategies.len());
+    println!(
+        "Found {} Rust strategies and {} Python strategies",
+        rust_strategies.len(),
+        python_strategies.len()
+    );
 }
 
 #[test]
@@ -66,12 +80,18 @@ fn test_rust_sma_strategy_backtest() {
     let initial_capital = Decimal::from_str("10000.0").unwrap();
 
     // Create Rust SMA strategy
-    let strategy_box = strategy::create_strategy("sma").expect("Failed to create Rust SMA strategy");
-    assert_eq!(strategy_box.name(), "Simple Moving Average", "Strategy name mismatch");
+    let strategy_box =
+        strategy::create_strategy("sma").expect("Failed to create Rust SMA strategy");
+    assert_eq!(
+        strategy_box.name(),
+        "Simple Moving Average",
+        "Strategy name mismatch"
+    );
 
     // Run backtest
     let config = BacktestConfig::new(initial_capital);
-    let mut engine = BacktestEngine::new(strategy_box, config).expect("Failed to create backtest engine");
+    let mut engine =
+        BacktestEngine::new(strategy_box, config).expect("Failed to create backtest engine");
     let result = engine.run_unified(BacktestData::Ticks(ticks));
 
     // Verify backtest completed with correct configuration
@@ -105,12 +125,18 @@ fn test_python_sma_strategy_backtest() {
     let initial_capital = Decimal::from_str("10000.0").unwrap();
 
     // Create Python SMA strategy
-    let strategy_box = strategy::create_strategy("sma_python").expect("Failed to create Python SMA strategy");
-    assert_eq!(strategy_box.name(), "Simple Moving Average (Python)", "Strategy name mismatch");
+    let strategy_box =
+        strategy::create_strategy("sma_python").expect("Failed to create Python SMA strategy");
+    assert_eq!(
+        strategy_box.name(),
+        "Simple Moving Average (Python)",
+        "Strategy name mismatch"
+    );
 
     // Run backtest
     let config = BacktestConfig::new(initial_capital);
-    let mut engine = BacktestEngine::new(strategy_box, config).expect("Failed to create backtest engine");
+    let mut engine =
+        BacktestEngine::new(strategy_box, config).expect("Failed to create backtest engine");
     let result = engine.run_unified(BacktestData::Ticks(ticks));
 
     // Verify backtest completed with correct configuration
@@ -138,17 +164,30 @@ fn test_strategy_type_distinction() {
 
     // Get info for Rust strategy
     let rust_info = strategy::get_strategy_info("sma").expect("SMA strategy should exist");
-    assert!(matches!(rust_info.strategy_type, strategy::StrategyType::Rust));
+    assert!(matches!(
+        rust_info.strategy_type,
+        strategy::StrategyType::Rust
+    ));
     println!("Rust SMA: {} - {}", rust_info.name, rust_info.description);
 
     // Get info for Python strategy
-    let python_info = strategy::get_strategy_info("sma_python").expect("Python SMA strategy should exist");
-    assert!(matches!(python_info.strategy_type, strategy::StrategyType::Python));
-    println!("Python SMA: {} - {}", python_info.name, python_info.description);
+    let python_info =
+        strategy::get_strategy_info("sma_python").expect("Python SMA strategy should exist");
+    assert!(matches!(
+        python_info.strategy_type,
+        strategy::StrategyType::Python
+    ));
+    println!(
+        "Python SMA: {} - {}",
+        python_info.name, python_info.description
+    );
 
     // Verify they have different types
     // Rust type should not equal Python type
     let rust_is_rust = matches!(rust_info.strategy_type, strategy::StrategyType::Rust);
     let python_is_python = matches!(python_info.strategy_type, strategy::StrategyType::Python);
-    assert!(rust_is_rust && python_is_python, "Strategies should have correct types");
+    assert!(
+        rust_is_rust && python_is_python,
+        "Strategies should have correct types"
+    );
 }

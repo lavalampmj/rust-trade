@@ -369,11 +369,7 @@ impl OrderManager {
     /// Get all closed orders.
     pub async fn get_closed_orders(&self) -> Vec<Order> {
         let orders = self.orders.read().await;
-        orders
-            .values()
-            .filter(|o| o.is_closed())
-            .cloned()
-            .collect()
+        orders.values().filter(|o| o.is_closed()).cloned().collect()
     }
 
     /// Get orders for a specific symbol.
@@ -672,7 +668,10 @@ impl OrderManager {
     }
 
     /// Cancel all open orders.
-    pub async fn cancel_all_orders(&self, account_id: AccountId) -> OrderManagerResult<Vec<ClientOrderId>> {
+    pub async fn cancel_all_orders(
+        &self,
+        account_id: AccountId,
+    ) -> OrderManagerResult<Vec<ClientOrderId>> {
         let orders = self.orders.read().await;
         let open_order_ids: Vec<ClientOrderId> = orders
             .values()
@@ -683,7 +682,11 @@ impl OrderManager {
 
         let mut canceled = Vec::new();
         for order_id in open_order_ids {
-            if self.cancel_order(&order_id, account_id.clone()).await.is_ok() {
+            if self
+                .cancel_order(&order_id, account_id.clone())
+                .await
+                .is_ok()
+            {
                 canceled.push(order_id);
             }
         }
@@ -707,7 +710,11 @@ impl OrderManager {
 
         let mut canceled = Vec::new();
         for order_id in open_order_ids {
-            if self.cancel_order(&order_id, account_id.clone()).await.is_ok() {
+            if self
+                .cancel_order(&order_id, account_id.clone())
+                .await
+                .is_ok()
+            {
                 canceled.push(order_id);
             }
         }
@@ -966,7 +973,9 @@ mod tests {
     use tokio::task::JoinHandle;
 
     /// Helper to join all handles (replacement for futures::future::join_all)
-    async fn tokio_join_all<T>(handles: Vec<JoinHandle<T>>) -> Vec<Result<T, tokio::task::JoinError>> {
+    async fn tokio_join_all<T>(
+        handles: Vec<JoinHandle<T>>,
+    ) -> Vec<Result<T, tokio::task::JoinError>> {
         let mut results = Vec::with_capacity(handles.len());
         for handle in handles {
             results.push(handle.await);
@@ -1190,11 +1199,7 @@ mod tests {
             .await
             .unwrap();
         manager
-            .mark_accepted(
-                &client_id,
-                VenueOrderId::new("v1"),
-                account_id.clone(),
-            )
+            .mark_accepted(&client_id, VenueOrderId::new("v1"), account_id.clone())
             .await
             .unwrap();
         manager
@@ -1222,17 +1227,10 @@ mod tests {
             .await
             .unwrap();
         manager
-            .mark_accepted(
-                &client_id2,
-                VenueOrderId::new("v2"),
-                account_id.clone(),
-            )
+            .mark_accepted(&client_id2, VenueOrderId::new("v2"), account_id.clone())
             .await
             .unwrap();
-        manager
-            .cancel_order(&client_id2, account_id)
-            .await
-            .unwrap();
+        manager.cancel_order(&client_id2, account_id).await.unwrap();
 
         let stats = manager.get_stats().await;
         assert_eq!(stats.total_orders, 2);
@@ -1294,31 +1292,60 @@ mod tests {
 
         // Move orders through lifecycle
         for id in [&btc_buy_id, &btc_sell_id, &eth_buy_id] {
-            manager.mark_submitted(id, account_id.clone()).await.unwrap();
+            manager
+                .mark_submitted(id, account_id.clone())
+                .await
+                .unwrap();
         }
 
         // Accept orders with venue IDs
-        manager.mark_accepted(&btc_buy_id, VenueOrderId::new("BTC-BUY-001"), account_id.clone()).await.unwrap();
-        manager.mark_accepted(&btc_sell_id, VenueOrderId::new("BTC-SELL-001"), account_id.clone()).await.unwrap();
-        manager.mark_accepted(&eth_buy_id, VenueOrderId::new("ETH-BUY-001"), account_id.clone()).await.unwrap();
+        manager
+            .mark_accepted(
+                &btc_buy_id,
+                VenueOrderId::new("BTC-BUY-001"),
+                account_id.clone(),
+            )
+            .await
+            .unwrap();
+        manager
+            .mark_accepted(
+                &btc_sell_id,
+                VenueOrderId::new("BTC-SELL-001"),
+                account_id.clone(),
+            )
+            .await
+            .unwrap();
+        manager
+            .mark_accepted(
+                &eth_buy_id,
+                VenueOrderId::new("ETH-BUY-001"),
+                account_id.clone(),
+            )
+            .await
+            .unwrap();
 
         // Verify venue ID lookup works
-        let order_by_venue = manager.get_order_by_venue_id(&VenueOrderId::new("BTC-BUY-001")).await;
+        let order_by_venue = manager
+            .get_order_by_venue_id(&VenueOrderId::new("BTC-BUY-001"))
+            .await;
         assert!(order_by_venue.is_some());
         assert_eq!(order_by_venue.unwrap().client_order_id, btc_buy_id);
 
         // Partial fill BTC buy
-        manager.apply_fill(
-            &btc_buy_id,
-            VenueOrderId::new("BTC-BUY-001"),
-            account_id.clone(),
-            TradeId::generate(),
-            dec!(1.0),
-            dec!(49999),
-            dec!(0.1),
-            "USDT".to_string(),
-            LiquiditySide::Maker,
-        ).await.unwrap();
+        manager
+            .apply_fill(
+                &btc_buy_id,
+                VenueOrderId::new("BTC-BUY-001"),
+                account_id.clone(),
+                TradeId::generate(),
+                dec!(1.0),
+                dec!(49999),
+                dec!(0.1),
+                "USDT".to_string(),
+                LiquiditySide::Maker,
+            )
+            .await
+            .unwrap();
 
         let btc_buy_order = manager.get_order(&btc_buy_id).await.unwrap();
         assert_eq!(btc_buy_order.status, OrderStatus::PartiallyFilled);
@@ -1326,37 +1353,46 @@ mod tests {
         assert_eq!(btc_buy_order.leaves_qty, dec!(1.0));
 
         // Complete BTC buy fill
-        manager.apply_fill(
-            &btc_buy_id,
-            VenueOrderId::new("BTC-BUY-001"),
-            account_id.clone(),
-            TradeId::generate(),
-            dec!(1.0),
-            dec!(50001),
-            dec!(0.1),
-            "USDT".to_string(),
-            LiquiditySide::Taker,
-        ).await.unwrap();
+        manager
+            .apply_fill(
+                &btc_buy_id,
+                VenueOrderId::new("BTC-BUY-001"),
+                account_id.clone(),
+                TradeId::generate(),
+                dec!(1.0),
+                dec!(50001),
+                dec!(0.1),
+                "USDT".to_string(),
+                LiquiditySide::Taker,
+            )
+            .await
+            .unwrap();
 
         let btc_buy_order = manager.get_order(&btc_buy_id).await.unwrap();
         assert_eq!(btc_buy_order.status, OrderStatus::Filled);
         assert!(btc_buy_order.is_closed());
 
         // Fill ETH order completely in one shot
-        manager.apply_fill(
-            &eth_buy_id,
-            VenueOrderId::new("ETH-BUY-001"),
-            account_id.clone(),
-            TradeId::generate(),
-            dec!(10.0),
-            dec!(3500),
-            dec!(0.5),
-            "USDT".to_string(),
-            LiquiditySide::Taker,
-        ).await.unwrap();
+        manager
+            .apply_fill(
+                &eth_buy_id,
+                VenueOrderId::new("ETH-BUY-001"),
+                account_id.clone(),
+                TradeId::generate(),
+                dec!(10.0),
+                dec!(3500),
+                dec!(0.5),
+                "USDT".to_string(),
+                LiquiditySide::Taker,
+            )
+            .await
+            .unwrap();
 
         // Cancel BTC sell order
-        manager.cancel_order(&btc_sell_id, account_id.clone()).await.unwrap();
+        manager
+            .cancel_order(&btc_sell_id, account_id.clone())
+            .await
+            .unwrap();
         let btc_sell_order = manager.get_order(&btc_sell_id).await.unwrap();
         assert_eq!(btc_sell_order.status, OrderStatus::Canceled);
 
@@ -1383,9 +1419,11 @@ mod tests {
         let event_count_clone = event_count.clone();
 
         // Register callback
-        manager.on_event(Box::new(move |_event| {
-            event_count_clone.fetch_add(1, Ordering::SeqCst);
-        })).await;
+        manager
+            .on_event(Box::new(move |_event| {
+                event_count_clone.fetch_add(1, Ordering::SeqCst);
+            }))
+            .await;
 
         // Submit and process order
         let order = Order::market("BTCUSDT", OrderSide::Buy, dec!(1.0))
@@ -1394,19 +1432,28 @@ mod tests {
         let client_id = manager.submit_order(order).await.unwrap();
         let account_id = AccountId::new("callback-test");
 
-        manager.mark_submitted(&client_id, account_id.clone()).await.unwrap();
-        manager.mark_accepted(&client_id, VenueOrderId::new("v1"), account_id.clone()).await.unwrap();
-        manager.apply_fill(
-            &client_id,
-            VenueOrderId::new("v1"),
-            account_id,
-            TradeId::generate(),
-            dec!(1.0),
-            dec!(50000),
-            dec!(0.1),
-            "USDT".to_string(),
-            LiquiditySide::Taker,
-        ).await.unwrap();
+        manager
+            .mark_submitted(&client_id, account_id.clone())
+            .await
+            .unwrap();
+        manager
+            .mark_accepted(&client_id, VenueOrderId::new("v1"), account_id.clone())
+            .await
+            .unwrap();
+        manager
+            .apply_fill(
+                &client_id,
+                VenueOrderId::new("v1"),
+                account_id,
+                TradeId::generate(),
+                dec!(1.0),
+                dec!(50000),
+                dec!(0.1),
+                "USDT".to_string(),
+                LiquiditySide::Taker,
+            )
+            .await
+            .unwrap();
 
         // Should have received 4 events: Init, Submit, Accept, Fill
         assert_eq!(event_count.load(Ordering::SeqCst), 4);
@@ -1422,8 +1469,14 @@ mod tests {
             .unwrap();
         let client_id = manager.submit_order(order).await.unwrap();
 
-        manager.mark_submitted(&client_id, account_id.clone()).await.unwrap();
-        manager.mark_rejected(&client_id, account_id, "Insufficient funds").await.unwrap();
+        manager
+            .mark_submitted(&client_id, account_id.clone())
+            .await
+            .unwrap();
+        manager
+            .mark_rejected(&client_id, account_id, "Insufficient funds")
+            .await
+            .unwrap();
 
         let order = manager.get_order(&client_id).await.unwrap();
         assert_eq!(order.status, OrderStatus::Rejected);
@@ -1442,7 +1495,10 @@ mod tests {
             .unwrap();
         let client_id = manager.submit_order(order).await.unwrap();
 
-        manager.mark_denied(&client_id, "Order size exceeds risk limit").await.unwrap();
+        manager
+            .mark_denied(&client_id, "Order size exceeds risk limit")
+            .await
+            .unwrap();
 
         let order = manager.get_order(&client_id).await.unwrap();
         assert_eq!(order.status, OrderStatus::Denied);
@@ -1462,8 +1518,14 @@ mod tests {
             .unwrap();
         let client_id = manager.submit_order(order).await.unwrap();
 
-        manager.mark_submitted(&client_id, account_id.clone()).await.unwrap();
-        manager.mark_accepted(&client_id, VenueOrderId::new("v1"), account_id.clone()).await.unwrap();
+        manager
+            .mark_submitted(&client_id, account_id.clone())
+            .await
+            .unwrap();
+        manager
+            .mark_accepted(&client_id, VenueOrderId::new("v1"), account_id.clone())
+            .await
+            .unwrap();
         manager.expire_order(&client_id, account_id).await.unwrap();
 
         let order = manager.get_order(&client_id).await.unwrap();
@@ -1481,27 +1543,39 @@ mod tests {
             .unwrap();
         let client_id = manager.submit_order(order).await.unwrap();
 
-        manager.mark_submitted(&client_id, account_id.clone()).await.unwrap();
-        manager.mark_accepted(&client_id, VenueOrderId::new("v1"), account_id.clone()).await.unwrap();
+        manager
+            .mark_submitted(&client_id, account_id.clone())
+            .await
+            .unwrap();
+        manager
+            .mark_accepted(&client_id, VenueOrderId::new("v1"), account_id.clone())
+            .await
+            .unwrap();
 
         // Trigger the stop order (price reached trigger level)
-        manager.mark_triggered(&client_id, account_id.clone()).await.unwrap();
+        manager
+            .mark_triggered(&client_id, account_id.clone())
+            .await
+            .unwrap();
 
         let order = manager.get_order(&client_id).await.unwrap();
         assert_eq!(order.status, OrderStatus::Triggered);
 
         // Now fill the triggered order
-        manager.apply_fill(
-            &client_id,
-            VenueOrderId::new("v1"),
-            account_id,
-            TradeId::generate(),
-            dec!(1.0),
-            dec!(47900),
-            dec!(0.1),
-            "USDT".to_string(),
-            LiquiditySide::Taker,
-        ).await.unwrap();
+        manager
+            .apply_fill(
+                &client_id,
+                VenueOrderId::new("v1"),
+                account_id,
+                TradeId::generate(),
+                dec!(1.0),
+                dec!(47900),
+                dec!(0.1),
+                "USDT".to_string(),
+                LiquiditySide::Taker,
+            )
+            .await
+            .unwrap();
 
         let order = manager.get_order(&client_id).await.unwrap();
         assert_eq!(order.status, OrderStatus::Filled);
@@ -1518,8 +1592,18 @@ mod tests {
                 .build()
                 .unwrap();
             let client_id = manager.submit_order(order).await.unwrap();
-            manager.mark_submitted(&client_id, account_id.clone()).await.unwrap();
-            manager.mark_accepted(&client_id, VenueOrderId::new(format!("venue-{}", i)), account_id.clone()).await.unwrap();
+            manager
+                .mark_submitted(&client_id, account_id.clone())
+                .await
+                .unwrap();
+            manager
+                .mark_accepted(
+                    &client_id,
+                    VenueOrderId::new(format!("venue-{}", i)),
+                    account_id.clone(),
+                )
+                .await
+                .unwrap();
         }
 
         assert_eq!(manager.open_order_count().await, 3);
@@ -1540,20 +1624,43 @@ mod tests {
                 .build()
                 .unwrap();
             let client_id = manager.submit_order(order).await.unwrap();
-            manager.mark_submitted(&client_id, account_id.clone()).await.unwrap();
-            manager.mark_accepted(&client_id, VenueOrderId::new(format!("btc-venue-{}", i)), account_id.clone()).await.unwrap();
+            manager
+                .mark_submitted(&client_id, account_id.clone())
+                .await
+                .unwrap();
+            manager
+                .mark_accepted(
+                    &client_id,
+                    VenueOrderId::new(format!("btc-venue-{}", i)),
+                    account_id.clone(),
+                )
+                .await
+                .unwrap();
         }
 
         let eth_order = Order::limit("ETHUSDT", OrderSide::Buy, dec!(1.0), dec!(100))
             .build()
             .unwrap();
         let eth_id = manager.submit_order(eth_order).await.unwrap();
-        manager.mark_submitted(&eth_id, account_id.clone()).await.unwrap();
-        manager.mark_accepted(&eth_id, VenueOrderId::new("eth-venue-1"), account_id.clone()).await.unwrap();
+        manager
+            .mark_submitted(&eth_id, account_id.clone())
+            .await
+            .unwrap();
+        manager
+            .mark_accepted(
+                &eth_id,
+                VenueOrderId::new("eth-venue-1"),
+                account_id.clone(),
+            )
+            .await
+            .unwrap();
 
         assert_eq!(manager.open_order_count().await, 3);
 
-        let canceled = manager.cancel_orders_for_symbol("BTCUSDT", account_id).await.unwrap();
+        let canceled = manager
+            .cancel_orders_for_symbol("BTCUSDT", account_id)
+            .await
+            .unwrap();
         assert_eq!(canceled.len(), 2);
         assert_eq!(manager.open_order_count().await, 1);
 
@@ -1578,11 +1685,15 @@ mod tests {
         manager.submit_order(scalp_order).await.unwrap();
         manager.submit_order(momentum_order).await.unwrap();
 
-        let scalp_orders = manager.get_orders_for_strategy(&StrategyId::new("scalping")).await;
+        let scalp_orders = manager
+            .get_orders_for_strategy(&StrategyId::new("scalping"))
+            .await;
         assert_eq!(scalp_orders.len(), 1);
         assert_eq!(scalp_orders[0].symbol(), "BTCUSDT");
 
-        let momentum_orders = manager.get_orders_for_strategy(&StrategyId::new("momentum")).await;
+        let momentum_orders = manager
+            .get_orders_for_strategy(&StrategyId::new("momentum"))
+            .await;
         assert_eq!(momentum_orders.len(), 1);
         assert_eq!(momentum_orders[0].symbol(), "ETHUSDT");
     }
@@ -1615,25 +1726,63 @@ mod tests {
             .build()
             .unwrap();
         let buy_id = manager.submit_order(buy_order).await.unwrap();
-        manager.mark_submitted(&buy_id, account_id.clone()).await.unwrap();
-        manager.mark_accepted(&buy_id, VenueOrderId::new("b1"), account_id.clone()).await.unwrap();
-        manager.apply_fill(&buy_id, VenueOrderId::new("b1"), account_id.clone(),
-            TradeId::generate(), dec!(2.0), dec!(50000), dec!(0.1), "USDT".to_string(),
-            LiquiditySide::Taker).await.unwrap();
+        manager
+            .mark_submitted(&buy_id, account_id.clone())
+            .await
+            .unwrap();
+        manager
+            .mark_accepted(&buy_id, VenueOrderId::new("b1"), account_id.clone())
+            .await
+            .unwrap();
+        manager
+            .apply_fill(
+                &buy_id,
+                VenueOrderId::new("b1"),
+                account_id.clone(),
+                TradeId::generate(),
+                dec!(2.0),
+                dec!(50000),
+                dec!(0.1),
+                "USDT".to_string(),
+                LiquiditySide::Taker,
+            )
+            .await
+            .unwrap();
 
         // Create and fill sell order
         let sell_order = Order::market("BTCUSDT", OrderSide::Sell, dec!(1.0))
             .build()
             .unwrap();
         let sell_id = manager.submit_order(sell_order).await.unwrap();
-        manager.mark_submitted(&sell_id, account_id.clone()).await.unwrap();
-        manager.mark_accepted(&sell_id, VenueOrderId::new("s1"), account_id.clone()).await.unwrap();
-        manager.apply_fill(&sell_id, VenueOrderId::new("s1"), account_id,
-            TradeId::generate(), dec!(1.0), dec!(51000), dec!(0.1), "USDT".to_string(),
-            LiquiditySide::Taker).await.unwrap();
+        manager
+            .mark_submitted(&sell_id, account_id.clone())
+            .await
+            .unwrap();
+        manager
+            .mark_accepted(&sell_id, VenueOrderId::new("s1"), account_id.clone())
+            .await
+            .unwrap();
+        manager
+            .apply_fill(
+                &sell_id,
+                VenueOrderId::new("s1"),
+                account_id,
+                TradeId::generate(),
+                dec!(1.0),
+                dec!(51000),
+                dec!(0.1),
+                "USDT".to_string(),
+                LiquiditySide::Taker,
+            )
+            .await
+            .unwrap();
 
-        let buy_filled = manager.get_total_filled_for_symbol("BTCUSDT", OrderSide::Buy).await;
-        let sell_filled = manager.get_total_filled_for_symbol("BTCUSDT", OrderSide::Sell).await;
+        let buy_filled = manager
+            .get_total_filled_for_symbol("BTCUSDT", OrderSide::Buy)
+            .await;
+        let sell_filled = manager
+            .get_total_filled_for_symbol("BTCUSDT", OrderSide::Sell)
+            .await;
 
         assert_eq!(buy_filled, dec!(2.0));
         assert_eq!(sell_filled, dec!(1.0));
@@ -1649,19 +1798,42 @@ mod tests {
             .build()
             .unwrap();
         let filled_id = manager.submit_order(filled_order).await.unwrap();
-        manager.mark_submitted(&filled_id, account_id.clone()).await.unwrap();
-        manager.mark_accepted(&filled_id, VenueOrderId::new("v1"), account_id.clone()).await.unwrap();
-        manager.apply_fill(&filled_id, VenueOrderId::new("v1"), account_id.clone(),
-            TradeId::generate(), dec!(1.0), dec!(50000), dec!(0.1), "USDT".to_string(),
-            LiquiditySide::Taker).await.unwrap();
+        manager
+            .mark_submitted(&filled_id, account_id.clone())
+            .await
+            .unwrap();
+        manager
+            .mark_accepted(&filled_id, VenueOrderId::new("v1"), account_id.clone())
+            .await
+            .unwrap();
+        manager
+            .apply_fill(
+                &filled_id,
+                VenueOrderId::new("v1"),
+                account_id.clone(),
+                TradeId::generate(),
+                dec!(1.0),
+                dec!(50000),
+                dec!(0.1),
+                "USDT".to_string(),
+                LiquiditySide::Taker,
+            )
+            .await
+            .unwrap();
 
         // Create an open order
         let open_order = Order::limit("ETHUSDT", OrderSide::Buy, dec!(1.0), dec!(3000))
             .build()
             .unwrap();
         let open_id = manager.submit_order(open_order).await.unwrap();
-        manager.mark_submitted(&open_id, account_id.clone()).await.unwrap();
-        manager.mark_accepted(&open_id, VenueOrderId::new("v2"), account_id).await.unwrap();
+        manager
+            .mark_submitted(&open_id, account_id.clone())
+            .await
+            .unwrap();
+        manager
+            .mark_accepted(&open_id, VenueOrderId::new("v2"), account_id)
+            .await
+            .unwrap();
 
         assert_eq!(manager.get_all_orders().await.len(), 2);
 
@@ -1688,8 +1860,18 @@ mod tests {
                 .build()
                 .unwrap();
             let client_id = manager.submit_order(order).await.unwrap();
-            manager.mark_submitted(&client_id, account_id.clone()).await.unwrap();
-            manager.mark_accepted(&client_id, VenueOrderId::new(format!("reset-venue-{}", i)), account_id.clone()).await.unwrap();
+            manager
+                .mark_submitted(&client_id, account_id.clone())
+                .await
+                .unwrap();
+            manager
+                .mark_accepted(
+                    &client_id,
+                    VenueOrderId::new(format!("reset-venue-{}", i)),
+                    account_id.clone(),
+                )
+                .await
+                .unwrap();
         }
 
         assert_eq!(manager.get_all_orders().await.len(), 5);
@@ -1723,7 +1905,10 @@ mod tests {
             .build()
             .unwrap();
         let result = manager.submit_order(order).await;
-        assert!(matches!(result, Err(OrderManagerError::SubmissionDenied(_))));
+        assert!(matches!(
+            result,
+            Err(OrderManagerError::SubmissionDenied(_))
+        ));
 
         // But order for different symbol should work
         let eth_order = Order::limit("ETHUSDT", OrderSide::Buy, dec!(1.0), dec!(3000))
@@ -1756,7 +1941,10 @@ mod tests {
             .unwrap();
 
         let result = manager.submit_order(order2).await;
-        assert!(matches!(result, Err(OrderManagerError::DuplicateOrderId(_))));
+        assert!(matches!(
+            result,
+            Err(OrderManagerError::DuplicateOrderId(_))
+        ));
     }
 
     #[tokio::test]
@@ -1772,12 +1960,16 @@ mod tests {
         ));
 
         assert!(matches!(
-            manager.mark_accepted(&fake_id, VenueOrderId::new("v"), account_id.clone()).await,
+            manager
+                .mark_accepted(&fake_id, VenueOrderId::new("v"), account_id.clone())
+                .await,
             Err(OrderManagerError::OrderNotFound(_))
         ));
 
         assert!(matches!(
-            manager.mark_rejected(&fake_id, account_id.clone(), "reason").await,
+            manager
+                .mark_rejected(&fake_id, account_id.clone(), "reason")
+                .await,
             Err(OrderManagerError::OrderNotFound(_))
         ));
 
@@ -1802,14 +1994,23 @@ mod tests {
             .build()
             .unwrap();
         let submitted_id = manager.submit_order(submitted_order).await.unwrap();
-        manager.mark_submitted(&submitted_id, account_id.clone()).await.unwrap();
+        manager
+            .mark_submitted(&submitted_id, account_id.clone())
+            .await
+            .unwrap();
 
         let accepted_order = Order::limit("LTCUSDT", OrderSide::Buy, dec!(1.0), dec!(100))
             .build()
             .unwrap();
         let accepted_id = manager.submit_order(accepted_order).await.unwrap();
-        manager.mark_submitted(&accepted_id, account_id.clone()).await.unwrap();
-        manager.mark_accepted(&accepted_id, VenueOrderId::new("v1"), account_id).await.unwrap();
+        manager
+            .mark_submitted(&accepted_id, account_id.clone())
+            .await
+            .unwrap();
+        manager
+            .mark_accepted(&accepted_id, VenueOrderId::new("v1"), account_id)
+            .await
+            .unwrap();
 
         let initialized = manager.get_orders_by_status(OrderStatus::Initialized).await;
         assert_eq!(initialized.len(), 1);
@@ -1831,19 +2032,42 @@ mod tests {
             .build()
             .unwrap();
         let open_id = manager.submit_order(open_order).await.unwrap();
-        manager.mark_submitted(&open_id, account_id.clone()).await.unwrap();
-        manager.mark_accepted(&open_id, VenueOrderId::new("v1"), account_id.clone()).await.unwrap();
+        manager
+            .mark_submitted(&open_id, account_id.clone())
+            .await
+            .unwrap();
+        manager
+            .mark_accepted(&open_id, VenueOrderId::new("v1"), account_id.clone())
+            .await
+            .unwrap();
 
         // Create a closed (filled) order
         let filled_order = Order::market("ETHUSDT", OrderSide::Buy, dec!(1.0))
             .build()
             .unwrap();
         let filled_id = manager.submit_order(filled_order).await.unwrap();
-        manager.mark_submitted(&filled_id, account_id.clone()).await.unwrap();
-        manager.mark_accepted(&filled_id, VenueOrderId::new("v2"), account_id.clone()).await.unwrap();
-        manager.apply_fill(&filled_id, VenueOrderId::new("v2"), account_id,
-            TradeId::generate(), dec!(1.0), dec!(3000), dec!(0.1), "USDT".to_string(),
-            LiquiditySide::Taker).await.unwrap();
+        manager
+            .mark_submitted(&filled_id, account_id.clone())
+            .await
+            .unwrap();
+        manager
+            .mark_accepted(&filled_id, VenueOrderId::new("v2"), account_id.clone())
+            .await
+            .unwrap();
+        manager
+            .apply_fill(
+                &filled_id,
+                VenueOrderId::new("v2"),
+                account_id,
+                TradeId::generate(),
+                dec!(1.0),
+                dec!(3000),
+                dec!(0.1),
+                "USDT".to_string(),
+                LiquiditySide::Taker,
+            )
+            .await
+            .unwrap();
 
         let open_orders = manager.get_open_orders().await;
         assert_eq!(open_orders.len(), 1);
@@ -1890,7 +2114,10 @@ mod tests {
         let results: Vec<_> = tokio_join_all(handles).await;
 
         // All should succeed
-        let successful = results.iter().filter(|r| r.is_ok() && r.as_ref().unwrap().is_ok()).count();
+        let successful = results
+            .iter()
+            .filter(|r| r.is_ok() && r.as_ref().unwrap().is_ok())
+            .count();
         assert_eq!(successful, 100);
 
         // Verify order counts
@@ -2377,7 +2604,8 @@ mod tests {
         assert!(halted_err.to_string().contains("Market halted"));
         assert!(halted_err.to_string().contains("AAPL.XNAS"));
 
-        let not_found_err = OrderManagerError::SessionNotFound(InstrumentId::new("BTCUSDT", "BINANCE"));
+        let not_found_err =
+            OrderManagerError::SessionNotFound(InstrumentId::new("BTCUSDT", "BINANCE"));
         assert!(not_found_err.to_string().contains("Session not found"));
     }
 }

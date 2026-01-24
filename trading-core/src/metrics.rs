@@ -1,9 +1,7 @@
 // metrics.rs - Prometheus metrics for trading system monitoring
 
 use lazy_static::lazy_static;
-use prometheus::{
-    Encoder, Gauge, Histogram, HistogramOpts, IntCounter, IntGauge, Registry,
-};
+use prometheus::{Encoder, Gauge, Histogram, HistogramOpts, IntCounter, IntGauge, Registry};
 
 lazy_static! {
     /// Global Prometheus registry
@@ -197,11 +195,15 @@ pub async fn start_metrics_server(port: u16) -> Result<(), Box<dyn std::error::E
     }
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    let make_svc = make_service_fn(|_conn| async { Ok::<_, hyper::Error>(service_fn(handle_request)) });
+    let make_svc =
+        make_service_fn(|_conn| async { Ok::<_, hyper::Error>(service_fn(handle_request)) });
 
     let server = Server::bind(&addr).serve(make_svc);
 
-    tracing::info!("Prometheus metrics server listening on http://{}/metrics", addr);
+    tracing::info!(
+        "Prometheus metrics server listening on http://{}/metrics",
+        addr
+    );
     tracing::info!("Health check endpoint available at http://{}/health", addr);
 
     server.await?;

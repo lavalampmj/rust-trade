@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::orders::StrategyId;
-use crate::state::{ComponentState, ComponentStateEvent, ComponentId, ComponentType};
+use crate::state::{ComponentId, ComponentState, ComponentStateEvent, ComponentType};
 
 /// Strategy lifecycle states.
 ///
@@ -109,7 +109,11 @@ impl From<StrategyStateEvent> for ComponentStateEvent {
 
 impl StrategyStateEvent {
     /// Create a new state change event
-    pub fn new(strategy_id: StrategyId, old_state: StrategyState, new_state: StrategyState) -> Self {
+    pub fn new(
+        strategy_id: StrategyId,
+        old_state: StrategyState,
+        new_state: StrategyState,
+    ) -> Self {
         Self {
             strategy_id,
             old_state,
@@ -271,7 +275,10 @@ mod tests {
         let component_event: ComponentStateEvent = strategy_event.into();
 
         assert_eq!(component_event.component_id.instance_name, "my-strategy");
-        assert_eq!(component_event.component_id.component_type, ComponentType::Strategy);
+        assert_eq!(
+            component_event.component_id.component_type,
+            ComponentType::Strategy
+        );
         assert_eq!(component_event.old_state, StrategyState::Configure);
         assert_eq!(component_event.new_state, StrategyState::DataLoaded);
         assert_eq!(component_event.reason.as_deref(), Some("Data loaded"));

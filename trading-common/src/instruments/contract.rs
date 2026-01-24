@@ -272,9 +272,8 @@ impl ContractSpec {
 
     /// Calculate days to expiration
     pub fn days_to_expiration(&self) -> Option<i64> {
-        self.expiration.map(|exp| {
-            (exp.date_naive() - Utc::now().date_naive()).num_days()
-        })
+        self.expiration
+            .map(|exp| (exp.date_naive() - Utc::now().date_naive()).num_days())
     }
 
     /// Calculate notional value
@@ -629,15 +628,15 @@ mod tests {
     #[test]
     fn test_contract_expiration() {
         let future_time = Utc.with_ymd_and_hms(2030, 3, 20, 12, 0, 0).unwrap();
-        let spec = ContractSpec::future(dec!(50), SettlementType::Cash)
-            .with_expiration(future_time);
+        let spec =
+            ContractSpec::future(dec!(50), SettlementType::Cash).with_expiration(future_time);
 
         assert!(!spec.is_expired());
         assert!(!spec.is_perpetual());
 
         let past_time = Utc.with_ymd_and_hms(2020, 3, 20, 12, 0, 0).unwrap();
-        let expired_spec = ContractSpec::future(dec!(50), SettlementType::Cash)
-            .with_expiration(past_time);
+        let expired_spec =
+            ContractSpec::future(dec!(50), SettlementType::Cash).with_expiration(past_time);
 
         assert!(expired_spec.is_expired());
     }
@@ -687,8 +686,14 @@ mod tests {
         assert_eq!(ContinuousRollMethod::Volume.as_char(), 'v');
         assert_eq!(ContinuousRollMethod::OpenInterest.as_char(), 'n');
 
-        assert_eq!(ContinuousRollMethod::from_char('c'), Some(ContinuousRollMethod::Calendar));
-        assert_eq!(ContinuousRollMethod::from_char('V'), Some(ContinuousRollMethod::Volume));
+        assert_eq!(
+            ContinuousRollMethod::from_char('c'),
+            Some(ContinuousRollMethod::Calendar)
+        );
+        assert_eq!(
+            ContinuousRollMethod::from_char('V'),
+            Some(ContinuousRollMethod::Volume)
+        );
         assert_eq!(ContinuousRollMethod::from_char('x'), None);
     }
 

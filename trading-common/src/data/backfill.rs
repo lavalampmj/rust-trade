@@ -157,7 +157,12 @@ pub struct BackfillRequest {
 
 impl BackfillRequest {
     /// Create a new backfill request
-    pub fn new(symbol: &str, start: DateTime<Utc>, end: DateTime<Utc>, source: BackfillSource) -> Self {
+    pub fn new(
+        symbol: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        source: BackfillSource,
+    ) -> Self {
         Self {
             id: Uuid::new_v4(),
             symbols: vec![symbol.to_string()],
@@ -165,9 +170,9 @@ impl BackfillRequest {
             end,
             source,
             priority: match source {
-                BackfillSource::OnDemand => 10,   // Higher priority for on-demand
-                BackfillSource::Manual => 5,     // Medium for manual
-                BackfillSource::Scheduled => 0,  // Lowest for scheduled
+                BackfillSource::OnDemand => 10, // Higher priority for on-demand
+                BackfillSource::Manual => 5,    // Medium for manual
+                BackfillSource::Scheduled => 0, // Lowest for scheduled
             },
             provider: None,
             dataset: None,
@@ -177,7 +182,12 @@ impl BackfillRequest {
     }
 
     /// Create with multiple symbols
-    pub fn with_symbols(symbols: Vec<String>, start: DateTime<Utc>, end: DateTime<Utc>, source: BackfillSource) -> Self {
+    pub fn with_symbols(
+        symbols: Vec<String>,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        source: BackfillSource,
+    ) -> Self {
         let mut req = Self::new(&symbols[0], start, end, source);
         req.symbols = symbols;
         req

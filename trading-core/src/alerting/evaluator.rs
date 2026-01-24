@@ -44,11 +44,8 @@ impl<H: AlertHandler> AlertEvaluator<H> {
                     continue;
                 }
 
-                let alert = Alert::new(
-                    rule.severity(),
-                    rule.name().to_string(),
-                    rule.description(),
-                );
+                let alert =
+                    Alert::new(rule.severity(), rule.name().to_string(), rule.description());
 
                 self.handler.handle(alert);
                 self.mark_fired(rule.name());
@@ -178,7 +175,12 @@ mod tests {
         let current_status = IPC_CONNECTION_STATUS.get();
         if current_status == 0 {
             // IPC is disconnected, should have gotten alert
-            assert!(alert_count >= 1, "Expected at least 1 alert after manual evaluation, got {} (status={})", alert_count, current_status);
+            assert!(
+                alert_count >= 1,
+                "Expected at least 1 alert after manual evaluation, got {} (status={})",
+                alert_count,
+                current_status
+            );
         }
 
         // Now start background monitoring - it should trigger more alerts after cooldown
@@ -192,6 +194,10 @@ mod tests {
 
         // Should have at least 1 alert total
         let final_count = *count.lock().unwrap();
-        assert!(final_count >= 1, "Expected at least 1 alert total, got {}", final_count);
+        assert!(
+            final_count >= 1,
+            "Expected at least 1 alert total, got {}",
+            final_count
+        );
     }
 }

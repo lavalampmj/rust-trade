@@ -160,10 +160,7 @@ impl InstrumentSpecs {
         let notional = price * quantity * self.multiplier;
         if let Some(min) = self.min_notional {
             if notional < min {
-                return Err(format!(
-                    "Notional value {} below minimum {}",
-                    notional, min
-                ));
+                return Err(format!("Notional value {} below minimum {}", notional, min));
             }
         }
         Ok(())
@@ -200,15 +197,15 @@ impl InstrumentSpecs {
 impl Default for InstrumentSpecs {
     fn default() -> Self {
         Self {
-            tick_size: Decimal::new(1, 2),     // 0.01
+            tick_size: Decimal::new(1, 2), // 0.01
             price_precision: 2,
-            lot_size: Decimal::new(1, 8),      // 0.00000001
+            lot_size: Decimal::new(1, 8), // 0.00000001
             size_precision: 8,
             min_quantity: Decimal::new(1, 8),
             max_quantity: None,
             min_notional: Some(Decimal::new(10, 0)), // $10
             multiplier: Decimal::ONE,
-            maker_fee: Decimal::new(1, 3),     // 0.001 = 0.1%
+            maker_fee: Decimal::new(1, 3), // 0.001 = 0.1%
             taker_fee: Decimal::new(1, 3),
             margin_init: None,
             margin_maint: None,
@@ -327,9 +324,9 @@ impl CryptoSpot {
             Currency::btc(),
             Currency::usdt(),
             InstrumentSpecs::new(
-                Decimal::new(1, 2),      // 0.01 tick size
+                Decimal::new(1, 2), // 0.01 tick size
                 2,
-                Decimal::new(1, 5),      // 0.00001 lot size
+                Decimal::new(1, 5), // 0.00001 lot size
                 5,
             )
             .with_min_notional(Decimal::new(10, 0))
@@ -345,9 +342,9 @@ impl CryptoSpot {
             Currency::eth(),
             Currency::usdt(),
             InstrumentSpecs::new(
-                Decimal::new(1, 2),      // 0.01 tick size
+                Decimal::new(1, 2), // 0.01 tick size
                 2,
-                Decimal::new(1, 4),      // 0.0001 lot size
+                Decimal::new(1, 4), // 0.0001 lot size
                 4,
             )
             .with_min_notional(Decimal::new(10, 0))
@@ -681,8 +678,7 @@ mod tests {
 
     #[test]
     fn test_instrument_specs_notional() {
-        let specs = InstrumentSpecs::new(dec!(0.01), 2, dec!(0.001), 3)
-            .with_multiplier(dec!(100)); // 100x multiplier (like ES futures)
+        let specs = InstrumentSpecs::new(dec!(0.01), 2, dec!(0.001), 3).with_multiplier(dec!(100)); // 100x multiplier (like ES futures)
 
         let notional = specs.notional(dec!(4500), dec!(1));
         assert_eq!(notional, dec!(450000)); // 4500 * 1 * 100

@@ -447,14 +447,23 @@ impl BacktestEngine {
                     let price = fill.last_px;
                     let commission = fill.commission;
 
+                    // Use _with_commission to avoid double-counting
                     match side {
                         OrderSide::Buy => {
-                            let _ = self.portfolio.execute_buy(symbol.clone(), quantity, price);
-                            self.portfolio.add_commission(commission);
+                            let _ = self.portfolio.execute_buy_with_commission(
+                                symbol.clone(),
+                                quantity,
+                                price,
+                                commission,
+                            );
                         }
                         OrderSide::Sell => {
-                            let _ = self.portfolio.execute_sell(symbol.clone(), quantity, price);
-                            self.portfolio.add_commission(commission);
+                            let _ = self.portfolio.execute_sell_with_commission(
+                                symbol.clone(),
+                                quantity,
+                                price,
+                                commission,
+                            );
                         }
                     }
                 }
@@ -482,10 +491,17 @@ impl BacktestEngine {
                 let price = fill.last_px;
                 let commission = fill.commission;
 
-                // Execute the fill in portfolio
+                // Execute the fill in portfolio with explicit commission
+                // Uses _with_commission methods to avoid double-counting
+                // (exchange already calculated the commission in the fill event)
                 match side {
                     OrderSide::Buy => {
-                        if let Err(e) = self.portfolio.execute_buy(symbol.clone(), quantity, price) {
+                        if let Err(e) = self.portfolio.execute_buy_with_commission(
+                            symbol.clone(),
+                            quantity,
+                            price,
+                            commission,
+                        ) {
                             println!("Buy failed {}: {}", symbol, e);
                         } else {
                             println!(
@@ -495,7 +511,12 @@ impl BacktestEngine {
                         }
                     }
                     OrderSide::Sell => {
-                        if let Err(e) = self.portfolio.execute_sell(symbol.clone(), quantity, price) {
+                        if let Err(e) = self.portfolio.execute_sell_with_commission(
+                            symbol.clone(),
+                            quantity,
+                            price,
+                            commission,
+                        ) {
                             println!("Sell failed {}: {}", symbol, e);
                         } else {
                             println!(
@@ -506,8 +527,8 @@ impl BacktestEngine {
                     }
                 }
 
-                // Add commission
-                self.portfolio.add_commission(commission);
+                // Note: Commission is already included in execute_*_with_commission
+                // No separate add_commission call needed
 
                 // Notify strategy of execution
                 self.strategy.on_execution(fill);

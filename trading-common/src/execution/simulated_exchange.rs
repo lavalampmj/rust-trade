@@ -96,10 +96,16 @@ impl Default for SimulatedExchangeConfig {
 }
 
 /// Stored order info for creating fill events.
+///
+/// Tracks cumulative fill information for proper partial fill handling.
 #[derive(Debug, Clone)]
 struct StoredOrder {
+    /// The order (mutated as fills occur)
     order: Order,
+    /// Venue-assigned order ID
     venue_order_id: VenueOrderId,
+    /// Cumulative quantity filled across all fills
+    cum_qty: Decimal,
 }
 
 /// Simulated exchange for backtesting.
@@ -312,12 +318,17 @@ impl SimulatedExchange {
         // Generate venue order ID
         let venue_order_id = VenueOrderId(format!("SIM-{}", uuid::Uuid::new_v4()));
 
+        // Create stored order with venue_order_id already set
+        let mut stored_order = order.clone();
+        stored_order.venue_order_id = Some(venue_order_id.clone());
+
         // Store order for later fill event creation
         self.stored_orders.insert(
             order.client_order_id.clone(),
             StoredOrder {
-                order: order.clone(),
+                order: stored_order,
                 venue_order_id: venue_order_id.clone(),
+                cum_qty: Decimal::ZERO,
             },
         );
 
@@ -388,42 +399,67 @@ impl SimulatedExchange {
     }
 
     /// Convert match results to OrderFilled events.
+    ///
+    /// Properly handles partial fills by:
+    /// 1. Tracking cumulative quantity across fills
+    /// 2. Updating the stored order via apply_fill()
+    /// 3. Only removing the order when fully filled
     fn process_matches(&mut self, matches: Vec<MatchResult>) -> Vec<OrderEventAny> {
         let mut events = Vec::new();
+        let mut orders_to_remove = Vec::new();
 
         for m in matches {
             if !m.filled {
                 continue;
             }
 
-            // Get stored order info
-            if let Some(stored) = self.stored_orders.get(&m.client_order_id).cloned() {
-                let order = &stored.order;
+            // Get stored order info (mutable)
+            if let Some(stored) = self.stored_orders.get_mut(&m.client_order_id) {
+                // Update cumulative quantity
+                stored.cum_qty += m.fill_qty;
+                let cum_qty = stored.cum_qty;
+
+                // Calculate leaves_qty based on total order quantity
+                let order_qty = stored.order.quantity;
+                let leaves_qty = (order_qty - cum_qty).max(Decimal::ZERO);
+
+                // Set venue order ID on the order
+                stored.order.venue_order_id = Some(stored.venue_order_id.clone());
 
                 // Calculate commission
                 let commission = self.fee_model.calculate_fee(
                     m.fill_qty,
                     m.fill_price,
-                    order,
+                    &stored.order,
                     m.liquidity_side,
                 );
 
-                // Create OrderFilled event with all required fields
+                // Apply fill to order to update its internal state
+                // This updates: filled_qty, leaves_qty, avg_px, status
+                let _ = stored.order.apply_fill(
+                    m.fill_qty,
+                    m.fill_price,
+                    m.trade_id.clone(),
+                    commission,
+                    m.liquidity_side,
+                );
+
+                // Create OrderFilled event with correct cumulative quantities
                 let fill = OrderFilled {
                     event_id: EventId(uuid::Uuid::new_v4()),
                     client_order_id: m.client_order_id.clone(),
                     venue_order_id: stored.venue_order_id.clone(),
-                    account_id: order.account_id.clone(),
-                    instrument_id: order.instrument_id.clone(),
+                    account_id: stored.order.account_id.clone(),
+                    instrument_id: stored.order.instrument_id.clone(),
                     trade_id: m.trade_id,
-                    position_id: order.position_id.clone(),
-                    strategy_id: order.strategy_id.clone(),
-                    order_side: order.side,
-                    order_type: order.order_type,
+                    position_id: stored.order.position_id.clone(),
+                    strategy_id: stored.order.strategy_id.clone(),
+                    order_side: stored.order.side,
+                    order_type: stored.order.order_type,
                     last_qty: m.fill_qty,
                     last_px: m.fill_price,
-                    cum_qty: m.fill_qty, // For full fill
-                    leaves_qty: Decimal::ZERO, // Fully filled
+                    cum_qty,
+                    leaves_qty,
                     currency: "USD".to_string(), // Default currency
                     commission,
                     commission_currency: "USD".to_string(),
@@ -434,9 +470,16 @@ impl SimulatedExchange {
 
                 events.push(OrderEventAny::Filled(fill));
 
-                // Remove from stored orders (order is now complete)
-                self.stored_orders.remove(&m.client_order_id);
+                // Mark for removal if fully filled (leaves_qty == 0)
+                if leaves_qty.is_zero() {
+                    orders_to_remove.push(m.client_order_id.clone());
+                }
             }
+        }
+
+        // Remove fully filled orders
+        for order_id in orders_to_remove {
+            self.stored_orders.remove(&order_id);
         }
 
         events
@@ -471,6 +514,23 @@ impl SimulatedExchange {
 
         // Check stored orders (in matching engines)
         self.stored_orders.contains_key(client_order_id)
+    }
+
+    /// Get a stored order by client order ID.
+    ///
+    /// Returns a clone of the order with its current state (including fill info).
+    /// Returns None if the order has been fully filled or doesn't exist.
+    pub fn get_order(&self, client_order_id: &ClientOrderId) -> Option<Order> {
+        self.stored_orders.get(client_order_id).map(|s| s.order.clone())
+    }
+
+    /// Get order fill information (cumulative quantity filled).
+    pub fn get_order_fill_info(&self, client_order_id: &ClientOrderId) -> Option<(Decimal, Decimal)> {
+        self.stored_orders.get(client_order_id).map(|s| {
+            let cum_qty = s.cum_qty;
+            let leaves_qty = (s.order.quantity - cum_qty).max(Decimal::ZERO);
+            (cum_qty, leaves_qty)
+        })
     }
 
     /// Get the matching engine for an instrument (if exists).

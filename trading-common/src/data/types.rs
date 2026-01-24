@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::dbn_types::{
-    create_trade_msg_from_decimals, symbol_to_instrument_id, TradeMsgExt, TradeSideCompat,
-    TradeMsg,
+    create_trade_msg_from_decimals, symbol_to_instrument_id, TradeMsg, TradeMsgExt, TradeSideCompat,
 };
 
 // =================================================================
@@ -171,7 +170,15 @@ impl TickData {
         trade_id: String,
         is_buyer_maker: bool,
     ) -> Self {
-        Self::new(timestamp, symbol, price, quantity, side, trade_id, is_buyer_maker)
+        Self::new(
+            timestamp,
+            symbol,
+            price,
+            quantity,
+            side,
+            trade_id,
+            is_buyer_maker,
+        )
     }
 }
 

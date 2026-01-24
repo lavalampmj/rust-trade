@@ -71,7 +71,10 @@ impl SymbolResolver {
     /// # Arguments
     ///
     /// * `continuous_symbol` - The continuous symbol notation (e.g., "ES.c.0.GLBX")
-    pub fn resolve_continuous(&self, continuous_symbol: &str) -> Result<InstrumentId, ResolverError> {
+    pub fn resolve_continuous(
+        &self,
+        continuous_symbol: &str,
+    ) -> Result<InstrumentId, ResolverError> {
         // Parse the continuous symbol to validate format
         let _parsed = ContinuousSymbol::parse(continuous_symbol)
             .map_err(|_| ResolverError::InvalidContinuousSymbol(continuous_symbol.to_string()))?;
@@ -83,7 +86,9 @@ impl SymbolResolver {
             }
 
             // The continuous symbol is valid but not currently tracked
-            return Err(ResolverError::ContinuousNotTracked(continuous_symbol.to_string()));
+            return Err(ResolverError::ContinuousNotTracked(
+                continuous_symbol.to_string(),
+            ));
         }
 
         Err(ResolverError::NoRollManager)

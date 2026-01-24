@@ -162,8 +162,8 @@ impl MarginAccount {
             leverage: Decimal::ONE,
             margin_mode: MarginMode::Cross,
             position_mode: PositionMode::OneWay,
-            margin_call_level: Decimal::new(9, 1),  // 0.9 = 90%
-            liquidation_level: Decimal::ONE,        // 1.0 = 100%
+            margin_call_level: Decimal::new(9, 1), // 0.9 = 90%
+            liquidation_level: Decimal::ONE,       // 1.0 = 100%
         }
     }
 
@@ -336,7 +336,8 @@ impl Account {
     /// Set balance for a currency
     pub fn set_balance(&mut self, currency: impl Into<String>, total: Decimal) {
         let currency = currency.into();
-        self.balances.insert(currency.clone(), AccountBalance::new(currency, total));
+        self.balances
+            .insert(currency.clone(), AccountBalance::new(currency, total));
         self.updated_at = Utc::now();
 
         // Update margin balance if this is the base currency
@@ -375,7 +376,8 @@ impl Account {
         if currency == self.base_currency {
             if let Some(margin) = &mut self.margin {
                 margin.margin_balance -= amount;
-                margin.margin_available = (margin.margin_balance - margin.margin_used).max(Decimal::ZERO);
+                margin.margin_available =
+                    (margin.margin_balance - margin.margin_used).max(Decimal::ZERO);
             }
         }
 

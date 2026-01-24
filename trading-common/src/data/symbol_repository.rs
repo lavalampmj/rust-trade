@@ -85,22 +85,21 @@ impl SymbolRepository {
 
     /// Get a symbol definition, returning error if not found
     pub async fn get_or_error(&self, id: &InstrumentId) -> DataResult<SymbolDefinition> {
-        self.get(id).await?.ok_or_else(|| {
-            DataError::NotFound(format!("Symbol definition not found: {}", id))
-        })
+        self.get(id)
+            .await?
+            .ok_or_else(|| DataError::NotFound(format!("Symbol definition not found: {}", id)))
     }
 
     /// Check if a symbol definition exists
     pub async fn exists(&self, id: &InstrumentId) -> DataResult<bool> {
         let id_str = id.to_string();
 
-        let result: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM symbol_definitions WHERE id = $1",
-        )
-        .bind(&id_str)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| DataError::Database(e))?;
+        let result: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM symbol_definitions WHERE id = $1")
+                .bind(&id_str)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| DataError::Database(e))?;
 
         Ok(result.0 > 0)
     }
@@ -114,24 +113,35 @@ impl SymbolRepository {
         let info_json = serde_json::to_value(&def.info)
             .map_err(|e| DataError::Validation(format!("Failed to serialize info: {}", e)))?;
 
-        let venue_config_json = serde_json::to_value(&def.venue_config)
-            .map_err(|e| DataError::Validation(format!("Failed to serialize venue_config: {}", e)))?;
+        let venue_config_json = serde_json::to_value(&def.venue_config).map_err(|e| {
+            DataError::Validation(format!("Failed to serialize venue_config: {}", e))
+        })?;
 
-        let trading_specs_json = serde_json::to_value(&def.trading_specs)
-            .map_err(|e| DataError::Validation(format!("Failed to serialize trading_specs: {}", e)))?;
+        let trading_specs_json = serde_json::to_value(&def.trading_specs).map_err(|e| {
+            DataError::Validation(format!("Failed to serialize trading_specs: {}", e))
+        })?;
 
-        let session_schedule_json = def.session_schedule.as_ref()
+        let session_schedule_json = def
+            .session_schedule
+            .as_ref()
             .map(|s| serde_json::to_value(s))
             .transpose()
-            .map_err(|e| DataError::Validation(format!("Failed to serialize session_schedule: {}", e)))?;
+            .map_err(|e| {
+                DataError::Validation(format!("Failed to serialize session_schedule: {}", e))
+            })?;
 
-        let contract_spec_json = def.contract_spec.as_ref()
+        let contract_spec_json = def
+            .contract_spec
+            .as_ref()
             .map(|s| serde_json::to_value(s))
             .transpose()
-            .map_err(|e| DataError::Validation(format!("Failed to serialize contract_spec: {}", e)))?;
+            .map_err(|e| {
+                DataError::Validation(format!("Failed to serialize contract_spec: {}", e))
+            })?;
 
-        let provider_mappings_json = serde_json::to_value(&def.provider_mappings)
-            .map_err(|e| DataError::Validation(format!("Failed to serialize provider_mappings: {}", e)))?;
+        let provider_mappings_json = serde_json::to_value(&def.provider_mappings).map_err(|e| {
+            DataError::Validation(format!("Failed to serialize provider_mappings: {}", e))
+        })?;
 
         sqlx::query(
             r#"
@@ -184,24 +194,35 @@ impl SymbolRepository {
         let info_json = serde_json::to_value(&def.info)
             .map_err(|e| DataError::Validation(format!("Failed to serialize info: {}", e)))?;
 
-        let venue_config_json = serde_json::to_value(&def.venue_config)
-            .map_err(|e| DataError::Validation(format!("Failed to serialize venue_config: {}", e)))?;
+        let venue_config_json = serde_json::to_value(&def.venue_config).map_err(|e| {
+            DataError::Validation(format!("Failed to serialize venue_config: {}", e))
+        })?;
 
-        let trading_specs_json = serde_json::to_value(&def.trading_specs)
-            .map_err(|e| DataError::Validation(format!("Failed to serialize trading_specs: {}", e)))?;
+        let trading_specs_json = serde_json::to_value(&def.trading_specs).map_err(|e| {
+            DataError::Validation(format!("Failed to serialize trading_specs: {}", e))
+        })?;
 
-        let session_schedule_json = def.session_schedule.as_ref()
+        let session_schedule_json = def
+            .session_schedule
+            .as_ref()
             .map(|s| serde_json::to_value(s))
             .transpose()
-            .map_err(|e| DataError::Validation(format!("Failed to serialize session_schedule: {}", e)))?;
+            .map_err(|e| {
+                DataError::Validation(format!("Failed to serialize session_schedule: {}", e))
+            })?;
 
-        let contract_spec_json = def.contract_spec.as_ref()
+        let contract_spec_json = def
+            .contract_spec
+            .as_ref()
             .map(|s| serde_json::to_value(s))
             .transpose()
-            .map_err(|e| DataError::Validation(format!("Failed to serialize contract_spec: {}", e)))?;
+            .map_err(|e| {
+                DataError::Validation(format!("Failed to serialize contract_spec: {}", e))
+            })?;
 
-        let provider_mappings_json = serde_json::to_value(&def.provider_mappings)
-            .map_err(|e| DataError::Validation(format!("Failed to serialize provider_mappings: {}", e)))?;
+        let provider_mappings_json = serde_json::to_value(&def.provider_mappings).map_err(|e| {
+            DataError::Validation(format!("Failed to serialize provider_mappings: {}", e))
+        })?;
 
         let result = sqlx::query(
             r#"
@@ -257,24 +278,35 @@ impl SymbolRepository {
         let info_json = serde_json::to_value(&def.info)
             .map_err(|e| DataError::Validation(format!("Failed to serialize info: {}", e)))?;
 
-        let venue_config_json = serde_json::to_value(&def.venue_config)
-            .map_err(|e| DataError::Validation(format!("Failed to serialize venue_config: {}", e)))?;
+        let venue_config_json = serde_json::to_value(&def.venue_config).map_err(|e| {
+            DataError::Validation(format!("Failed to serialize venue_config: {}", e))
+        })?;
 
-        let trading_specs_json = serde_json::to_value(&def.trading_specs)
-            .map_err(|e| DataError::Validation(format!("Failed to serialize trading_specs: {}", e)))?;
+        let trading_specs_json = serde_json::to_value(&def.trading_specs).map_err(|e| {
+            DataError::Validation(format!("Failed to serialize trading_specs: {}", e))
+        })?;
 
-        let session_schedule_json = def.session_schedule.as_ref()
+        let session_schedule_json = def
+            .session_schedule
+            .as_ref()
             .map(|s| serde_json::to_value(s))
             .transpose()
-            .map_err(|e| DataError::Validation(format!("Failed to serialize session_schedule: {}", e)))?;
+            .map_err(|e| {
+                DataError::Validation(format!("Failed to serialize session_schedule: {}", e))
+            })?;
 
-        let contract_spec_json = def.contract_spec.as_ref()
+        let contract_spec_json = def
+            .contract_spec
+            .as_ref()
             .map(|s| serde_json::to_value(s))
             .transpose()
-            .map_err(|e| DataError::Validation(format!("Failed to serialize contract_spec: {}", e)))?;
+            .map_err(|e| {
+                DataError::Validation(format!("Failed to serialize contract_spec: {}", e))
+            })?;
 
-        let provider_mappings_json = serde_json::to_value(&def.provider_mappings)
-            .map_err(|e| DataError::Validation(format!("Failed to serialize provider_mappings: {}", e)))?;
+        let provider_mappings_json = serde_json::to_value(&def.provider_mappings).map_err(|e| {
+            DataError::Validation(format!("Failed to serialize provider_mappings: {}", e))
+        })?;
 
         sqlx::query(
             r#"
@@ -488,13 +520,12 @@ impl SymbolRepository {
 
     /// Count symbol definitions by venue
     pub async fn count_by_venue(&self, venue: &str) -> DataResult<i64> {
-        let result: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM symbol_definitions WHERE venue = $1",
-        )
-        .bind(venue)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| DataError::Database(e))?;
+        let result: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM symbol_definitions WHERE venue = $1")
+                .bind(venue)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| DataError::Database(e))?;
 
         Ok(result.0)
     }
@@ -671,7 +702,10 @@ impl SymbolRepository {
     // =================================================================
 
     /// Convert a database row to SymbolDefinition
-    fn row_to_symbol_definition(&self, row: &sqlx::postgres::PgRow) -> DataResult<SymbolDefinition> {
+    fn row_to_symbol_definition(
+        &self,
+        row: &sqlx::postgres::PgRow,
+    ) -> DataResult<SymbolDefinition> {
         let symbol: String = row.get("symbol");
         let venue: String = row.get("venue");
         let instrument_id: i64 = row.get("instrument_id");
@@ -682,24 +716,30 @@ impl SymbolRepository {
             .map_err(|e| DataError::Validation(format!("Failed to deserialize info: {}", e)))?;
 
         let venue_config: serde_json::Value = row.get("venue_config");
-        let venue_config: VenueConfig = serde_json::from_value(venue_config)
-            .map_err(|e| DataError::Validation(format!("Failed to deserialize venue_config: {}", e)))?;
+        let venue_config: VenueConfig = serde_json::from_value(venue_config).map_err(|e| {
+            DataError::Validation(format!("Failed to deserialize venue_config: {}", e))
+        })?;
 
         let trading_specs: serde_json::Value = row.get("trading_specs");
-        let trading_specs: TradingSpecs = serde_json::from_value(trading_specs)
-            .map_err(|e| DataError::Validation(format!("Failed to deserialize trading_specs: {}", e)))?;
+        let trading_specs: TradingSpecs = serde_json::from_value(trading_specs).map_err(|e| {
+            DataError::Validation(format!("Failed to deserialize trading_specs: {}", e))
+        })?;
 
         let session_schedule: Option<serde_json::Value> = row.get("session_schedule");
         let session_schedule: Option<SessionSchedule> = session_schedule
             .map(|v| serde_json::from_value(v))
             .transpose()
-            .map_err(|e| DataError::Validation(format!("Failed to deserialize session_schedule: {}", e)))?;
+            .map_err(|e| {
+                DataError::Validation(format!("Failed to deserialize session_schedule: {}", e))
+            })?;
 
         let contract_spec: Option<serde_json::Value> = row.get("contract_spec");
         let contract_spec: Option<ContractSpec> = contract_spec
             .map(|v| serde_json::from_value(v))
             .transpose()
-            .map_err(|e| DataError::Validation(format!("Failed to deserialize contract_spec: {}", e)))?;
+            .map_err(|e| {
+                DataError::Validation(format!("Failed to deserialize contract_spec: {}", e))
+            })?;
 
         let provider_mappings: serde_json::Value = row.get("provider_mappings");
         let provider_mappings: std::collections::HashMap<String, ProviderSymbol> =

@@ -96,8 +96,12 @@ impl Default for ReconnectionRateLimitConfig {
 
 impl ReconnectionRateLimitConfig {
     /// Convert to rate limiter config for exchange use
-    pub fn to_rate_limiter_config(&self) -> crate::exchange::rate_limiter::ReconnectionRateLimiterConfig {
-        use crate::exchange::rate_limiter::{ReconnectionRateLimiterConfig as RLConfig, ReconnectionWindow};
+    pub fn to_rate_limiter_config(
+        &self,
+    ) -> crate::exchange::rate_limiter::ReconnectionRateLimiterConfig {
+        use crate::exchange::rate_limiter::{
+            ReconnectionRateLimiterConfig as RLConfig, ReconnectionWindow,
+        };
         use std::time::Duration;
 
         let window = if self.window_secs == 60 {

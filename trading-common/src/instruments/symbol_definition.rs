@@ -34,8 +34,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 
-use super::session::SessionSchedule;
 use super::contract::ContractSpec;
+use super::session::SessionSchedule;
 use super::types::{AssetClass, Currency, InstrumentClass, Venue, VenueType};
 use crate::orders::{InstrumentId, OrderType};
 
@@ -158,7 +158,11 @@ impl SymbolDefinition {
     }
 
     /// Add a provider mapping
-    pub fn with_provider_mapping(mut self, provider: impl Into<String>, symbol: ProviderSymbol) -> Self {
+    pub fn with_provider_mapping(
+        mut self,
+        provider: impl Into<String>,
+        symbol: ProviderSymbol,
+    ) -> Self {
         self.provider_mappings.insert(provider.into(), symbol);
         self
     }
@@ -336,7 +340,9 @@ impl SymbolInfo {
             InstrumentClass::Spot => "SPOT".to_string(),
             InstrumentClass::Future => "FUT".to_string(),
             InstrumentClass::Option => "OPT".to_string(),
-            InstrumentClass::PerpetualLinear | InstrumentClass::PerpetualInverse => "PERP".to_string(),
+            InstrumentClass::PerpetualLinear | InstrumentClass::PerpetualInverse => {
+                "PERP".to_string()
+            }
             _ => "OTHER".to_string(),
         };
 
@@ -371,7 +377,11 @@ impl SymbolInfo {
     }
 
     /// Create for a crypto perpetual
-    pub fn crypto_perpetual(base: impl Into<String>, quote: impl Into<String>, linear: bool) -> Self {
+    pub fn crypto_perpetual(
+        base: impl Into<String>,
+        quote: impl Into<String>,
+        linear: bool,
+    ) -> Self {
         let base_str: String = base.into();
         let quote_str: String = quote.into();
         let instrument_class = if linear {

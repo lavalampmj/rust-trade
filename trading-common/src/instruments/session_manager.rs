@@ -135,7 +135,10 @@ impl SessionManager {
 
     /// Check if any trading is available (including extended hours)
     pub fn is_tradeable(&self, id: &InstrumentId) -> bool {
-        self.states.get(&id.to_string()).map(|s| s.is_tradeable()).unwrap_or(false)
+        self.states
+            .get(&id.to_string())
+            .map(|s| s.is_tradeable())
+            .unwrap_or(false)
     }
 
     /// Get all symbols currently in a specific state
@@ -187,7 +190,11 @@ impl SessionManager {
     /// Update session state for a symbol
     ///
     /// Returns the event if state changed, None otherwise
-    pub fn update_state(&self, id: &InstrumentId, schedule: &SessionSchedule) -> Option<SessionEvent> {
+    pub fn update_state(
+        &self,
+        id: &InstrumentId,
+        schedule: &SessionSchedule,
+    ) -> Option<SessionEvent> {
         let key = id.to_string();
         let new_state = schedule.get_session_state(Utc::now());
 
@@ -206,9 +213,10 @@ impl SessionManager {
             let event = if new_state.is_tradeable() {
                 Some(SessionEvent::SessionOpened {
                     symbol: key.clone(),
-                    session: new_state.current_session.clone().unwrap_or_else(|| {
-                        TradingSession::continuous()
-                    }),
+                    session: new_state
+                        .current_session
+                        .clone()
+                        .unwrap_or_else(|| TradingSession::continuous()),
                 })
             } else {
                 None
@@ -238,21 +246,23 @@ impl SessionManager {
             (_, MarketStatus::Closed) => SessionEvent::SessionClosed { symbol },
 
             // Opening events
-            (MarketStatus::Closed, MarketStatus::Open) |
-            (MarketStatus::Closed, MarketStatus::PreMarket) |
-            (MarketStatus::Closed, MarketStatus::AfterHours) => {
-                SessionEvent::SessionOpened {
-                    symbol,
-                    session: new_state.current_session.clone().unwrap_or_else(|| {
-                        TradingSession::continuous()
-                    }),
-                }
-            }
+            (MarketStatus::Closed, MarketStatus::Open)
+            | (MarketStatus::Closed, MarketStatus::PreMarket)
+            | (MarketStatus::Closed, MarketStatus::AfterHours) => SessionEvent::SessionOpened {
+                symbol,
+                session: new_state
+                    .current_session
+                    .clone()
+                    .unwrap_or_else(|| TradingSession::continuous()),
+            },
 
             // Halt events
             (_, MarketStatus::Halted) => SessionEvent::MarketHalted {
                 symbol,
-                reason: new_state.reason.clone().unwrap_or_else(|| "Unknown".to_string()),
+                reason: new_state
+                    .reason
+                    .clone()
+                    .unwrap_or_else(|| "Unknown".to_string()),
             },
 
             // Resume from halt
@@ -284,7 +294,10 @@ impl SessionManager {
             return;
         }
 
-        info!("Starting session manager with {:?} check interval", self.config.check_interval);
+        info!(
+            "Starting session manager with {:?} check interval",
+            self.config.check_interval
+        );
 
         let (shutdown_tx, mut shutdown_rx) = broadcast::channel::<()>(1);
         *self.shutdown_tx.lock() = Some(shutdown_tx);
@@ -517,9 +530,16 @@ mod tests {
                 reason: None,
             };
             // Should be constructible
-            assert!(matches!(state.status, MarketStatus::Open | MarketStatus::Closed |
-                MarketStatus::PreMarket | MarketStatus::AfterHours | MarketStatus::Halted |
-                MarketStatus::Auction | MarketStatus::Maintenance));
+            assert!(matches!(
+                state.status,
+                MarketStatus::Open
+                    | MarketStatus::Closed
+                    | MarketStatus::PreMarket
+                    | MarketStatus::AfterHours
+                    | MarketStatus::Halted
+                    | MarketStatus::Auction
+                    | MarketStatus::Maintenance
+            ));
         }
     }
 
@@ -747,8 +767,8 @@ mod tests {
 
     #[test]
     fn test_concurrent_state_updates() {
-        use std::thread;
         use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::thread;
 
         let states: Arc<DashMap<String, SessionState>> = Arc::new(DashMap::new());
         let update_count = Arc::new(AtomicUsize::new(0));

@@ -41,9 +41,9 @@ fn test_synthetic_bars_in_historical_backtest() {
     // GAP: no ticks in minute 1, 2, 3
     // Tick at 240s (minute 4)
     let ticks = vec![
-        create_tick("50000", 0),    // 00:00
-        create_tick("50100", 30),   // 00:30
-        create_tick("50200", 240),  // 04:00 (4 minutes later!)
+        create_tick("50000", 0),   // 00:00
+        create_tick("50100", 30),  // 00:30
+        create_tick("50200", 240), // 04:00 (4 minutes later!)
     ];
 
     let bars = gen.generate_from_ticks(&ticks);
@@ -55,7 +55,11 @@ fn test_synthetic_bars_in_historical_backtest() {
     // Bar 3: minute 3 (synthetic) - no ticks, O=H=L=C=50100
     // Bar 4: minute 4 (real) - has tick at 240s
 
-    assert_eq!(bars.len(), 5, "Expected 5 bars: 1 real + 3 synthetic + 1 real");
+    assert_eq!(
+        bars.len(),
+        5,
+        "Expected 5 bars: 1 real + 3 synthetic + 1 real"
+    );
 
     // Bar 0: Real bar from minute 0
     assert_eq!(bars[0].metadata.is_synthetic, false);
@@ -97,9 +101,9 @@ fn test_no_synthetic_bars_without_gaps() {
 
     // Create ticks with NO gaps (consecutive minutes)
     let ticks = vec![
-        create_tick("50000", 0),    // minute 0
-        create_tick("50100", 60),   // minute 1
-        create_tick("50200", 120),  // minute 2
+        create_tick("50000", 0),   // minute 0
+        create_tick("50100", 60),  // minute 1
+        create_tick("50200", 120), // minute 2
     ];
 
     let bars = gen.generate_from_ticks(&ticks);

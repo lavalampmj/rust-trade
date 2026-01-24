@@ -6326,6 +6326,7 @@ dependencies = [
  "notify",
  "parking_lot",
  "pyo3",
+ "rand 0.8.5",
  "redis",
  "rust_decimal",
  "rust_decimal_macros",

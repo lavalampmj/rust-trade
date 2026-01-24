@@ -34,8 +34,8 @@ use crate::data::SymbolRepository;
 use crate::orders::InstrumentId;
 
 use super::{
-    AssetClass, MarketStatus, SessionSchedule, SessionState, SymbolDefinition,
-    SymbolStatus, TradingSpecs,
+    AssetClass, MarketStatus, SessionSchedule, SessionState, SymbolDefinition, SymbolStatus,
+    TradingSpecs,
 };
 
 /// Error types for the symbol registry
@@ -282,7 +282,10 @@ impl SymbolRegistry {
     }
 
     /// Get a symbol definition, returning None if not found.
-    pub async fn get_opt(&self, id: &InstrumentId) -> RegistryResult<Option<Arc<SymbolDefinition>>> {
+    pub async fn get_opt(
+        &self,
+        id: &InstrumentId,
+    ) -> RegistryResult<Option<Arc<SymbolDefinition>>> {
         match self.get(id).await {
             Ok(def) => Ok(Some(def)),
             Err(RegistryError::NotFound(_)) => Ok(None),
@@ -291,7 +294,10 @@ impl SymbolRegistry {
     }
 
     /// Get multiple symbol definitions by IDs.
-    pub async fn get_many(&self, ids: &[InstrumentId]) -> RegistryResult<Vec<Arc<SymbolDefinition>>> {
+    pub async fn get_many(
+        &self,
+        ids: &[InstrumentId],
+    ) -> RegistryResult<Vec<Arc<SymbolDefinition>>> {
         let mut results = Vec::with_capacity(ids.len());
         for id in ids {
             results.push(self.get(id).await?);
@@ -536,7 +542,10 @@ impl SymbolRegistry {
     /// Get session schedule with fallbacks.
     ///
     /// Priority: Symbol -> Venue -> Asset Class -> None (24/7)
-    pub fn get_session_schedule(&self, id: &InstrumentId) -> RegistryResult<Option<SessionSchedule>> {
+    pub fn get_session_schedule(
+        &self,
+        id: &InstrumentId,
+    ) -> RegistryResult<Option<SessionSchedule>> {
         let cache_key = id.to_string();
 
         let def = self
@@ -594,8 +603,12 @@ mod tests {
         let stats = RegistryStats::default();
         assert_eq!(stats.hit_ratio(), 0.0);
 
-        stats.cache_hits.fetch_add(7, std::sync::atomic::Ordering::Relaxed);
-        stats.cache_misses.fetch_add(3, std::sync::atomic::Ordering::Relaxed);
+        stats
+            .cache_hits
+            .fetch_add(7, std::sync::atomic::Ordering::Relaxed);
+        stats
+            .cache_misses
+            .fetch_add(3, std::sync::atomic::Ordering::Relaxed);
 
         assert!((stats.hit_ratio() - 0.7).abs() < 0.001);
     }
@@ -731,8 +744,8 @@ mod tests {
 
     #[test]
     fn test_concurrent_cache_reads() {
-        use std::thread;
         use crate::instruments::{SymbolInfo, VenueConfig};
+        use std::thread;
 
         let cache: Arc<DashMap<String, Arc<SymbolDefinition>>> = Arc::new(DashMap::new());
 
@@ -758,7 +771,12 @@ mod tests {
                     for i in 0..100 {
                         let key = format!("SYM{}.BINANCE", (i + thread_id) % 100);
                         let result = cache_clone.get(&key);
-                        assert!(result.is_some(), "Thread {} failed to get {}", thread_id, key);
+                        assert!(
+                            result.is_some(),
+                            "Thread {} failed to get {}",
+                            thread_id,
+                            key
+                        );
                     }
                 })
             })
@@ -772,8 +790,8 @@ mod tests {
 
     #[test]
     fn test_concurrent_cache_writes() {
-        use std::thread;
         use crate::instruments::{SymbolInfo, VenueConfig};
+        use std::thread;
 
         let cache: Arc<DashMap<String, Arc<SymbolDefinition>>> = Arc::new(DashMap::new());
 
@@ -809,9 +827,9 @@ mod tests {
 
     #[test]
     fn test_concurrent_read_write() {
-        use std::thread;
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use crate::instruments::{SymbolInfo, VenueConfig};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::thread;
 
         let cache: Arc<DashMap<String, Arc<SymbolDefinition>>> = Arc::new(DashMap::new());
         let read_count = Arc::new(AtomicUsize::new(0));
@@ -881,9 +899,9 @@ mod tests {
 
     #[test]
     fn test_concurrent_invalidate_during_read() {
-        use std::thread;
-        use std::sync::atomic::{AtomicBool, Ordering};
         use crate::instruments::{SymbolInfo, VenueConfig};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
 
         let cache: Arc<DashMap<String, Arc<SymbolDefinition>>> = Arc::new(DashMap::new());
         let invalidation_done = Arc::new(AtomicBool::new(false));
@@ -934,7 +952,9 @@ mod tests {
 
         // All should complete without panic
         for handle in handles {
-            handle.join().expect("Thread panicked during concurrent access");
+            handle
+                .join()
+                .expect("Thread panicked during concurrent access");
         }
     }
 
@@ -944,8 +964,8 @@ mod tests {
 
     #[test]
     fn test_stats_atomic_updates() {
-        use std::thread;
         use std::sync::atomic::Ordering;
+        use std::thread;
 
         let stats = Arc::new(RegistryStats::default());
 
@@ -979,12 +999,16 @@ mod tests {
         assert_eq!(stats.hit_ratio(), 0.0);
 
         // All hits
-        stats.cache_hits.fetch_add(100, std::sync::atomic::Ordering::Relaxed);
+        stats
+            .cache_hits
+            .fetch_add(100, std::sync::atomic::Ordering::Relaxed);
         assert_eq!(stats.hit_ratio(), 1.0);
 
         // All misses
         let stats2 = RegistryStats::default();
-        stats2.cache_misses.fetch_add(100, std::sync::atomic::Ordering::Relaxed);
+        stats2
+            .cache_misses
+            .fetch_add(100, std::sync::atomic::Ordering::Relaxed);
         assert_eq!(stats2.hit_ratio(), 0.0);
     }
 
@@ -1000,13 +1024,20 @@ mod tests {
         for (venue, config) in defaults.iter() {
             // At minimum, trading specs should have sensible defaults
             if let Some(specs) = &config.trading_specs {
-                assert!(specs.min_price_increment > dec!(0), "Venue {} has zero tick size", venue);
+                assert!(
+                    specs.min_price_increment > dec!(0),
+                    "Venue {} has zero tick size",
+                    venue
+                );
             }
 
             // Session schedule presence depends on asset class
             // BINANCE (crypto) should have 24/7
             if *venue == "BINANCE" {
-                assert!(config.session_schedule.is_some(), "BINANCE should have 24/7 schedule");
+                assert!(
+                    config.session_schedule.is_some(),
+                    "BINANCE should have 24/7 schedule"
+                );
             }
         }
     }

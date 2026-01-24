@@ -304,9 +304,9 @@ impl SessionSchedule {
             }
 
             if let Some(start_time) = earliest_start {
-                let dt = self.timezone.from_local_datetime(
-                    &check_date.and_time(start_time)
-                );
+                let dt = self
+                    .timezone
+                    .from_local_datetime(&check_date.and_time(start_time));
                 if let chrono::LocalResult::Single(local_dt) = dt {
                     return Some(local_dt.with_timezone(&Utc));
                 }
@@ -332,9 +332,9 @@ impl SessionSchedule {
             date
         };
 
-        let dt = self.timezone.from_local_datetime(
-            &end_date.and_time(session.end_time)
-        );
+        let dt = self
+            .timezone
+            .from_local_datetime(&end_date.and_time(session.end_time));
         if let chrono::LocalResult::Single(local_dt) = dt {
             Some(local_dt.with_timezone(&Utc))
         } else {
@@ -351,9 +351,9 @@ impl SessionSchedule {
         for window in &self.maintenance_windows {
             if window.day == weekday && time >= window.start_time && time < window.end_time {
                 let date = local_time.date_naive();
-                let dt = self.timezone.from_local_datetime(
-                    &date.and_time(window.end_time)
-                );
+                let dt = self
+                    .timezone
+                    .from_local_datetime(&date.and_time(window.end_time));
                 if let chrono::LocalResult::Single(local_dt) = dt {
                     return Some(local_dt.with_timezone(&Utc));
                 }
@@ -499,7 +499,13 @@ impl TradingSession {
         end_time: NaiveTime,
         active_days: Vec<Weekday>,
     ) -> Self {
-        Self::new(name, SessionType::Regular, start_time, end_time, active_days)
+        Self::new(
+            name,
+            SessionType::Regular,
+            start_time,
+            end_time,
+            active_days,
+        )
     }
 
     /// Create a pre-market session
@@ -913,19 +919,18 @@ pub mod presets {
 
     /// Forex schedule (Sunday 5pm - Friday 5pm ET)
     pub fn forex() -> SessionSchedule {
-        SessionSchedule::new(chrono_tz::America::New_York)
-            .with_session(TradingSession::regular(
-                "Forex",
-                NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
-                NaiveTime::from_hms_opt(17, 0, 0).unwrap(), // Full 24h
-                vec![
-                    Weekday::Sun,
-                    Weekday::Mon,
-                    Weekday::Tue,
-                    Weekday::Wed,
-                    Weekday::Thu,
-                ],
-            ))
+        SessionSchedule::new(chrono_tz::America::New_York).with_session(TradingSession::regular(
+            "Forex",
+            NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(17, 0, 0).unwrap(), // Full 24h
+            vec![
+                Weekday::Sun,
+                Weekday::Mon,
+                Weekday::Tue,
+                Weekday::Wed,
+                Weekday::Thu,
+            ],
+        ))
     }
 }
 
@@ -1105,7 +1110,10 @@ mod tests {
         // This depends on implementation - let's verify the behavior
         let at_end = session.is_active(Weekday::Mon, NaiveTime::from_hms_opt(16, 0, 0).unwrap());
         // Document actual behavior
-        assert!(!at_end, "End time should be exclusive (session closed at 16:00:00)");
+        assert!(
+            !at_end,
+            "End time should be exclusive (session closed at 16:00:00)"
+        );
 
         // 1 second after end - should NOT be active
         assert!(!session.is_active(Weekday::Mon, NaiveTime::from_hms_opt(16, 0, 1).unwrap()));
@@ -1121,8 +1129,10 @@ mod tests {
             vec![Weekday::Mon],
         );
 
-        assert!(session_to_midnight.is_active(Weekday::Mon, NaiveTime::from_hms_opt(23, 59, 0).unwrap()));
-        assert!(session_to_midnight.is_active(Weekday::Mon, NaiveTime::from_hms_opt(23, 59, 58).unwrap()));
+        assert!(session_to_midnight
+            .is_active(Weekday::Mon, NaiveTime::from_hms_opt(23, 59, 0).unwrap()));
+        assert!(session_to_midnight
+            .is_active(Weekday::Mon, NaiveTime::from_hms_opt(23, 59, 58).unwrap()));
     }
 
     #[test]
@@ -1135,9 +1145,12 @@ mod tests {
             vec![Weekday::Mon],
         );
 
-        assert!(session_from_midnight.is_active(Weekday::Mon, NaiveTime::from_hms_opt(0, 0, 0).unwrap()));
-        assert!(session_from_midnight.is_active(Weekday::Mon, NaiveTime::from_hms_opt(0, 0, 1).unwrap()));
-        assert!(session_from_midnight.is_active(Weekday::Mon, NaiveTime::from_hms_opt(4, 0, 0).unwrap()));
+        assert!(session_from_midnight
+            .is_active(Weekday::Mon, NaiveTime::from_hms_opt(0, 0, 0).unwrap()));
+        assert!(session_from_midnight
+            .is_active(Weekday::Mon, NaiveTime::from_hms_opt(0, 0, 1).unwrap()));
+        assert!(session_from_midnight
+            .is_active(Weekday::Mon, NaiveTime::from_hms_opt(4, 0, 0).unwrap()));
     }
 
     // ============================================================
@@ -1151,7 +1164,13 @@ mod tests {
             "Globex",
             NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
             NaiveTime::from_hms_opt(16, 0, 0).unwrap(),
-            vec![Weekday::Sun, Weekday::Mon, Weekday::Tue, Weekday::Wed, Weekday::Thu],
+            vec![
+                Weekday::Sun,
+                Weekday::Mon,
+                Weekday::Tue,
+                Weekday::Wed,
+                Weekday::Thu,
+            ],
         );
 
         // Sunday 18:00 - should be active (after start)
@@ -1200,7 +1219,7 @@ mod tests {
 
         // 10:00 AM Eastern on a trading day
         let eastern_10am = chrono_tz::America::New_York
-            .with_ymd_and_hms(2024, 6, 3, 10, 0, 0)  // Monday June 3, 2024
+            .with_ymd_and_hms(2024, 6, 3, 10, 0, 0) // Monday June 3, 2024
             .unwrap()
             .with_timezone(&Utc);
 
@@ -1234,7 +1253,7 @@ mod tests {
         // CME Globex uses Chicago time
         // Trading hours: Sunday 17:00 to Friday 16:00 CT
         let chicago_monday_10am = chrono_tz::America::Chicago
-            .with_ymd_and_hms(2024, 6, 3, 10, 0, 0)  // Monday 10:00 AM CT
+            .with_ymd_and_hms(2024, 6, 3, 10, 0, 0) // Monday 10:00 AM CT
             .unwrap()
             .with_timezone(&Utc);
 
@@ -1242,7 +1261,7 @@ mod tests {
 
         // Saturday should be closed
         let chicago_saturday = chrono_tz::America::Chicago
-            .with_ymd_and_hms(2024, 6, 1, 10, 0, 0)  // Saturday
+            .with_ymd_and_hms(2024, 6, 1, 10, 0, 0) // Saturday
             .unwrap()
             .with_timezone(&Utc);
 
@@ -1327,7 +1346,9 @@ mod tests {
 
         // Add Christmas as a holiday
         let christmas = NaiveDate::from_ymd_opt(2024, 12, 25).unwrap();
-        schedule.calendar.add_holiday(christmas, Some("Christmas".to_string()));
+        schedule
+            .calendar
+            .add_holiday(christmas, Some("Christmas".to_string()));
 
         // December 25, 2024 is a Wednesday
         let christmas_10am = chrono_tz::America::New_York
@@ -1337,7 +1358,9 @@ mod tests {
 
         // Should be closed due to holiday
         // Note: This depends on is_open() checking calendar
-        let date = christmas_10am.with_timezone(&chrono_tz::America::New_York).date_naive();
+        let date = christmas_10am
+            .with_timezone(&chrono_tz::America::New_York)
+            .date_naive();
         assert!(schedule.calendar.is_holiday(date));
     }
 
@@ -1347,7 +1370,9 @@ mod tests {
 
         // Add Christmas Eve early close at 1:00 PM
         let xmas_eve = NaiveDate::from_ymd_opt(2024, 12, 24).unwrap();
-        schedule.calendar.add_early_close(xmas_eve, NaiveTime::from_hms_opt(13, 0, 0).unwrap());
+        schedule
+            .calendar
+            .add_early_close(xmas_eve, NaiveTime::from_hms_opt(13, 0, 0).unwrap());
 
         // Verify early close is recorded
         assert!(schedule.calendar.has_early_close(xmas_eve));
@@ -1363,7 +1388,9 @@ mod tests {
 
         // Add a late open at 10:30 AM
         let late_day = NaiveDate::from_ymd_opt(2024, 7, 5).unwrap();
-        schedule.calendar.add_late_open(late_day, NaiveTime::from_hms_opt(10, 30, 0).unwrap());
+        schedule
+            .calendar
+            .add_late_open(late_day, NaiveTime::from_hms_opt(10, 30, 0).unwrap());
 
         assert!(schedule.calendar.has_late_open(late_day));
         assert_eq!(
@@ -1443,7 +1470,10 @@ mod tests {
             .with_timezone(&Utc);
 
         let state = schedule.get_session_state(pre_market);
-        assert!(matches!(state.status, MarketStatus::PreMarket | MarketStatus::Open));
+        assert!(matches!(
+            state.status,
+            MarketStatus::PreMarket | MarketStatus::Open
+        ));
     }
 
     #[test]
@@ -1457,7 +1487,10 @@ mod tests {
             .with_timezone(&Utc);
 
         let state = schedule.get_session_state(after_hours);
-        assert!(matches!(state.status, MarketStatus::AfterHours | MarketStatus::Closed));
+        assert!(matches!(
+            state.status,
+            MarketStatus::AfterHours | MarketStatus::Closed
+        ));
     }
 
     #[test]
@@ -1498,7 +1531,10 @@ mod tests {
         // Edge case: 23:59:59 is NOT open due to exclusive end boundary
         // This is a known limitation of the continuous session design
         let last_second = Utc.with_ymd_and_hms(2024, 12, 31, 23, 59, 59).unwrap();
-        assert!(!schedule.is_open(last_second), "23:59:59 is excluded due to time < end_time check");
+        assert!(
+            !schedule.is_open(last_second),
+            "23:59:59 is excluded due to time < end_time check"
+        );
     }
 
     #[test]
@@ -1550,7 +1586,14 @@ mod tests {
         );
 
         // Same time on different days - should NOT be active
-        for day in [Weekday::Mon, Weekday::Tue, Weekday::Wed, Weekday::Thu, Weekday::Sat, Weekday::Sun] {
+        for day in [
+            Weekday::Mon,
+            Weekday::Tue,
+            Weekday::Wed,
+            Weekday::Thu,
+            Weekday::Sat,
+            Weekday::Sun,
+        ] {
             assert!(!window.is_active(day, NaiveTime::from_hms_opt(16, 30, 0).unwrap()));
         }
     }

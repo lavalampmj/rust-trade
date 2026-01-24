@@ -184,12 +184,8 @@ impl HistoricalOHLCGenerator {
         }
 
         match self.bar_type {
-            BarType::TimeBased(timeframe) => {
-                self.generate_time_based_bars(ticks, timeframe)
-            }
-            BarType::TickBased(tick_count) => {
-                self.generate_tick_based_bars(ticks, tick_count)
-            }
+            BarType::TimeBased(timeframe) => self.generate_time_based_bars(ticks, timeframe),
+            BarType::TickBased(tick_count) => self.generate_tick_based_bars(ticks, tick_count),
         }
     }
 
@@ -198,11 +194,7 @@ impl HistoricalOHLCGenerator {
     /// Supports session-aware generation with:
     /// - Session open alignment: First bar aligned to session open time
     /// - Session close truncation: Partial bar closed at session end
-    fn generate_time_based_bars(
-        &self,
-        ticks: &[TickData],
-        timeframe: Timeframe,
-    ) -> Vec<BarData> {
+    fn generate_time_based_bars(&self, ticks: &[TickData], timeframe: Timeframe) -> Vec<BarData> {
         let mut result = Vec::new();
         let mut current_window_start: Option<DateTime<Utc>> = None;
         let mut window_ticks: Vec<TickData> = Vec::new();
@@ -245,22 +237,22 @@ impl HistoricalOHLCGenerator {
             }
 
             // Calculate window start - possibly aligned to session open
-            let tick_window = if self.session_config.align_to_session_open && is_first_bar_of_session
-            {
-                // Get session open time for alignment
-                if current_session_open.is_none() {
-                    current_session_open = self.get_session_open_for_tick(tick.timestamp);
-                }
+            let tick_window =
+                if self.session_config.align_to_session_open && is_first_bar_of_session {
+                    // Get session open time for alignment
+                    if current_session_open.is_none() {
+                        current_session_open = self.get_session_open_for_tick(tick.timestamp);
+                    }
 
-                if let Some(session_open) = current_session_open {
-                    // Align to session open for first bar
-                    self.align_to_session_open_time(tick.timestamp, timeframe, session_open)
+                    if let Some(session_open) = current_session_open {
+                        // Align to session open for first bar
+                        self.align_to_session_open_time(tick.timestamp, timeframe, session_open)
+                    } else {
+                        timeframe.align_timestamp(tick.timestamp)
+                    }
                 } else {
                     timeframe.align_timestamp(tick.timestamp)
-                }
-            } else {
-                timeframe.align_timestamp(tick.timestamp)
-            };
+                };
 
             // Check if we're starting a new window
             if current_window_start.is_none() || current_window_start.unwrap() != tick_window {
@@ -460,12 +452,9 @@ impl HistoricalOHLCGenerator {
                     accumulated_ticks.push(tick.clone());
 
                     // Generate OHLC from ticks so far
-                    let partial_ohlc = OHLCData::from_ticks(
-                        &accumulated_ticks,
-                        timeframe,
-                        window_start,
-                    )
-                    .expect("Should have OHLC from accumulated ticks");
+                    let partial_ohlc =
+                        OHLCData::from_ticks(&accumulated_ticks, timeframe, window_start)
+                            .expect("Should have OHLC from accumulated ticks");
 
                     // Session aligned only applies to first tick of first bar
                     let bar_is_session_aligned = is_session_aligned && idx == 0;
@@ -498,12 +487,9 @@ impl HistoricalOHLCGenerator {
                     let price_changed = last_price.map_or(true, |last| last != tick.price);
 
                     if price_changed {
-                        let partial_ohlc = OHLCData::from_ticks(
-                            &accumulated_ticks,
-                            timeframe,
-                            window_start,
-                        )
-                        .expect("Should have OHLC from accumulated ticks");
+                        let partial_ohlc =
+                            OHLCData::from_ticks(&accumulated_ticks, timeframe, window_start)
+                                .expect("Should have OHLC from accumulated ticks");
 
                         // Session aligned only applies to first emit
                         let bar_is_session_aligned = is_session_aligned && first_emit;
@@ -648,19 +634,16 @@ impl HistoricalOHLCGenerator {
                     for (idx, tick) in chunk.iter().enumerate() {
                         accumulated_ticks.push(tick.clone());
 
-                        let partial_ohlc = OHLCData::from_ticks(
-                            &accumulated_ticks,
-                            timeframe,
-                            window_start,
-                        )
-                        .expect("Should have OHLC from accumulated ticks");
+                        let partial_ohlc =
+                            OHLCData::from_ticks(&accumulated_ticks, timeframe, window_start)
+                                .expect("Should have OHLC from accumulated ticks");
 
                         let is_last_in_chunk = idx == chunk.len() - 1;
                         result.push(BarData::new(
                             Some(tick.clone()),
                             partial_ohlc,
                             self.bar_type,
-                            idx == 0, // First tick of bar
+                            idx == 0,                        // First tick of bar
                             is_last_in_chunk && is_full_bar, // Bar closed only if full and last tick
                             accumulated_ticks.len() as u64,
                         ));
@@ -678,12 +661,9 @@ impl HistoricalOHLCGenerator {
                         let price_changed = last_price.map_or(true, |last| last != tick.price);
 
                         if price_changed {
-                            let partial_ohlc = OHLCData::from_ticks(
-                                &accumulated_ticks,
-                                timeframe,
-                                window_start,
-                            )
-                            .expect("Should have OHLC from accumulated ticks");
+                            let partial_ohlc =
+                                OHLCData::from_ticks(&accumulated_ticks, timeframe, window_start)
+                                    .expect("Should have OHLC from accumulated ticks");
 
                             let is_last_in_chunk = idx == chunk.len() - 1;
                             result.push(BarData::new(
@@ -743,12 +723,9 @@ impl HistoricalOHLCGenerator {
                 for (idx, tick) in ticks.iter().enumerate() {
                     accumulated_ticks.push(tick.clone());
 
-                    let partial_ohlc = OHLCData::from_ticks(
-                        &accumulated_ticks,
-                        timeframe,
-                        window_start,
-                    )
-                    .expect("Should have OHLC from accumulated ticks");
+                    let partial_ohlc =
+                        OHLCData::from_ticks(&accumulated_ticks, timeframe, window_start)
+                            .expect("Should have OHLC from accumulated ticks");
 
                     let is_last = idx == ticks.len() - 1;
                     let is_closed = is_last && (is_full_bar || is_session_truncated);
@@ -779,12 +756,9 @@ impl HistoricalOHLCGenerator {
                     let price_changed = last_price.map_or(true, |last| last != tick.price);
 
                     if price_changed {
-                        let partial_ohlc = OHLCData::from_ticks(
-                            &accumulated_ticks,
-                            timeframe,
-                            window_start,
-                        )
-                        .expect("Should have OHLC from accumulated ticks");
+                        let partial_ohlc =
+                            OHLCData::from_ticks(&accumulated_ticks, timeframe, window_start)
+                                .expect("Should have OHLC from accumulated ticks");
 
                         let is_last = idx == ticks.len() - 1;
                         let is_closed = is_last && (is_full_bar || is_session_truncated);
@@ -867,7 +841,10 @@ mod tests {
             create_tick("50000", base_time),
             create_tick("50100", base_time + Duration::seconds(30)),
             create_tick("50200", base_time + Duration::minutes(1)),
-            create_tick("50300", base_time + Duration::minutes(1) + Duration::seconds(30)),
+            create_tick(
+                "50300",
+                base_time + Duration::minutes(1) + Duration::seconds(30),
+            ),
         ];
 
         let bars = gen.generate_from_ticks(&ticks);
@@ -962,10 +939,7 @@ mod tests {
 
     #[test]
     fn test_tick_based_on_close_bar() {
-        let gen = HistoricalOHLCGenerator::new(
-            BarType::TickBased(3),
-            BarDataMode::OnCloseBar,
-        );
+        let gen = HistoricalOHLCGenerator::new(BarType::TickBased(3), BarDataMode::OnCloseBar);
 
         let base_time = Utc::now();
 
@@ -989,10 +963,7 @@ mod tests {
 
     #[test]
     fn test_tick_based_on_each_tick() {
-        let gen = HistoricalOHLCGenerator::new(
-            BarType::TickBased(2),
-            BarDataMode::OnEachTick,
-        );
+        let gen = HistoricalOHLCGenerator::new(BarType::TickBased(2), BarDataMode::OnEachTick);
 
         let base_time = Utc::now();
 
@@ -1083,8 +1054,7 @@ mod tests {
         // Test that partial bars can be marked as session-truncated
         // Note: Without an actual session schedule, truncation flag will NOT be set
         // because we can't determine session boundaries without a schedule
-        let config = SessionAwareConfig::default()
-            .with_session_close_truncation(true);
+        let config = SessionAwareConfig::default().with_session_close_truncation(true);
 
         let mut gen = HistoricalOHLCGenerator::new(
             BarType::TickBased(5), // 5-tick bars
@@ -1174,8 +1144,7 @@ mod tests {
     #[test]
     fn test_tick_based_full_bars_not_truncated() {
         // Full bars should not be marked as truncated
-        let config = SessionAwareConfig::default()
-            .with_session_close_truncation(true);
+        let config = SessionAwareConfig::default().with_session_close_truncation(true);
 
         let mut gen = HistoricalOHLCGenerator::new(
             BarType::TickBased(2), // 2-tick bars

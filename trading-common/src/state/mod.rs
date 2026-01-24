@@ -548,11 +548,11 @@ mod tests {
     #[test]
     fn test_component_state_from_i32() {
         assert_eq!(ComponentState::from_i32(0), Some(ComponentState::Undefined));
+        assert_eq!(ComponentState::from_i32(7), Some(ComponentState::Realtime));
         assert_eq!(
-            ComponentState::from_i32(7),
-            Some(ComponentState::Realtime)
+            ComponentState::from_i32(10),
+            Some(ComponentState::Finalized)
         );
-        assert_eq!(ComponentState::from_i32(10), Some(ComponentState::Finalized));
         assert_eq!(ComponentState::from_i32(11), None);
         assert_eq!(ComponentState::from_i32(-1), None);
     }

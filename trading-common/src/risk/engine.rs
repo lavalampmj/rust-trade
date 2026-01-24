@@ -16,7 +16,6 @@ pub struct RiskLimits {
     // ========================================================================
     // Order Limits
     // ========================================================================
-
     /// Maximum order quantity
     pub max_order_qty: Option<Decimal>,
     /// Maximum order notional value
@@ -27,7 +26,6 @@ pub struct RiskLimits {
     // ========================================================================
     // Position Limits
     // ========================================================================
-
     /// Maximum position size per symbol
     pub max_position_qty: Option<Decimal>,
     /// Maximum position notional per symbol
@@ -40,7 +38,6 @@ pub struct RiskLimits {
     // ========================================================================
     // Loss Limits
     // ========================================================================
-
     /// Maximum daily loss (absolute value)
     pub max_daily_loss: Option<Decimal>,
     /// Maximum daily loss as percentage of equity
@@ -51,7 +48,6 @@ pub struct RiskLimits {
     // ========================================================================
     // Rate Limits
     // ========================================================================
-
     /// Maximum orders per second
     pub max_orders_per_second: Option<u32>,
     /// Maximum orders per minute
@@ -64,7 +60,6 @@ pub struct RiskLimits {
     // ========================================================================
     // Price Limits
     // ========================================================================
-
     /// Maximum deviation from reference price (percentage)
     pub max_price_deviation_pct: Option<Decimal>,
     /// Minimum price
@@ -109,7 +104,7 @@ impl RiskLimits {
             max_concentration: Some(Decimal::new(25, 2)), // 25%
             max_daily_loss: Some(Decimal::new(10_000, 0)),
             max_daily_loss_pct: Some(Decimal::new(5, 2)), // 5%
-            max_drawdown_pct: Some(Decimal::new(20, 2)), // 20%
+            max_drawdown_pct: Some(Decimal::new(20, 2)),  // 20%
             max_orders_per_second: Some(10),
             max_orders_per_minute: Some(100),
             max_open_orders: Some(100),
@@ -383,7 +378,11 @@ impl RiskEngine {
     ///
     /// Returns a list of check results. If any check fails and strict_mode is true,
     /// the order should be rejected.
-    pub fn validate_order(&mut self, order: &Order, reference_price: Option<Decimal>) -> Vec<RiskCheckResult> {
+    pub fn validate_order(
+        &mut self,
+        order: &Order,
+        reference_price: Option<Decimal>,
+    ) -> Vec<RiskCheckResult> {
         let mut results = Vec::new();
         let symbol = &order.instrument_id.symbol;
         let limits = self.effective_limits(symbol).clone();
@@ -472,14 +471,22 @@ impl RiskEngine {
         if !self.trading_state.can_place_orders() {
             return RiskCheckResult::fail(
                 RiskCheckType::TradingState,
-                format!("Trading state {} does not allow new orders", self.trading_state),
+                format!(
+                    "Trading state {} does not allow new orders",
+                    self.trading_state
+                ),
             );
         }
 
         // Check if this order increases position in reduce-only mode
         if !self.trading_state.can_increase_position() {
             let symbol = &order.instrument_id.symbol;
-            let current_pos = self.portfolio.positions.get(symbol).copied().unwrap_or(Decimal::ZERO);
+            let current_pos = self
+                .portfolio
+                .positions
+                .get(symbol)
+                .copied()
+                .unwrap_or(Decimal::ZERO);
 
             let increases_position = match order.side {
                 OrderSide::Buy => current_pos >= Decimal::ZERO,
@@ -553,7 +560,12 @@ impl RiskEngine {
         limits: &RiskLimits,
     ) -> RiskCheckResult {
         let symbol = &order.instrument_id.symbol;
-        let current_pos = self.portfolio.positions.get(symbol).copied().unwrap_or(Decimal::ZERO);
+        let current_pos = self
+            .portfolio
+            .positions
+            .get(symbol)
+            .copied()
+            .unwrap_or(Decimal::ZERO);
 
         // Calculate new position after order
         let new_pos = match order.side {
@@ -596,7 +608,12 @@ impl RiskEngine {
         max_concentration: Decimal,
     ) -> RiskCheckResult {
         let symbol = &order.instrument_id.symbol;
-        let current_pos = self.portfolio.positions.get(symbol).copied().unwrap_or(Decimal::ZERO);
+        let current_pos = self
+            .portfolio
+            .positions
+            .get(symbol)
+            .copied()
+            .unwrap_or(Decimal::ZERO);
 
         let new_pos = match order.side {
             OrderSide::Buy => current_pos + order.quantity,
@@ -624,8 +641,8 @@ impl RiskEngine {
     }
 
     fn check_daily_loss(&self, limits: &RiskLimits) -> RiskCheckResult {
-        let daily_loss = (self.portfolio.start_of_day_equity - self.portfolio.equity)
-            .max(Decimal::ZERO);
+        let daily_loss =
+            (self.portfolio.start_of_day_equity - self.portfolio.equity).max(Decimal::ZERO);
 
         if let Some(max_loss) = limits.max_daily_loss {
             if daily_loss > max_loss {
@@ -656,12 +673,9 @@ impl RiskEngine {
     fn check_drawdown(&self, max_drawdown_pct: Decimal) -> RiskCheckResult {
         let drawdown = self.portfolio.drawdown_pct();
         if drawdown > max_drawdown_pct {
-            return RiskCheckResult::fail(
-                RiskCheckType::Drawdown,
-                "Maximum drawdown exceeded",
-            )
-            .with_current(format!("{:.2}%", drawdown))
-            .with_limit(format!("{:.2}%", max_drawdown_pct));
+            return RiskCheckResult::fail(RiskCheckType::Drawdown, "Maximum drawdown exceeded")
+                .with_current(format!("{:.2}%", drawdown))
+                .with_limit(format!("{:.2}%", max_drawdown_pct));
         }
 
         // Warning at 80% of limit
@@ -718,7 +732,8 @@ impl RiskEngine {
     }
 
     fn check_open_orders_per_symbol(&self, symbol: &str, max_open: u32) -> RiskCheckResult {
-        let current = self.portfolio
+        let current = self
+            .portfolio
             .open_orders_by_symbol
             .get(symbol)
             .copied()
@@ -745,8 +760,8 @@ impl RiskEngine {
             return RiskCheckResult::pass(RiskCheckType::PriceValidation);
         }
 
-        let deviation = ((order_price - reference_price).abs() / reference_price)
-            * Decimal::new(100, 0);
+        let deviation =
+            ((order_price - reference_price).abs() / reference_price) * Decimal::new(100, 0);
 
         if deviation > max_deviation_pct {
             return RiskCheckResult::fail(

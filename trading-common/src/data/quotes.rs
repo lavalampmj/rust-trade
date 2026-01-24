@@ -389,8 +389,8 @@ mod tests {
             "BTCUSDT".to_string(),
             dec!(100.00),
             dec!(102.00),
-            dec!(10.0),  // Large bid
-            dec!(2.0),   // Small ask
+            dec!(10.0), // Large bid
+            dec!(2.0),  // Small ask
         );
 
         // More bid size pushes weighted mid closer to ask

@@ -3,14 +3,16 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::backtest::strategy::python_loader::{calculate_file_hash, PythonStrategyRegistry, StrategyConfig};
-    use crate::backtest::strategy::python_bridge::PythonStrategy;
     use crate::backtest::strategy::base::Strategy;
+    use crate::backtest::strategy::python_bridge::PythonStrategy;
+    use crate::backtest::strategy::python_loader::{
+        calculate_file_hash, PythonStrategyRegistry, StrategyConfig,
+    };
     use crate::data::types::{BarData, BarMetadata, BarType, OHLCData, Timeframe};
     use crate::series::bars_context::BarsContext;
-    use std::path::PathBuf;
     use chrono::Utc;
     use rust_decimal::Decimal;
+    use std::path::PathBuf;
 
     // =========================================================================
     // PHASE 1 TESTS: SHA256 Hash Verification
@@ -26,7 +28,10 @@ mod tests {
             let hash = result.unwrap();
             assert_eq!(hash.len(), 64, "SHA256 hash should be 64 hex characters");
             // Hash should only contain hex characters
-            assert!(hash.chars().all(|c| c.is_ascii_hexdigit()), "Hash should only contain hex digits");
+            assert!(
+                hash.chars().all(|c| c.is_ascii_hexdigit()),
+                "Hash should only contain hex digits"
+            );
         }
     }
 
@@ -52,10 +57,8 @@ mod tests {
         };
 
         // This should succeed
-        let result = PythonStrategy::from_file(
-            config.file_path.to_str().unwrap(),
-            &config.class_name
-        );
+        let result =
+            PythonStrategy::from_file(config.file_path.to_str().unwrap(), &config.class_name);
 
         // We expect this to succeed when RestrictedPython is available
         // If RestrictedPython is not available, we'll get an import error
@@ -66,7 +69,11 @@ mod tests {
             }
         }
 
-        assert!(result.is_ok(), "Strategy should load with correct hash: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Strategy should load with correct hash: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -84,7 +91,9 @@ mod tests {
             class_name: "ExampleSmaStrategy".to_string(),
             description: "Test".to_string(),
             enabled: true,
-            sha256: Some("0000000000000000000000000000000000000000000000000000000000000000".to_string()),
+            sha256: Some(
+                "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+            ),
         };
 
         let mut registry = PythonStrategyRegistry::new(PathBuf::from("../strategies")).unwrap();
@@ -121,16 +130,17 @@ mod tests {
             return;
         }
 
-        let result = PythonStrategy::from_file(
-            path.to_str().unwrap(),
-            "MaliciousNetworkStrategy"
-        );
+        let result = PythonStrategy::from_file(path.to_str().unwrap(), "MaliciousNetworkStrategy");
 
         // Should fail with ImportError about urllib being blocked
-        assert!(result.is_err(), "Malicious network strategy should be blocked");
+        assert!(
+            result.is_err(),
+            "Malicious network strategy should be blocked"
+        );
         let error = result.unwrap_err();
         assert!(
-            error.contains("urllib") && (error.contains("blocked") || error.contains("ImportError")),
+            error.contains("urllib")
+                && (error.contains("blocked") || error.contains("ImportError")),
             "Error should mention urllib is blocked: {}",
             error
         );
@@ -145,13 +155,14 @@ mod tests {
             return;
         }
 
-        let result = PythonStrategy::from_file(
-            path.to_str().unwrap(),
-            "MaliciousFilesystemStrategy"
-        );
+        let result =
+            PythonStrategy::from_file(path.to_str().unwrap(), "MaliciousFilesystemStrategy");
 
         // Should fail with ImportError about os being blocked
-        assert!(result.is_err(), "Malicious filesystem strategy should be blocked");
+        assert!(
+            result.is_err(),
+            "Malicious filesystem strategy should be blocked"
+        );
         let error = result.unwrap_err();
         assert!(
             error.contains("os") && (error.contains("blocked") || error.contains("ImportError")),
@@ -169,16 +180,18 @@ mod tests {
             return;
         }
 
-        let result = PythonStrategy::from_file(
-            path.to_str().unwrap(),
-            "MaliciousSubprocessStrategy"
-        );
+        let result =
+            PythonStrategy::from_file(path.to_str().unwrap(), "MaliciousSubprocessStrategy");
 
         // Should fail with ImportError about subprocess being blocked
-        assert!(result.is_err(), "Malicious subprocess strategy should be blocked");
+        assert!(
+            result.is_err(),
+            "Malicious subprocess strategy should be blocked"
+        );
         let error = result.unwrap_err();
         assert!(
-            error.contains("subprocess") && (error.contains("blocked") || error.contains("ImportError")),
+            error.contains("subprocess")
+                && (error.contains("blocked") || error.contains("ImportError")),
             "Error should mention subprocess is blocked: {}",
             error
         );
@@ -197,23 +210,39 @@ mod tests {
             return;
         }
 
-        let result = PythonStrategy::from_file(
-            path.to_str().unwrap(),
-            "ExampleSmaStrategy"
-        );
+        let result = PythonStrategy::from_file(path.to_str().unwrap(), "ExampleSmaStrategy");
 
         if result.is_err() {
-            println!("Skipping test - could not load strategy: {}", result.unwrap_err());
+            println!(
+                "Skipping test - could not load strategy: {}",
+                result.unwrap_err()
+            );
             return;
         }
 
         let strategy = result.unwrap();
 
         // Initial values should be zero
-        assert_eq!(strategy.get_cpu_time_us(), 0, "Initial CPU time should be 0");
-        assert_eq!(strategy.get_call_count(), 0, "Initial call count should be 0");
-        assert_eq!(strategy.get_peak_execution_us(), 0, "Initial peak should be 0");
-        assert_eq!(strategy.get_avg_execution_us(), 0, "Initial average should be 0");
+        assert_eq!(
+            strategy.get_cpu_time_us(),
+            0,
+            "Initial CPU time should be 0"
+        );
+        assert_eq!(
+            strategy.get_call_count(),
+            0,
+            "Initial call count should be 0"
+        );
+        assert_eq!(
+            strategy.get_peak_execution_us(),
+            0,
+            "Initial peak should be 0"
+        );
+        assert_eq!(
+            strategy.get_avg_execution_us(),
+            0,
+            "Initial average should be 0"
+        );
     }
 
     #[test]
@@ -225,13 +254,13 @@ mod tests {
             return;
         }
 
-        let result = PythonStrategy::from_file(
-            path.to_str().unwrap(),
-            "ExampleSmaStrategy"
-        );
+        let result = PythonStrategy::from_file(path.to_str().unwrap(), "ExampleSmaStrategy");
 
         if result.is_err() {
-            println!("Skipping test - could not load strategy: {}", result.unwrap_err());
+            println!(
+                "Skipping test - could not load strategy: {}",
+                result.unwrap_err()
+            );
             return;
         }
 
@@ -270,8 +299,14 @@ mod tests {
         // Resources should have been tracked
         assert!(strategy.get_cpu_time_us() > 0, "CPU time should be tracked");
         assert_eq!(strategy.get_call_count(), 1, "Call count should be 1");
-        assert!(strategy.get_peak_execution_us() > 0, "Peak should be tracked");
-        assert!(strategy.get_avg_execution_us() > 0, "Average should be tracked");
+        assert!(
+            strategy.get_peak_execution_us() > 0,
+            "Peak should be tracked"
+        );
+        assert!(
+            strategy.get_avg_execution_us() > 0,
+            "Average should be tracked"
+        );
 
         // Average should equal peak for single call
         assert_eq!(
@@ -290,13 +325,13 @@ mod tests {
             return;
         }
 
-        let result = PythonStrategy::from_file(
-            path.to_str().unwrap(),
-            "ExampleSmaStrategy"
-        );
+        let result = PythonStrategy::from_file(path.to_str().unwrap(), "ExampleSmaStrategy");
 
         if result.is_err() {
-            println!("Skipping test - could not load strategy: {}", result.unwrap_err());
+            println!(
+                "Skipping test - could not load strategy: {}",
+                result.unwrap_err()
+            );
             return;
         }
 
@@ -335,7 +370,10 @@ mod tests {
 
         // Check metrics
         assert_eq!(strategy.get_call_count(), 5, "Should have 5 calls");
-        assert!(strategy.get_cpu_time_us() > 0, "CPU time should be accumulated");
+        assert!(
+            strategy.get_cpu_time_us() > 0,
+            "CPU time should be accumulated"
+        );
 
         // Average should be less than or equal to peak
         assert!(
@@ -353,13 +391,13 @@ mod tests {
             return;
         }
 
-        let result = PythonStrategy::from_file(
-            path.to_str().unwrap(),
-            "ExampleSmaStrategy"
-        );
+        let result = PythonStrategy::from_file(path.to_str().unwrap(), "ExampleSmaStrategy");
 
         if result.is_err() {
-            println!("Skipping test - could not load strategy: {}", result.unwrap_err());
+            println!(
+                "Skipping test - could not load strategy: {}",
+                result.unwrap_err()
+            );
             return;
         }
 
@@ -402,6 +440,10 @@ mod tests {
         assert_eq!(strategy.get_cpu_time_us(), 0, "CPU time should be reset");
         assert_eq!(strategy.get_call_count(), 0, "Call count should be reset");
         assert_eq!(strategy.get_peak_execution_us(), 0, "Peak should be reset");
-        assert_eq!(strategy.get_avg_execution_us(), 0, "Average should be reset");
+        assert_eq!(
+            strategy.get_avg_execution_us(),
+            0,
+            "Average should be reset"
+        );
     }
 }

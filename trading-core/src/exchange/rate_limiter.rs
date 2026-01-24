@@ -3,7 +3,11 @@
 // Generic reconnection rate limiter for any datafeed/exchange
 // Prevents excessive reconnection attempts that could lead to bans
 
-use governor::{Quota, RateLimiter as GovernorRateLimiter, clock::DefaultClock, state::{InMemoryState, NotKeyed}};
+use governor::{
+    clock::DefaultClock,
+    state::{InMemoryState, NotKeyed},
+    Quota, RateLimiter as GovernorRateLimiter,
+};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
@@ -79,17 +83,17 @@ impl ReconnectionRateLimiter {
     /// Create a new rate limiter with the given configuration
     pub fn new(config: ReconnectionRateLimiterConfig) -> Self {
         let quota = match config.window {
-            ReconnectionWindow::PerMinute => {
-                Quota::per_minute(NonZeroU32::new(config.max_attempts).expect("max_attempts must be > 0"))
-            }
-            ReconnectionWindow::PerHour => {
-                Quota::per_hour(NonZeroU32::new(config.max_attempts).expect("max_attempts must be > 0"))
-            }
-            ReconnectionWindow::Custom(duration) => {
-                Quota::with_period(duration)
-                    .expect("Invalid quota period")
-                    .allow_burst(NonZeroU32::new(config.max_attempts).expect("max_attempts must be > 0"))
-            }
+            ReconnectionWindow::PerMinute => Quota::per_minute(
+                NonZeroU32::new(config.max_attempts).expect("max_attempts must be > 0"),
+            ),
+            ReconnectionWindow::PerHour => Quota::per_hour(
+                NonZeroU32::new(config.max_attempts).expect("max_attempts must be > 0"),
+            ),
+            ReconnectionWindow::Custom(duration) => Quota::with_period(duration)
+                .expect("Invalid quota period")
+                .allow_burst(
+                    NonZeroU32::new(config.max_attempts).expect("max_attempts must be > 0"),
+                ),
         };
 
         let limiter = Arc::new(GovernorRateLimiter::direct(quota));
@@ -184,7 +188,10 @@ mod tests {
         sleep(Duration::from_millis(150));
 
         // Should be allowed again
-        assert!(limiter.check_allowed(), "Rate limiter should reset after window");
+        assert!(
+            limiter.check_allowed(),
+            "Rate limiter should reset after window"
+        );
     }
 
     #[test]
@@ -249,7 +256,10 @@ mod tests {
 
         let limiter = ReconnectionRateLimiter::new(config);
 
-        assert_eq!(limiter.window(), ReconnectionWindow::Custom(custom_duration));
+        assert_eq!(
+            limiter.window(),
+            ReconnectionWindow::Custom(custom_duration)
+        );
         assert_eq!(limiter.wait_duration(), custom_duration);
     }
 
@@ -271,9 +281,7 @@ mod tests {
         // Spawn multiple threads trying to check the rate limiter
         for _ in 0..10 {
             let limiter_clone = Arc::clone(&limiter);
-            let handle = thread::spawn(move || {
-                limiter_clone.check_allowed()
-            });
+            let handle = thread::spawn(move || limiter_clone.check_allowed());
             handles.push(handle);
         }
 
@@ -285,6 +293,9 @@ mod tests {
         }
 
         // Should allow exactly 5 (max_attempts)
-        assert_eq!(allowed_count, 5, "Should allow exactly max_attempts connections");
+        assert_eq!(
+            allowed_count, 5,
+            "Should allow exactly max_attempts connections"
+        );
     }
 }

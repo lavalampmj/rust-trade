@@ -283,8 +283,12 @@ impl TickDataRepository {
                     quantity: row.get("size"),
                     side: self.parse_trade_side(row.get("side"))?,
                     provider: row.get("provider"),
-                    trade_id: row.get::<Option<String>, _>("provider_trade_id").unwrap_or_default(),
-                    is_buyer_maker: row.get::<Option<bool>, _>("is_buyer_maker").unwrap_or(false),
+                    trade_id: row
+                        .get::<Option<String>, _>("provider_trade_id")
+                        .unwrap_or_default(),
+                    is_buyer_maker: row
+                        .get::<Option<bool>, _>("is_buyer_maker")
+                        .unwrap_or(false),
                     sequence: row.get("sequence"),
                     raw_dbn: row.try_get::<Option<Vec<u8>>, _>("raw_dbn").ok().flatten(),
                 })
@@ -418,8 +422,12 @@ impl TickDataRepository {
                     quantity: row.get("size"),
                     side: self.parse_trade_side(row.get("side"))?,
                     provider: row.get("provider"),
-                    trade_id: row.get::<Option<String>, _>("provider_trade_id").unwrap_or_default(),
-                    is_buyer_maker: row.get::<Option<bool>, _>("is_buyer_maker").unwrap_or(false),
+                    trade_id: row
+                        .get::<Option<String>, _>("provider_trade_id")
+                        .unwrap_or_default(),
+                    is_buyer_maker: row
+                        .get::<Option<bool>, _>("is_buyer_maker")
+                        .unwrap_or(false),
                     sequence: row.get("sequence"),
                     raw_dbn: row.try_get::<Option<Vec<u8>>, _>("raw_dbn").ok().flatten(),
                 })
@@ -480,8 +488,12 @@ impl TickDataRepository {
                     quantity: row.get("size"),
                     side: self.parse_trade_side(row.get("side"))?,
                     provider: row.get("provider"),
-                    trade_id: row.get::<Option<String>, _>("provider_trade_id").unwrap_or_default(),
-                    is_buyer_maker: row.get::<Option<bool>, _>("is_buyer_maker").unwrap_or(false),
+                    trade_id: row
+                        .get::<Option<String>, _>("provider_trade_id")
+                        .unwrap_or_default(),
+                    is_buyer_maker: row
+                        .get::<Option<bool>, _>("is_buyer_maker")
+                        .unwrap_or(false),
                     sequence: row.get("sequence"),
                     raw_dbn: row.try_get::<Option<Vec<u8>>, _>("raw_dbn").ok().flatten(),
                 })
@@ -588,7 +600,7 @@ impl TickDataRepository {
                 MIN(ts_event) as earliest_time,
                 MAX(ts_event) as latest_time
             FROM market_ticks
-            "#
+            "#,
         )
         .fetch_one(&self.pool)
         .await?;
@@ -606,7 +618,7 @@ impl TickDataRepository {
             FROM market_ticks
             GROUP BY symbol
             ORDER BY records_count DESC
-            "#
+            "#,
         )
         .fetch_all(&self.pool)
         .await?;
@@ -696,7 +708,7 @@ impl TickDataRepository {
                     MIN(ts_event) as earliest_timestamp,
                     MAX(ts_event) as latest_timestamp
                 FROM market_ticks
-                "#
+                "#,
             )
             .fetch_one(&self.pool)
             .await?;
@@ -743,9 +755,8 @@ impl TickDataRepository {
 
     /// Parse trade side from database string ('B', 'S', 'BUY', 'SELL')
     fn parse_trade_side(&self, side_str: &str) -> DataResult<TradeSide> {
-        TradeSide::from_db_str(side_str).ok_or_else(|| {
-            DataError::InvalidFormat(format!("Invalid trade side: {}", side_str))
-        })
+        TradeSide::from_db_str(side_str)
+            .ok_or_else(|| DataError::InvalidFormat(format!("Invalid trade side: {}", side_str)))
     }
 
     /// Check if query is for recent data (suitable for cache)
@@ -954,8 +965,12 @@ impl TickDataRepository {
                     quantity: row.get("size"),
                     side: self.parse_trade_side(row.get("side"))?,
                     provider: row.get("provider"),
-                    trade_id: row.get::<Option<String>, _>("provider_trade_id").unwrap_or_default(),
-                    is_buyer_maker: row.get::<Option<bool>, _>("is_buyer_maker").unwrap_or(false),
+                    trade_id: row
+                        .get::<Option<String>, _>("provider_trade_id")
+                        .unwrap_or_default(),
+                    is_buyer_maker: row
+                        .get::<Option<bool>, _>("is_buyer_maker")
+                        .unwrap_or(false),
                     sequence: row.get("sequence"),
                     raw_dbn: row.try_get::<Option<Vec<u8>>, _>("raw_dbn").ok().flatten(),
                 })
@@ -1006,8 +1021,12 @@ impl TickDataRepository {
                     quantity: row.get("size"),
                     side: self.parse_trade_side(row.get("side"))?,
                     provider: row.get("provider"),
-                    trade_id: row.get::<Option<String>, _>("provider_trade_id").unwrap_or_default(),
-                    is_buyer_maker: row.get::<Option<bool>, _>("is_buyer_maker").unwrap_or(false),
+                    trade_id: row
+                        .get::<Option<String>, _>("provider_trade_id")
+                        .unwrap_or_default(),
+                    is_buyer_maker: row
+                        .get::<Option<bool>, _>("is_buyer_maker")
+                        .unwrap_or(false),
                     sequence: row.get("sequence"),
                     raw_dbn: row.try_get::<Option<Vec<u8>>, _>("raw_dbn").ok().flatten(),
                 })
@@ -1425,9 +1444,18 @@ mod tests {
 
         // Verify order is ASC (oldest first)
         assert_eq!(backtest_ticks.len(), 3, "Should return exactly 3 ticks");
-        assert_eq!(backtest_ticks[0].trade_id, "bt1", "First tick should be bt1");
-        assert_eq!(backtest_ticks[1].trade_id, "bt2", "Second tick should be bt2");
-        assert_eq!(backtest_ticks[2].trade_id, "bt3", "Third tick should be bt3");
+        assert_eq!(
+            backtest_ticks[0].trade_id, "bt1",
+            "First tick should be bt1"
+        );
+        assert_eq!(
+            backtest_ticks[1].trade_id, "bt2",
+            "Second tick should be bt2"
+        );
+        assert_eq!(
+            backtest_ticks[2].trade_id, "bt3",
+            "Third tick should be bt3"
+        );
         assert!(backtest_ticks[0].timestamp <= backtest_ticks[1].timestamp);
         assert!(backtest_ticks[1].timestamp <= backtest_ticks[2].timestamp);
 
@@ -1480,12 +1508,24 @@ mod tests {
 
         // Verify order is ASC and within time range
         assert_eq!(historical_ticks.len(), 3, "Should return exactly 3 ticks");
-        assert_eq!(historical_ticks[0].trade_id, "hist1", "First tick should be hist1");
-        assert_eq!(historical_ticks[1].trade_id, "hist2", "Second tick should be hist2");
-        assert_eq!(historical_ticks[2].trade_id, "hist3", "Third tick should be hist3");
+        assert_eq!(
+            historical_ticks[0].trade_id, "hist1",
+            "First tick should be hist1"
+        );
+        assert_eq!(
+            historical_ticks[1].trade_id, "hist2",
+            "Second tick should be hist2"
+        );
+        assert_eq!(
+            historical_ticks[2].trade_id, "hist3",
+            "Third tick should be hist3"
+        );
 
         for tick in &historical_ticks {
-            assert!(tick.timestamp >= start_time, "Tick should be after start time");
+            assert!(
+                tick.timestamp >= start_time,
+                "Tick should be after start time"
+            );
             assert!(tick.timestamp <= end_time, "Tick should be before end time");
         }
 

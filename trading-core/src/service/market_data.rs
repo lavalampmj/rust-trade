@@ -9,8 +9,8 @@ use super::{ProcessingStats, ServiceError};
 use crate::exchange::Exchange;
 use crate::live_trading::PaperTradingProcessor;
 use crate::metrics;
-use trading_common::data::types::TickData;
 use trading_common::data::cache::TickDataCache;
+use trading_common::data::types::TickData;
 
 /// Market data service that coordinates between exchange and data processing
 ///

@@ -94,8 +94,8 @@ mod instrument;
 mod types;
 
 // New modules for comprehensive symbol management
-pub mod contract;
 pub mod continuous;
+pub mod contract;
 pub mod registry;
 pub mod roll_manager;
 pub mod session;
@@ -105,8 +105,7 @@ pub mod symbol_resolver;
 
 // Re-export types
 pub use types::{
-    AssetClass, Currency, CurrencyType, InstrumentClass, OptionType, SecurityType, Venue,
-    VenueType,
+    AssetClass, Currency, CurrencyType, InstrumentClass, OptionType, SecurityType, Venue, VenueType,
 };
 
 // Re-export instrument trait and implementations
@@ -116,8 +115,8 @@ pub use instrument::{
 
 // Re-export symbol definition types
 pub use symbol_definition::{
-    MarginRequirement, MatchAlgorithm, ProviderSymbol, RateLimits, SymbolDefinition, SymbolInfo,
-    SymbolStatus, TradingSpecs, VenueConfig, mic_codes,
+    mic_codes, MarginRequirement, MatchAlgorithm, ProviderSymbol, RateLimits, SymbolDefinition,
+    SymbolInfo, SymbolStatus, TradingSpecs, VenueConfig,
 };
 
 // Re-export session types
@@ -131,14 +130,14 @@ pub use session::presets as session_presets;
 
 // Re-export contract types
 pub use contract::{
-    AdjustmentMethod, ContractSpec, ContinuousRollMethod, ExerciseStyle, RollRule, SettlementType,
-    code_to_month, month_to_code, parse_contract_symbol,
+    code_to_month, month_to_code, parse_contract_symbol, AdjustmentMethod, ContinuousRollMethod,
+    ContractSpec, ExerciseStyle, RollRule, SettlementType,
 };
 
 // Re-export continuous contract types
 pub use continuous::{
-    AdjustmentFactor, AdjustmentType, ContractInfo, ContinuousContract, ContinuousSymbol,
-    ContinuousSymbolError, RollEvent,
+    AdjustmentFactor, AdjustmentType, ContinuousContract, ContinuousSymbol, ContinuousSymbolError,
+    ContractInfo, RollEvent,
 };
 
 // Re-export registry types
@@ -150,9 +149,7 @@ pub use registry::{
 pub use session_manager::{SessionManager, SessionManagerConfig};
 
 // Re-export roll manager types
-pub use roll_manager::{
-    ContinuousContractState, RollManager, RollManagerConfig, RollManagerError,
-};
+pub use roll_manager::{ContinuousContractState, RollManager, RollManagerConfig, RollManagerError};
 
 // Re-export symbol resolver types
 pub use symbol_resolver::{ResolverError, SymbolResolver};

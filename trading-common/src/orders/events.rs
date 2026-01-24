@@ -22,9 +22,9 @@ use std::fmt;
 use uuid::Uuid;
 
 use super::types::{
-    AccountId, ClientOrderId, ContingencyType, InstrumentId, LiquiditySide, OrderListId,
-    OrderSide, OrderStatus, OrderType, PositionId, StrategyId, TimeInForce, TradeId,
-    TrailingOffsetType, TriggerType, VenueOrderId,
+    AccountId, ClientOrderId, ContingencyType, InstrumentId, LiquiditySide, OrderListId, OrderSide,
+    OrderStatus, OrderType, PositionId, StrategyId, TimeInForce, TradeId, TrailingOffsetType,
+    TriggerType, VenueOrderId,
 };
 
 /// Unique identifier for an event
@@ -1284,10 +1284,7 @@ mod tests {
 
     #[test]
     fn test_order_denied_event() {
-        let event = OrderDenied::new(
-            ClientOrderId::new("order-123"),
-            "Insufficient margin",
-        );
+        let event = OrderDenied::new(ClientOrderId::new("order-123"), "Insufficient margin");
 
         assert_eq!(event.client_order_id.as_str(), "order-123");
         assert_eq!(event.reason, "Insufficient margin");
@@ -1297,10 +1294,8 @@ mod tests {
 
     #[test]
     fn test_order_submitted_event() {
-        let event = OrderSubmitted::new(
-            ClientOrderId::new("order-456"),
-            AccountId::new("account-1"),
-        );
+        let event =
+            OrderSubmitted::new(ClientOrderId::new("order-456"), AccountId::new("account-1"));
 
         assert_eq!(event.client_order_id.as_str(), "order-456");
         assert_eq!(event.account_id.as_str(), "account-1");
@@ -1340,7 +1335,10 @@ mod tests {
         );
 
         assert_eq!(event.client_order_id.as_str(), "order-100");
-        assert_eq!(event.venue_order_id().map(|v| v.as_str()), Some("venue-100"));
+        assert_eq!(
+            event.venue_order_id().map(|v| v.as_str()),
+            Some("venue-100")
+        );
         assert_eq!(event.account_id.as_str(), "account-1");
 
         // Test conversion to OrderEventAny
@@ -1369,7 +1367,10 @@ mod tests {
         );
 
         assert_eq!(event.client_order_id.as_str(), "order-200");
-        assert_eq!(event.venue_order_id().map(|v| v.as_str()), Some("venue-200"));
+        assert_eq!(
+            event.venue_order_id().map(|v| v.as_str()),
+            Some("venue-200")
+        );
 
         // Test conversion to OrderEventAny
         let event_any: OrderEventAny = event.into();
@@ -1401,9 +1402,9 @@ mod tests {
             ClientOrderId::new("order-400"),
             Some(VenueOrderId::new("venue-400")),
             AccountId::new("account-1"),
-            Some(dec!(51000)),     // new price
-            Some(dec!(50500)),     // new trigger price
-            Some(dec!(2.0)),       // new quantity
+            Some(dec!(51000)), // new price
+            Some(dec!(50500)), // new trigger price
+            Some(dec!(2.0)),   // new quantity
         );
 
         assert_eq!(event.client_order_id.as_str(), "order-400");
@@ -1440,9 +1441,9 @@ mod tests {
             ClientOrderId::new("order-500"),
             Some(VenueOrderId::new("venue-500")),
             AccountId::new("account-1"),
-            Some(dec!(53000)),     // updated price
-            None,                   // no trigger price change
-            dec!(1.5),             // updated quantity
+            Some(dec!(53000)), // updated price
+            None,              // no trigger price change
+            dec!(1.5),         // updated quantity
         );
 
         assert_eq!(event.client_order_id.as_str(), "order-500");
@@ -1483,7 +1484,10 @@ mod tests {
         );
 
         assert_eq!(event.client_order_id.as_str(), "order-700");
-        assert_eq!(event.venue_order_id().map(|v| v.as_str()), Some("venue-700"));
+        assert_eq!(
+            event.venue_order_id().map(|v| v.as_str()),
+            Some("venue-700")
+        );
 
         // Test conversion to OrderEventAny
         let event_any: OrderEventAny = event.into();
@@ -1500,7 +1504,10 @@ mod tests {
         );
 
         assert_eq!(event.client_order_id.as_str(), "order-800");
-        assert_eq!(event.venue_order_id().map(|v| v.as_str()), Some("venue-800"));
+        assert_eq!(
+            event.venue_order_id().map(|v| v.as_str()),
+            Some("venue-800")
+        );
 
         // Test conversion to OrderEventAny
         let event_any: OrderEventAny = event.into();
@@ -1520,10 +1527,10 @@ mod tests {
             StrategyId::new("test-strategy"),
             OrderSide::Buy,
             OrderType::Market,
-            dec!(1.0),          // last_qty
-            dec!(50000),        // last_px
-            dec!(1.0),          // cum_qty
-            dec!(0),            // leaves_qty = 0 (complete)
+            dec!(1.0),   // last_qty
+            dec!(50000), // last_px
+            dec!(1.0),   // cum_qty
+            dec!(0),     // leaves_qty = 0 (complete)
             "USDT".to_string(),
             dec!(0.1),
             "USDT".to_string(),
@@ -1551,10 +1558,10 @@ mod tests {
             StrategyId::new("test-strategy"),
             OrderSide::Sell,
             OrderType::Limit,
-            dec!(0.3),          // last_qty
-            dec!(3000),         // last_px
-            dec!(0.3),          // cum_qty
-            dec!(0.7),          // leaves_qty > 0 (partial)
+            dec!(0.3),  // last_qty
+            dec!(3000), // last_px
+            dec!(0.3),  // cum_qty
+            dec!(0.7),  // leaves_qty > 0 (partial)
             "USDT".to_string(),
             dec!(0.03),
             "USDT".to_string(),
@@ -1589,9 +1596,13 @@ mod tests {
             dec!(0.05),
             "USDT".to_string(),
             LiquiditySide::Taker,
-        ).with_position_id(PositionId::new("position-123"));
+        )
+        .with_position_id(PositionId::new("position-123"));
 
-        assert_eq!(fill.position_id.as_ref().map(|p| p.as_str()), Some("position-123"));
+        assert_eq!(
+            fill.position_id.as_ref().map(|p| p.as_str()),
+            Some("position-123")
+        );
     }
 
     #[test]
@@ -1609,13 +1620,12 @@ mod tests {
 
     #[test]
     fn test_order_event_trait_timestamps() {
-        let submitted = OrderSubmitted::new(
-            ClientOrderId::new("test"),
-            AccountId::new("acc-1"),
-        );
+        let submitted = OrderSubmitted::new(ClientOrderId::new("test"), AccountId::new("acc-1"));
 
         // ts_event and ts_init should be very close (both set to now())
-        let diff = (submitted.ts_event() - submitted.ts_init()).num_milliseconds().abs();
+        let diff = (submitted.ts_event() - submitted.ts_init())
+            .num_milliseconds()
+            .abs();
         assert!(diff < 10, "Timestamps should be within 10ms of each other");
     }
 
@@ -1636,14 +1646,24 @@ mod tests {
                 StrategyId::new("s"),
                 OrderSide::Buy,
                 OrderType::Market,
-                dec!(1), dec!(100), dec!(1), dec!(0),
-                "USD".into(), dec!(0), "USD".into(),
+                dec!(1),
+                dec!(100),
+                dec!(1),
+                dec!(0),
+                "USD".into(),
+                dec!(0),
+                "USD".into(),
                 LiquiditySide::Taker,
-            ).into(),
+            )
+            .into(),
         ];
 
         for event in terminal_events {
-            assert!(event.is_terminal(), "Event {:?} should be terminal", event.implied_status());
+            assert!(
+                event.is_terminal(),
+                "Event {:?} should be terminal",
+                event.implied_status()
+            );
         }
     }
 
@@ -1652,11 +1672,32 @@ mod tests {
         // Test all non-terminal status events
         let non_terminal_events: Vec<OrderEventAny> = vec![
             OrderSubmitted::new(ClientOrderId::new("1"), AccountId::new("a")).into(),
-            OrderAccepted::new(ClientOrderId::new("2"), VenueOrderId::new("v"), AccountId::new("a")).into(),
+            OrderAccepted::new(
+                ClientOrderId::new("2"),
+                VenueOrderId::new("v"),
+                AccountId::new("a"),
+            )
+            .into(),
             OrderPendingCancel::new(ClientOrderId::new("3"), None, AccountId::new("a")).into(),
-            OrderPendingUpdate::new(ClientOrderId::new("4"), None, AccountId::new("a"), None, None, None).into(),
+            OrderPendingUpdate::new(
+                ClientOrderId::new("4"),
+                None,
+                AccountId::new("a"),
+                None,
+                None,
+                None,
+            )
+            .into(),
             OrderTriggered::new(ClientOrderId::new("5"), None, AccountId::new("a")).into(),
-            OrderUpdated::new(ClientOrderId::new("6"), None, AccountId::new("a"), None, None, dec!(1)).into(),
+            OrderUpdated::new(
+                ClientOrderId::new("6"),
+                None,
+                AccountId::new("a"),
+                None,
+                None,
+                dec!(1),
+            )
+            .into(),
             // Partial fill is not terminal
             OrderFilled::new(
                 ClientOrderId::new("7"),
@@ -1667,14 +1708,24 @@ mod tests {
                 StrategyId::new("s"),
                 OrderSide::Buy,
                 OrderType::Market,
-                dec!(0.5), dec!(100), dec!(0.5), dec!(0.5), // leaves_qty > 0
-                "USD".into(), dec!(0), "USD".into(),
+                dec!(0.5),
+                dec!(100),
+                dec!(0.5),
+                dec!(0.5), // leaves_qty > 0
+                "USD".into(),
+                dec!(0),
+                "USD".into(),
                 LiquiditySide::Taker,
-            ).into(),
+            )
+            .into(),
         ];
 
         for event in non_terminal_events {
-            assert!(!event.is_terminal(), "Event {:?} should NOT be terminal", event.implied_status());
+            assert!(
+                !event.is_terminal(),
+                "Event {:?} should NOT be terminal",
+                event.implied_status()
+            );
         }
     }
 }

@@ -68,6 +68,21 @@ impl Portfolio {
     ) -> Result<(), String> {
         let cost = quantity * price;
         let commission = cost * self.commission_rate;
+        self.execute_buy_with_commission(symbol, quantity, price, commission)
+    }
+
+    /// Execute a buy with explicit commission (used by exchange-based execution).
+    ///
+    /// This method allows external systems (like SimulatedExchange) to provide
+    /// the exact commission calculated by their fee model, avoiding double-counting.
+    pub fn execute_buy_with_commission(
+        &mut self,
+        symbol: String,
+        quantity: Decimal,
+        price: Decimal,
+        commission: Decimal,
+    ) -> Result<(), String> {
+        let cost = quantity * price;
         let total_cost = cost + commission;
 
         if total_cost > self.cash {
@@ -121,6 +136,22 @@ impl Portfolio {
         quantity: Decimal,
         price: Decimal,
     ) -> Result<(), String> {
+        let proceeds = quantity * price;
+        let commission = proceeds * self.commission_rate;
+        self.execute_sell_with_commission(symbol, quantity, price, commission)
+    }
+
+    /// Execute a sell with explicit commission (used by exchange-based execution).
+    ///
+    /// This method allows external systems (like SimulatedExchange) to provide
+    /// the exact commission calculated by their fee model, avoiding double-counting.
+    pub fn execute_sell_with_commission(
+        &mut self,
+        symbol: String,
+        quantity: Decimal,
+        price: Decimal,
+        commission: Decimal,
+    ) -> Result<(), String> {
         let position = self
             .positions
             .get_mut(&symbol)
@@ -134,12 +165,11 @@ impl Portfolio {
         }
 
         let proceeds = quantity * price;
-        let commission = proceeds * self.commission_rate;
         let net_proceeds = proceeds - commission;
 
         self.cash += net_proceeds;
 
-        // Calculate realized PnL
+        // Calculate realized PnL (includes commission)
         let realized_pnl = (price - position.avg_price) * quantity - commission;
 
         position.quantity -= quantity;

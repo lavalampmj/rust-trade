@@ -36,8 +36,8 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-use crate::orders::InstrumentId;
 use super::contract::ContinuousRollMethod;
+use crate::orders::InstrumentId;
 
 /// Parsed continuous contract symbol.
 ///
@@ -112,11 +112,11 @@ impl ContinuousSymbol {
 
         let roll_method = ContinuousRollMethod::from_char(parts[1].chars().next().unwrap_or('?'))
             .ok_or_else(|| {
-                ContinuousSymbolError::InvalidRollMethod(format!(
-                    "Invalid roll method '{}', expected 'c', 'v', or 'n'",
-                    parts[1]
-                ))
-            })?;
+            ContinuousSymbolError::InvalidRollMethod(format!(
+                "Invalid roll method '{}', expected 'c', 'v', or 'n'",
+                parts[1]
+            ))
+        })?;
 
         let rank = parts[2].parse::<u8>().map_err(|_| {
             ContinuousSymbolError::InvalidRank(format!(
@@ -152,13 +152,24 @@ impl ContinuousSymbol {
 
     /// Convert to string format (without venue)
     pub fn to_symbol_string(&self) -> String {
-        format!("{}.{}.{}", self.base_symbol, self.roll_method.as_char(), self.rank)
+        format!(
+            "{}.{}.{}",
+            self.base_symbol,
+            self.roll_method.as_char(),
+            self.rank
+        )
     }
 
     /// Convert to full string format (with venue if present)
     pub fn to_full_string(&self) -> String {
         if let Some(ref venue) = self.venue {
-            format!("{}.{}.{}.{}", self.base_symbol, self.roll_method.as_char(), self.rank, venue)
+            format!(
+                "{}.{}.{}.{}",
+                self.base_symbol,
+                self.roll_method.as_char(),
+                self.rank,
+                venue
+            )
         } else {
             self.to_symbol_string()
         }
@@ -308,11 +319,7 @@ impl ContinuousContract {
     }
 
     /// Update the current contract mapping
-    pub fn update_mapping(
-        &mut self,
-        contract_id: InstrumentId,
-        raw_symbol: String,
-    ) {
+    pub fn update_mapping(&mut self, contract_id: InstrumentId, raw_symbol: String) {
         self.current_contract = Some(contract_id);
         self.current_raw_symbol = Some(raw_symbol);
         self.last_updated = Utc::now();
@@ -503,9 +510,8 @@ impl ContractInfo {
 
     /// Days to expiration (negative if expired)
     pub fn days_to_expiration(&self) -> Option<i64> {
-        self.expiration.map(|e| {
-            (e.date_naive() - Utc::now().date_naive()).num_days()
-        })
+        self.expiration
+            .map(|e| (e.date_naive() - Utc::now().date_naive()).num_days())
     }
 }
 
@@ -851,7 +857,8 @@ mod tests {
         let symbol = ContinuousSymbol::new("ES", ContinuousRollMethod::Calendar, 0);
         assert_eq!(format!("{}", symbol), "ES.c.0");
 
-        let symbol_with_venue = ContinuousSymbol::with_venue("ES", ContinuousRollMethod::Calendar, 0, "GLBX");
+        let symbol_with_venue =
+            ContinuousSymbol::with_venue("ES", ContinuousRollMethod::Calendar, 0, "GLBX");
         assert_eq!(format!("{}", symbol_with_venue), "ES.c.0.GLBX");
     }
 
@@ -923,7 +930,8 @@ mod tests {
 
     #[test]
     fn test_needs_roll_open_interest_threshold() {
-        let mut contract = ContinuousContract::new("ES", "GLBX", ContinuousRollMethod::OpenInterest, 0);
+        let mut contract =
+            ContinuousContract::new("ES", "GLBX", ContinuousRollMethod::OpenInterest, 0);
 
         // OI roll uses simple comparison: next.open_interest > front.open_interest
         let front = ContractInfo::new("ESH6", "GLBX").with_open_interest(500000);
@@ -1098,7 +1106,8 @@ mod tests {
     #[test]
     fn test_adjustment_factor_difference() {
         let roll_date = Utc::now();
-        let factor = AdjustmentFactor::difference(roll_date, "ESH6", "ESM6", dec!(4500), dec!(4510));
+        let factor =
+            AdjustmentFactor::difference(roll_date, "ESH6", "ESM6", dec!(4500), dec!(4510));
 
         assert_eq!(factor.adjustment_type, AdjustmentType::Difference);
         assert_eq!(factor.difference, dec!(10));
@@ -1109,7 +1118,8 @@ mod tests {
         let mut contract = ContinuousContract::new("ES", "GLBX", ContinuousRollMethod::Calendar, 0);
 
         let roll_date = Utc.with_ymd_and_hms(2024, 3, 15, 12, 0, 0).unwrap();
-        let factor = AdjustmentFactor::difference(roll_date, "ESH4", "ESM4", dec!(5000), dec!(5010));
+        let factor =
+            AdjustmentFactor::difference(roll_date, "ESH4", "ESM4", dec!(5000), dec!(5010));
         contract.add_adjustment(factor);
 
         // Price from before the roll should be adjusted

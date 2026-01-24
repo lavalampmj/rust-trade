@@ -1,5 +1,5 @@
-use trading_common::backtest::strategy;
 use std::env;
+use trading_common::backtest::strategy;
 
 fn get_config_path() -> String {
     // CARGO_MANIFEST_DIR is the directory containing trading-common's Cargo.toml
@@ -21,19 +21,46 @@ fn test_list_strategies() {
     let strategies = strategy::list_strategies();
 
     // Should have at least 3 strategies: sma (Rust), rsi (Rust), sma_python (Python)
-    assert!(strategies.len() >= 3, "Expected at least 3 strategies, got {}", strategies.len());
+    assert!(
+        strategies.len() >= 3,
+        "Expected at least 3 strategies, got {}",
+        strategies.len()
+    );
 
     // Check that we have both Rust and Python strategies
-    let rust_count = strategies.iter().filter(|s| matches!(s.strategy_type, strategy::StrategyType::Rust)).count();
-    let python_count = strategies.iter().filter(|s| matches!(s.strategy_type, strategy::StrategyType::Python)).count();
+    let rust_count = strategies
+        .iter()
+        .filter(|s| matches!(s.strategy_type, strategy::StrategyType::Rust))
+        .count();
+    let python_count = strategies
+        .iter()
+        .filter(|s| matches!(s.strategy_type, strategy::StrategyType::Python))
+        .count();
 
-    assert!(rust_count >= 2, "Expected at least 2 Rust strategies, got {}", rust_count);
-    assert!(python_count >= 1, "Expected at least 1 Python strategy, got {}", python_count);
+    assert!(
+        rust_count >= 2,
+        "Expected at least 2 Rust strategies, got {}",
+        rust_count
+    );
+    assert!(
+        python_count >= 1,
+        "Expected at least 1 Python strategy, got {}",
+        python_count
+    );
 
     // Verify specific strategies exist
-    assert!(strategies.iter().any(|s| s.id == "sma"), "SMA Rust strategy not found");
-    assert!(strategies.iter().any(|s| s.id == "rsi"), "RSI Rust strategy not found");
-    assert!(strategies.iter().any(|s| s.id == "sma_python"), "SMA Python strategy not found");
+    assert!(
+        strategies.iter().any(|s| s.id == "sma"),
+        "SMA Rust strategy not found"
+    );
+    assert!(
+        strategies.iter().any(|s| s.id == "rsi"),
+        "RSI Rust strategy not found"
+    );
+    assert!(
+        strategies.iter().any(|s| s.id == "sma_python"),
+        "SMA Python strategy not found"
+    );
 }
 
 #[test]
@@ -53,7 +80,11 @@ fn test_create_python_strategy() {
     let _ = strategy::initialize_python_strategies(&config_path);
 
     let result = strategy::create_strategy("sma_python");
-    assert!(result.is_ok(), "Failed to create Python SMA strategy: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to create Python SMA strategy: {:?}",
+        result.err()
+    );
 
     if let Ok(s) = result {
         assert_eq!(s.name(), "Simple Moving Average (Python)");

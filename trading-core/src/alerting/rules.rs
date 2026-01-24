@@ -24,26 +24,18 @@ pub enum AlertCondition {
     /// IPC connection is disconnected
     IpcDisconnected,
     /// Excessive IPC reconnection attempts
-    IpcReconnectionStorm {
-        max_reconnects: u64,
-    },
+    IpcReconnectionStorm { max_reconnects: u64 },
     /// Channel backpressure (buffer utilization too high)
-    ChannelBackpressure {
-        threshold_percent: f64,
-    },
+    ChannelBackpressure { threshold_percent: f64 },
     /// Cache update failure rate exceeds threshold
-    CacheFailureRate {
-        threshold_percent: f64,
-    },
+    CacheFailureRate { threshold_percent: f64 },
 }
 
 impl AlertCondition {
     /// Evaluate the condition against current metrics
     pub fn evaluate(&self) -> bool {
         match self {
-            AlertCondition::IpcDisconnected => {
-                IPC_CONNECTION_STATUS.get() == 0
-            }
+            AlertCondition::IpcDisconnected => IPC_CONNECTION_STATUS.get() == 0,
 
             AlertCondition::IpcReconnectionStorm { max_reconnects } => {
                 IPC_RECONNECTS_TOTAL.get() > *max_reconnects

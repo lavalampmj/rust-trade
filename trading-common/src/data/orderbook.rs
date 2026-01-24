@@ -459,10 +459,7 @@ impl OrderBook {
     /// Simulate a market buy order, returning average fill price and total cost
     ///
     /// Returns (fill_price, total_cost, filled_qty, remaining_qty)
-    pub fn simulate_market_buy(
-        &self,
-        quantity: Decimal,
-    ) -> (Decimal, Decimal, Decimal, Decimal) {
+    pub fn simulate_market_buy(&self, quantity: Decimal) -> (Decimal, Decimal, Decimal, Decimal) {
         let mut remaining = quantity;
         let mut total_cost = Decimal::ZERO;
         let mut filled = Decimal::ZERO;
@@ -489,10 +486,7 @@ impl OrderBook {
     /// Simulate a market sell order, returning average fill price and total proceeds
     ///
     /// Returns (fill_price, total_proceeds, filled_qty, remaining_qty)
-    pub fn simulate_market_sell(
-        &self,
-        quantity: Decimal,
-    ) -> (Decimal, Decimal, Decimal, Decimal) {
+    pub fn simulate_market_sell(&self, quantity: Decimal) -> (Decimal, Decimal, Decimal, Decimal) {
         let mut remaining = quantity;
         let mut total_proceeds = Decimal::ZERO;
         let mut filled = Decimal::ZERO;
@@ -643,7 +637,14 @@ impl OrderBookDelta {
         side: BookSide,
         price: Decimal,
     ) -> Self {
-        Self::new(symbol, ts_event, side, BookAction::Delete, price, Decimal::ZERO)
+        Self::new(
+            symbol,
+            ts_event,
+            side,
+            BookAction::Delete,
+            price,
+            Decimal::ZERO,
+        )
     }
 
     /// Apply this delta to an order book

@@ -331,16 +331,16 @@ mod tests {
             PositionSide::Long,
             dec!(2.0),
             dec!(50000.0),
-            dec!(200.0),  // unrealized
-            dec!(100.0),  // realized
-            dec!(10.0),   // commission
+            dec!(200.0), // unrealized
+            dec!(100.0), // realized
+            dec!(10.0),  // commission
             dec!(50100.0),
             Utc::now(),
         );
 
-        assert_eq!(event.notional(), dec!(100000.0));  // 2 * 50000
-        assert_eq!(event.total_pnl(), dec!(300.0));    // 200 + 100
-        assert_eq!(event.net_pnl(), dec!(290.0));      // 300 - 10
+        assert_eq!(event.notional(), dec!(100000.0)); // 2 * 50000
+        assert_eq!(event.total_pnl(), dec!(300.0)); // 200 + 100
+        assert_eq!(event.net_pnl(), dec!(290.0)); // 300 - 10
     }
 
     #[test]

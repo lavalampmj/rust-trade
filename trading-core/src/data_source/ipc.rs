@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use dbn::TradeMsg;
 use data_manager::transport::ipc::SharedMemoryChannel;
+use dbn::TradeMsg;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -132,7 +132,9 @@ impl IpcDataSource {
 
             // Check for overflow
             if ipc_consumer.had_overflow() {
-                self.stats.overflows_detected.fetch_add(1, Ordering::Relaxed);
+                self.stats
+                    .overflows_detected
+                    .fetch_add(1, Ordering::Relaxed);
                 warn!("Overflow detected for {}", key);
             }
 
@@ -148,7 +150,11 @@ impl IpcDataSource {
     }
 
     /// Poll ticks for a specific symbol (non-blocking)
-    pub fn poll_symbol(&self, symbol: &str, exchange: &str) -> Result<Vec<TickData>, IpcDataSourceError> {
+    pub fn poll_symbol(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<Vec<TickData>, IpcDataSourceError> {
         let key = format!("{}@{}", symbol, exchange);
 
         let consumer = self

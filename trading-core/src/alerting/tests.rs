@@ -40,7 +40,10 @@ fn test_ipc_disconnection_alert() {
     let rule = AlertRule::ipc_disconnected();
     let condition_met = rule.evaluate();
 
-    assert!(condition_met, "Alert should trigger when IPC is disconnected");
+    assert!(
+        condition_met,
+        "Alert should trigger when IPC is disconnected"
+    );
     assert_eq!(rule.severity(), AlertSeverity::Critical);
 }
 
@@ -56,7 +59,10 @@ fn test_ipc_reconnection_storm_alert() {
     let rule = AlertRule::ipc_reconnection_storm(3); // More than 3 reconnects
     let condition_met = rule.evaluate();
 
-    assert!(condition_met, "Alert should trigger with excessive reconnections");
+    assert!(
+        condition_met,
+        "Alert should trigger with excessive reconnections"
+    );
     assert_eq!(rule.severity(), AlertSeverity::Warning);
 }
 
@@ -71,7 +77,10 @@ fn test_channel_backpressure_alert() {
     let rule = AlertRule::channel_backpressure(80.0); // 80% threshold
     let condition_met = rule.evaluate();
 
-    assert!(condition_met, "Alert should trigger at 85% channel utilization");
+    assert!(
+        condition_met,
+        "Alert should trigger at 85% channel utilization"
+    );
     assert_eq!(rule.severity(), AlertSeverity::Warning);
 }
 
@@ -96,7 +105,11 @@ fn test_cache_failure_rate_alert() {
     // Get current values for debug output
     let failures = CACHE_UPDATE_FAILURES_TOTAL.get();
     let total = TICKS_PROCESSED_TOTAL.get();
-    let actual_rate = if total > 0 { failures as f64 / total as f64 } else { 0.0 };
+    let actual_rate = if total > 0 {
+        failures as f64 / total as f64
+    } else {
+        0.0
+    };
 
     // Due to parallel test execution, metrics may be modified by other tests
     // We verify the invariant: alert triggers IFF rate >= threshold AND total > 0
@@ -152,7 +165,11 @@ fn test_no_alert_when_below_threshold() {
     let cache_result = cache_rule.evaluate();
     let failures = CACHE_UPDATE_FAILURES_TOTAL.get();
     let total = TICKS_PROCESSED_TOTAL.get();
-    let actual_rate = if total > 0 { failures as f64 / total as f64 } else { 0.0 };
+    let actual_rate = if total > 0 {
+        failures as f64 / total as f64
+    } else {
+        0.0
+    };
     assert!(
         !cache_result || actual_rate >= 0.1,
         "Cache alert should NOT trigger when failure rate is {:.1}% (threshold 10%)",
@@ -167,7 +184,7 @@ fn test_alert_evaluator_with_multiple_rules() {
     // Then: Only violated rules should generate alerts
 
     // Set metrics - IPC disconnected should trigger, channel utilization should not
-    IPC_CONNECTION_STATUS.set(0);  // Disconnected - will trigger
+    IPC_CONNECTION_STATUS.set(0); // Disconnected - will trigger
     CHANNEL_UTILIZATION.set(50.0); // Below 80% threshold - should NOT trigger
 
     let handler = MockAlertHandler::new();
@@ -188,10 +205,15 @@ fn test_alert_evaluator_with_multiple_rules() {
     let expected_count = (expected_ipc_alert as usize) + (expected_channel_alert as usize);
 
     assert_eq!(
-        alerts.len(), expected_count,
+        alerts.len(),
+        expected_count,
         "Expected {} alerts (IPC disconnected={}, channel high={}), got {}. IPC={}, Channel={:.1}%",
-        expected_count, expected_ipc_alert, expected_channel_alert, alerts.len(),
-        ipc_status, channel_util
+        expected_count,
+        expected_ipc_alert,
+        expected_channel_alert,
+        alerts.len(),
+        ipc_status,
+        channel_util
     );
 
     // If IPC was disconnected, verify we got that alert
@@ -223,7 +245,11 @@ fn test_alert_cooldown_prevents_spam() {
 
     // Second evaluation immediately - should be suppressed
     evaluator.evaluate_all();
-    assert_eq!(handler.get_alerts().len(), 1, "Second alert should be suppressed by cooldown");
+    assert_eq!(
+        handler.get_alerts().len(),
+        1,
+        "Second alert should be suppressed by cooldown"
+    );
 }
 
 #[test]
@@ -262,8 +288,10 @@ fn test_alert_contains_metric_value() {
         );
         // Verify the alert is for channel backpressure
         assert!(
-            msg.to_lowercase().contains("channel") || msg.to_lowercase().contains("utilization") ||
-            msg.to_lowercase().contains("backpressure") || msg.to_lowercase().contains("buffer"),
+            msg.to_lowercase().contains("channel")
+                || msg.to_lowercase().contains("utilization")
+                || msg.to_lowercase().contains("backpressure")
+                || msg.to_lowercase().contains("buffer"),
             "Alert should be about channel/utilization. Message: '{}'",
             msg
         );
@@ -287,7 +315,11 @@ fn test_cache_failure_with_zero_ticks() {
     // Get current state after evaluation
     let failures = CACHE_UPDATE_FAILURES_TOTAL.get();
     let total = TICKS_PROCESSED_TOTAL.get();
-    let failure_rate = if total > 0 { failures as f64 / total as f64 } else { 0.0 };
+    let failure_rate = if total > 0 {
+        failures as f64 / total as f64
+    } else {
+        0.0
+    };
 
     // Verify the rule behaves correctly given the current state
     // The key invariant: alert triggers IFF failure_rate >= threshold AND total > 0
