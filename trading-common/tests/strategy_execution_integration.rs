@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use trading_common::backtest::strategy::Strategy;
 use trading_common::backtest::{BacktestConfig, BacktestData, BacktestEngine};
-use trading_common::data::types::{BarData, BarDataMode, BarType, OHLCData, Timeframe};
+use trading_common::data::types::{BarData, BarDataMode, OHLCData, Timeframe};
 use trading_common::execution::{
     FixedLatencyModel, ProbabilisticFillModel, SimulatedExchange, VariableLatencyModel,
 };
@@ -1243,7 +1243,6 @@ fn test_portfolio_execute_with_locked_funds() {
 /// Test that order cancellation unlocks funds
 #[test]
 fn test_order_cancel_unlocks_funds() {
-    use trading_common::data::types::Timeframe;
     use trading_common::execution::SimulatedExchange;
 
     let venue = "TEST";

@@ -216,6 +216,7 @@ impl RealtimeOHLCGenerator {
     ///
     /// Enables session open alignment and session close truncation based on
     /// the provided session configuration.
+    #[allow(dead_code)]
     pub fn with_session_config(
         symbol: String,
         bar_type: BarType,
@@ -234,6 +235,7 @@ impl RealtimeOHLCGenerator {
     }
 
     /// Set session configuration after creation
+    #[allow(dead_code)]
     pub fn set_session_config(&mut self, config: SessionAwareConfig) {
         self.session_config = config;
         // Reset session state when config changes
@@ -243,6 +245,7 @@ impl RealtimeOHLCGenerator {
     }
 
     /// Get session configuration reference
+    #[allow(dead_code)]
     pub fn session_config(&self) -> &SessionAwareConfig {
         &self.session_config
     }
@@ -251,6 +254,7 @@ impl RealtimeOHLCGenerator {
     ///
     /// Call this when the trading session opens to reset session state.
     /// This enables proper alignment of the first bar to the session open time.
+    #[allow(dead_code)]
     pub fn on_session_start(&mut self, session_open: DateTime<Utc>) {
         self.is_first_bar_of_session = true;
         self.current_session_open = Some(session_open);

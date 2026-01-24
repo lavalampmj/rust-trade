@@ -36,6 +36,7 @@ pub struct PaperTrading {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct Validation {
     #[serde(default = "default_validation_enabled")]
     pub enabled: bool,
@@ -72,6 +73,7 @@ fn default_max_past_days() -> i64 {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct ReconnectionRateLimitConfig {
     /// Maximum number of reconnection attempts allowed in the time window
     #[serde(default = "default_max_reconnect_attempts")]
@@ -96,6 +98,7 @@ impl Default for ReconnectionRateLimitConfig {
 
 impl ReconnectionRateLimitConfig {
     /// Convert to rate limiter config for exchange use
+    #[allow(dead_code)]
     pub fn to_rate_limiter_config(
         &self,
     ) -> crate::exchange::rate_limiter::ReconnectionRateLimiterConfig {
@@ -183,6 +186,7 @@ fn default_cache_failure_threshold() -> f64 {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct Settings {
     pub database: Database,
     pub cache: Cache,

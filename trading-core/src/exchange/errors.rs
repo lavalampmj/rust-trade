@@ -4,6 +4,7 @@ use thiserror::Error;
 
 /// Error types for exchange operations
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum ExchangeError {
     #[error("Network error: {0}")]
     NetworkError(String),

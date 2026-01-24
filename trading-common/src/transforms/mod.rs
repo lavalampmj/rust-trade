@@ -216,7 +216,6 @@ mod tests {
     #[test]
     fn test_basic_sma_transform() {
         let prices: Vec<Decimal> = (1..=10).map(|i| Decimal::from(i * 10)).collect();
-        let mut ctx = create_test_bars_context(&prices);
 
         let mut sma = Sma::new(3);
 
@@ -224,7 +223,7 @@ mod tests {
         for i in 0..10 {
             // Rebuild context up to current bar
             let partial_prices: Vec<Decimal> = prices[..=i].to_vec();
-            ctx = create_test_bars_context(&partial_prices);
+            let ctx = create_test_bars_context(&partial_prices);
             sma.compute(&ctx);
         }
 

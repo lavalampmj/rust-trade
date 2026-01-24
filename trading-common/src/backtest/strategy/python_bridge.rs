@@ -22,6 +22,7 @@ use std::str::FromStr;
 
 /// Error types that can occur in the Python bridge
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum PythonBridgeError {
     /// Error converting data between Rust and Python
     ConversionError(String),
@@ -80,6 +81,7 @@ impl Default for ErrorRecoveryConfig {
 
 /// Error statistics for monitoring
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct ErrorStats {
     /// Total errors since creation
     pub total_errors: u64,
@@ -314,6 +316,7 @@ impl PythonStrategy {
     }
 
     /// Create a new PythonStrategy with custom error recovery config
+    #[allow(dead_code)]
     pub fn from_file_with_config(
         path: &str,
         class_name: &str,
@@ -325,6 +328,7 @@ impl PythonStrategy {
     }
 
     /// Set the error callback for monitoring
+    #[allow(dead_code)]
     pub fn set_error_callback(&self, callback: ErrorCallback) {
         if let Ok(mut cb) = self.error_callback.write() {
             *cb = Some(callback);
@@ -332,6 +336,7 @@ impl PythonStrategy {
     }
 
     /// Get current error statistics
+    #[allow(dead_code)]
     pub fn get_error_stats(&self) -> ErrorStats {
         self.error_stats
             .read()
@@ -340,11 +345,13 @@ impl PythonStrategy {
     }
 
     /// Check if circuit breaker is open (strategy disabled)
+    #[allow(dead_code)]
     pub fn is_circuit_open(&self) -> bool {
         self.circuit_open.load(Ordering::Relaxed)
     }
 
     /// Manually reset the circuit breaker
+    #[allow(dead_code)]
     pub fn reset_circuit_breaker(&self) {
         self.circuit_open.store(false, Ordering::Relaxed);
         self.consecutive_errors.store(0, Ordering::Relaxed);
@@ -2096,7 +2103,6 @@ mod tests {
         }
     }
 
-    #[test]
     #[test]
     fn test_python_strategy_on_bar_data_execution() {
         let strategy_path = "strategies/examples/example_sma.py";

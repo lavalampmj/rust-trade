@@ -14,6 +14,7 @@ use std::time::Duration;
 
 /// Configuration for reconnection rate limiting
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ReconnectionRateLimiterConfig {
     /// Maximum number of reconnection attempts allowed per time window
     pub max_attempts: u32,
@@ -33,6 +34,7 @@ pub enum ReconnectionWindow {
 
 impl ReconnectionWindow {
     /// Convert window to Duration
+    #[allow(dead_code)]
     pub fn as_duration(&self) -> Duration {
         match self {
             ReconnectionWindow::PerMinute => Duration::from_secs(60),
@@ -74,11 +76,13 @@ impl Default for ReconnectionRateLimiterConfig {
 ///     // Wait before retrying
 /// }
 /// ```
+#[allow(dead_code)]
 pub struct ReconnectionRateLimiter {
     limiter: Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
     config: ReconnectionRateLimiterConfig,
 }
 
+#[allow(dead_code)]
 impl ReconnectionRateLimiter {
     /// Create a new rate limiter with the given configuration
     pub fn new(config: ReconnectionRateLimiterConfig) -> Self {

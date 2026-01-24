@@ -358,24 +358,6 @@ impl HistoricalOHLCGenerator {
         session_open + duration * (periods as i32)
     }
 
-    /// Generate synthetic bars for gaps between windows
-    fn generate_synthetic_bars_for_gap(
-        &self,
-        last_window_start: DateTime<Utc>,
-        current_window_start: DateTime<Utc>,
-        timeframe: Timeframe,
-        last_price: Decimal,
-        symbol: &str,
-    ) -> Vec<BarData> {
-        self.generate_synthetic_bars_for_gap_session_aware(
-            last_window_start,
-            current_window_start,
-            timeframe,
-            last_price,
-            symbol,
-        )
-    }
-
     /// Generate synthetic bars for gaps, respecting session boundaries
     fn generate_synthetic_bars_for_gap_session_aware(
         &self,
@@ -413,16 +395,6 @@ impl HistoricalOHLCGenerator {
         }
 
         result
-    }
-
-    /// Process a completed time window based on the mode
-    fn process_completed_window(
-        &self,
-        ticks: &[TickData],
-        window_start: DateTime<Utc>,
-        timeframe: Timeframe,
-    ) -> Vec<BarData> {
-        self.process_completed_window_with_session(ticks, window_start, timeframe, false, false)
     }
 
     /// Process a completed time window with session awareness

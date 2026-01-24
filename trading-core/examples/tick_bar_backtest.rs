@@ -15,10 +15,11 @@ use std::collections::HashMap;
 use std::env;
 use std::str::FromStr;
 use std::sync::Arc;
-use trading_common::backtest::{Portfolio, Signal};
+use trading_common::backtest::Portfolio;
 use trading_common::data::cache::{TickDataCache, TieredCache};
 use trading_common::data::repository::TickDataRepository;
 use trading_common::data::types::{BarData, BarMetadata, BarType, Timeframe};
+use trading_common::orders::OrderSide;
 use trading_common::series::bars_context::BarsContext;
 
 #[tokio::main]
@@ -203,35 +204,49 @@ async fn main() -> Result<(), String> {
         // Update BarsContext with new bar data
         bars_context.on_bar_update(&bar_data);
 
-        // Generate signal from strategy
-        let signal = strategy.on_bar_data(&bar_data, &mut bars_context);
+        // Process bar data with strategy
+        strategy.on_bar_data(&bar_data, &mut bars_context);
 
-        // Execute signal
-        match signal {
-            Signal::Buy { symbol, quantity } => {
-                println!(
-                    "\n📈 Bar {}: BUY {} @ {} (Volume: {:.4}, Ticks: {})",
-                    i, symbol, bar.close, bar.volume, bar.trade_count
-                );
-                if let Err(e) = portfolio.execute_buy(symbol, quantity, bar.close) {
-                    println!("   ⚠️  Buy failed: {}", e);
-                } else {
-                    trade_count += 1;
+        // Get orders from strategy
+        let orders = strategy.get_orders(&bar_data, &mut bars_context);
+
+        // Execute orders
+        for order in orders {
+            match order.side {
+                OrderSide::Buy => {
+                    println!(
+                        "\n📈 Bar {}: BUY {} @ {} (Volume: {:.4}, Ticks: {})",
+                        i,
+                        order.symbol(),
+                        bar.close,
+                        bar.volume,
+                        bar.trade_count
+                    );
+                    if let Err(e) =
+                        portfolio.execute_buy(order.symbol().to_string(), order.quantity, bar.close)
+                    {
+                        println!("   ⚠️  Buy failed: {}", e);
+                    } else {
+                        trade_count += 1;
+                    }
                 }
-            }
-            Signal::Sell { symbol, quantity } => {
-                println!(
-                    "\n📉 Bar {}: SELL {} @ {} (Volume: {:.4}, Ticks: {})",
-                    i, symbol, bar.close, bar.volume, bar.trade_count
-                );
-                if let Err(e) = portfolio.execute_sell(symbol, quantity, bar.close) {
-                    println!("   ⚠️  Sell failed: {}", e);
-                } else {
-                    trade_count += 1;
+                OrderSide::Sell => {
+                    println!(
+                        "\n📉 Bar {}: SELL {} @ {} (Volume: {:.4}, Ticks: {})",
+                        i,
+                        order.symbol(),
+                        bar.close,
+                        bar.volume,
+                        bar.trade_count
+                    );
+                    if let Err(e) =
+                        portfolio.execute_sell(order.symbol().to_string(), order.quantity, bar.close)
+                    {
+                        println!("   ⚠️  Sell failed: {}", e);
+                    } else {
+                        trade_count += 1;
+                    }
                 }
-            }
-            Signal::Hold => {
-                // Silent hold
             }
         }
 

@@ -865,7 +865,7 @@ mod tests {
         }
 
         // Writer threads
-        for thread_id in 0..5 {
+        for _thread_id in 0..5 {
             let cache_clone = Arc::clone(&cache);
             let count_clone = Arc::clone(&write_count);
             handles.push(thread::spawn(move || {

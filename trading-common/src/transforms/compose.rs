@@ -596,19 +596,19 @@ mod tests {
 
     #[test]
     fn test_fluent_api_ema() {
-        let mut smoothed = Sma::new(3).ema(2);
+        let smoothed = Sma::new(3).ema(2);
         assert_eq!(smoothed.warmup_period(), 5);
     }
 
     #[test]
     fn test_fluent_api_highest() {
-        let mut highest = Sma::new(3).highest(5);
+        let highest = Sma::new(3).highest(5);
         assert_eq!(highest.warmup_period(), 8);
     }
 
     #[test]
     fn test_fluent_api_lowest() {
-        let mut lowest = Sma::new(3).lowest(5);
+        let lowest = Sma::new(3).lowest(5);
         assert_eq!(lowest.warmup_period(), 8);
     }
 

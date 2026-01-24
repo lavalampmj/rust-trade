@@ -319,7 +319,7 @@ impl ContingentOrderManager {
 mod tests {
     use super::*;
     use crate::orders::events::{EventId, OrderCanceled, OrderFilled};
-    use crate::orders::{AccountId, OrderSide, OrderType, VenueOrderId};
+    use crate::orders::{AccountId, OrderSide, VenueOrderId};
     use chrono::Utc;
     use rust_decimal_macros::dec;
 
@@ -450,7 +450,7 @@ mod tests {
     fn test_oco_fill_cancels_siblings() {
         let mut manager = ContingentOrderManager::new();
         let (_, stop, tp) = create_test_orders();
-        let stop_id = stop.client_order_id.clone();
+        let _stop_id = stop.client_order_id.clone();
         let tp_id = tp.client_order_id.clone();
 
         let oco = OrderList::oco(vec![stop.clone(), tp]);

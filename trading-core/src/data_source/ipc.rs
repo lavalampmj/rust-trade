@@ -20,6 +20,7 @@ use trading_common::data::TradeMsgExt;
 
 /// Error type for IPC data source
 #[derive(Debug, thiserror::Error)]
+#[allow(dead_code)]
 pub enum IpcDataSourceError {
     #[error("Failed to connect to shared memory: {0}")]
     ConnectionError(String),
@@ -31,6 +32,7 @@ pub enum IpcDataSourceError {
 
 /// Configuration for IPC data source
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct IpcDataSourceConfig {
     /// Shared memory path prefix (must match data-manager)
     pub shm_path_prefix: String,
@@ -67,6 +69,7 @@ struct SymbolConsumer {
     /// Symbol (needed for TradeMsg to TickData conversion)
     symbol: String,
     /// Exchange (needed for TradeMsg to TickData conversion)
+    #[allow(dead_code)]
     exchange: String,
 }
 
@@ -116,6 +119,7 @@ impl IpcDataSource {
     }
 
     /// Unsubscribe from a symbol
+    #[allow(dead_code)]
     pub fn unsubscribe(&mut self, symbol: &str, exchange: &str) {
         let key = format!("{}@{}", symbol, exchange);
         if self.consumers.remove(&key).is_some() {
@@ -150,6 +154,7 @@ impl IpcDataSource {
     }
 
     /// Poll ticks for a specific symbol (non-blocking)
+    #[allow(dead_code)]
     pub fn poll_symbol(
         &self,
         symbol: &str,
@@ -174,6 +179,7 @@ impl IpcDataSource {
     }
 
     /// Start a background task that forwards ticks to a channel
+    #[allow(dead_code)]
     pub fn start_streaming(
         &self,
         symbol: &str,

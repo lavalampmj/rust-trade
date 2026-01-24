@@ -1053,7 +1053,7 @@ mod tests {
         let schedule = presets::crypto_24_7();
 
         // Should always be open
-        let random_time = Utc::now();
+        let _random_time = Utc::now();
         // Note: This test checks structure, actual is_open depends on continuous session logic
         assert_eq!(schedule.regular_sessions.len(), 1);
     }
