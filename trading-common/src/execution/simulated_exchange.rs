@@ -49,10 +49,11 @@ use rust_decimal::Decimal;
 use super::inflight_queue::{InflightQueue, TradingCommand};
 use super::latency_model::{LatencyModel, NoLatencyModel};
 use super::matching::{MatchResult, MatchingEngineConfig, OrderMatchingEngine};
+use crate::accounts::Account;
 use crate::data::types::OHLCData;
 use crate::orders::{
     ClientOrderId, EventId, InstrumentId, Order, OrderAccepted, OrderCanceled, OrderEventAny,
-    OrderFilled, OrderRejected, VenueOrderId,
+    OrderFilled, OrderRejected, OrderSide, VenueOrderId,
 };
 use crate::risk::{FeeModel, ZeroFeeModel};
 
@@ -114,6 +115,7 @@ struct StoredOrder {
 /// - Latency modeling (orders don't fill instantly)
 /// - Per-instrument matching engines
 /// - Pluggable fill and fee models
+/// - Optional account integration for balance tracking
 #[derive(Debug)]
 pub struct SimulatedExchange {
     /// Venue name
@@ -132,6 +134,10 @@ pub struct SimulatedExchange {
     config: SimulatedExchangeConfig,
     /// Order ID to stored order mapping (for fills and cancels)
     stored_orders: HashMap<ClientOrderId, StoredOrder>,
+    /// Optional account for balance tracking and margin management
+    account: Option<Account>,
+    /// Track locked amounts per order (for unlocking on cancel/reject)
+    locked_amounts: HashMap<ClientOrderId, Decimal>,
 }
 
 impl SimulatedExchange {
@@ -154,6 +160,8 @@ impl SimulatedExchange {
             current_time_ns: 0,
             config,
             stored_orders: HashMap::new(),
+            account: None,
+            locked_amounts: HashMap::new(),
         }
     }
 
@@ -167,6 +175,27 @@ impl SimulatedExchange {
     pub fn with_latency_model(mut self, model: Box<dyn LatencyModel>) -> Self {
         self.latency_model = model;
         self
+    }
+
+    /// Set the account for balance tracking.
+    ///
+    /// When an account is configured, the exchange will:
+    /// - Lock funds when orders are accepted
+    /// - Release funds when orders are canceled/rejected
+    /// - Deduct funds when orders are filled
+    pub fn with_account(mut self, account: Account) -> Self {
+        self.account = Some(account);
+        self
+    }
+
+    /// Get a reference to the account (if configured).
+    pub fn account(&self) -> Option<&Account> {
+        self.account.as_ref()
+    }
+
+    /// Get a mutable reference to the account (if configured).
+    pub fn account_mut(&mut self) -> Option<&mut Account> {
+        self.account.as_mut()
     }
 
     // === TIME MANAGEMENT ===
@@ -341,9 +370,51 @@ impl SimulatedExchange {
         // Generate venue order ID
         let venue_order_id = VenueOrderId(format!("SIM-{}", uuid::Uuid::new_v4()));
 
+        // If account is configured, lock funds for buy orders
+        if let Some(account) = &mut self.account {
+            if order.side == OrderSide::Buy {
+                // Calculate required funds: price * quantity
+                // For market orders, we'd need a reference price - use 0 for now (caller should set limit)
+                let price = order.price.unwrap_or(Decimal::ZERO);
+                let required = price * order.quantity;
+
+                if required > Decimal::ZERO {
+                    // Get the base currency balance
+                    let currency = &account.base_currency.clone();
+                    if let Some(balance) = account.balance_mut(currency) {
+                        if let Err(e) = balance.lock(required) {
+                            // Insufficient funds - reject order
+                            let _ = stored_order.transition_to(OrderStatus::Rejected);
+                            events.push(OrderEventAny::Rejected(OrderRejected {
+                                event_id: EventId(uuid::Uuid::new_v4()),
+                                client_order_id: order.client_order_id.clone(),
+                                account_id: order.account_id.clone(),
+                                reason: format!("Insufficient funds: {}", e),
+                                ts_event: self.current_datetime(),
+                                ts_init: Utc::now(),
+                            }));
+                            return events;
+                        }
+                        // Track locked amount for later unlock on cancel
+                        self.locked_amounts
+                            .insert(order.client_order_id.clone(), required);
+                    }
+                }
+            }
+        }
+
         // Set venue order ID and transition to Accepted
         stored_order.venue_order_id = Some(venue_order_id.clone());
         if let Err(e) = stored_order.transition_to(OrderStatus::Accepted) {
+            // Unlock funds if we locked them
+            if let Some(locked) = self.locked_amounts.remove(&order.client_order_id) {
+                if let Some(account) = &mut self.account {
+                    let currency = &account.base_currency.clone();
+                    if let Some(balance) = account.balance_mut(currency) {
+                        let _ = balance.unlock(locked);
+                    }
+                }
+            }
             events.push(OrderEventAny::Rejected(OrderRejected {
                 event_id: EventId(uuid::Uuid::new_v4()),
                 client_order_id: order.client_order_id.clone(),
@@ -447,10 +518,20 @@ impl SimulatedExchange {
             }));
         }
 
-        // Remove from stored orders after processing
+        // Remove from stored orders after processing and unlock funds
         if !events.is_empty() {
             if let Some(OrderEventAny::Canceled(_)) = events.first() {
                 self.stored_orders.remove(client_order_id);
+
+                // Unlock any funds that were locked for this order
+                if let Some(locked) = self.locked_amounts.remove(client_order_id) {
+                    if let Some(account) = &mut self.account {
+                        let currency = &account.base_currency.clone();
+                        if let Some(balance) = account.balance_mut(currency) {
+                            let _ = balance.unlock(locked);
+                        }
+                    }
+                }
             }
         }
 
@@ -555,14 +636,34 @@ impl SimulatedExchange {
 
                 // Mark for removal if fully filled (leaves_qty == 0)
                 if leaves_qty.is_zero() {
-                    orders_to_remove.push(m.client_order_id.clone());
+                    orders_to_remove.push((m.client_order_id.clone(), stored.order.side));
                 }
             }
         }
 
-        // Remove fully filled orders
-        for order_id in orders_to_remove {
+        // Remove fully filled orders and update account balances
+        for (order_id, side) in orders_to_remove {
             self.stored_orders.remove(&order_id);
+
+            // Handle account balance updates for filled orders
+            if let Some(locked) = self.locked_amounts.remove(&order_id) {
+                if let Some(account) = &mut self.account {
+                    let currency = &account.base_currency.clone();
+                    if let Some(balance) = account.balance_mut(currency) {
+                        match side {
+                            OrderSide::Buy => {
+                                // For buy orders: locked funds are consumed (fill from locked)
+                                let _ = balance.fill(locked);
+                            }
+                            OrderSide::Sell => {
+                                // For sell orders: should add proceeds (not implemented here,
+                                // as sell orders don't lock base currency)
+                                // The caller (backtest engine) handles adding proceeds
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         events
@@ -628,6 +729,18 @@ impl SimulatedExchange {
         self.stored_orders.clear();
         self.current_time_ns = 0;
         self.latency_model.reset();
+        self.locked_amounts.clear();
+        // Note: Account is not reset here - caller should reset if needed
+    }
+
+    /// Get current locked amount for an order.
+    pub fn get_locked_amount(&self, client_order_id: &ClientOrderId) -> Option<Decimal> {
+        self.locked_amounts.get(client_order_id).copied()
+    }
+
+    /// Get total locked amount across all orders.
+    pub fn total_locked(&self) -> Decimal {
+        self.locked_amounts.values().sum()
     }
 }
 

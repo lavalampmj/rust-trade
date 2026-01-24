@@ -1224,3 +1224,195 @@ fn test_has_available_funds() {
     assert!(!portfolio.has_available_funds(dec!(4001))); // Over available
     assert!(!portfolio.has_available_funds(dec!(10000))); // Way over available
 }
+
+/// Test Account integration with SimulatedExchange
+#[test]
+fn test_exchange_with_account_balance_locking() {
+    use trading_common::accounts::Account;
+    use trading_common::execution::SimulatedExchange;
+    use trading_common::orders::OrderEventAny;
+
+    let venue = "TEST";
+
+    // Create account with initial balance
+    let mut account = Account::cash("test-account", "USD");
+    account.deposit("USD", dec!(100000));
+
+    // Create exchange with account
+    let mut exchange = SimulatedExchange::new(venue).with_account(account);
+
+    // Verify initial state
+    {
+        let acc = exchange.account().unwrap();
+        assert_eq!(acc.total_base(), dec!(100000));
+        assert_eq!(acc.free_base(), dec!(100000));
+    }
+
+    // Submit a limit buy order for 1 BTC @ $50,000
+    let order = Order::limit("BTCUSDT", OrderSide::Buy, dec!(1), dec!(50000))
+        .with_venue(venue)
+        .build()
+        .unwrap();
+    let order_id = order.client_order_id.clone();
+
+    exchange.submit_order(order);
+    let events = exchange.process_inflight_commands();
+
+    // Should be accepted
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], OrderEventAny::Accepted(_)));
+
+    // Verify funds are locked
+    {
+        let acc = exchange.account().unwrap();
+        let balance = acc.balance("USD").unwrap();
+        assert_eq!(balance.total, dec!(100000));
+        assert_eq!(balance.locked, dec!(50000)); // 1 * 50000
+        assert_eq!(balance.free, dec!(50000));   // 100000 - 50000
+    }
+
+    // Verify locked amount is tracked
+    assert_eq!(exchange.get_locked_amount(&order_id), Some(dec!(50000)));
+    assert_eq!(exchange.total_locked(), dec!(50000));
+}
+
+/// Test Account rejects order when insufficient funds
+#[test]
+fn test_exchange_with_account_rejects_insufficient_funds() {
+    use trading_common::accounts::Account;
+    use trading_common::execution::SimulatedExchange;
+    use trading_common::orders::OrderEventAny;
+
+    let venue = "TEST";
+
+    // Create account with small balance
+    let mut account = Account::cash("test-account", "USD");
+    account.deposit("USD", dec!(10000)); // Only $10k
+
+    let mut exchange = SimulatedExchange::new(venue).with_account(account);
+
+    // Try to submit order for 1 BTC @ $50,000 (requires $50k, only have $10k)
+    let order = Order::limit("BTCUSDT", OrderSide::Buy, dec!(1), dec!(50000))
+        .with_venue(venue)
+        .build()
+        .unwrap();
+
+    exchange.submit_order(order);
+    let events = exchange.process_inflight_commands();
+
+    // Should be rejected due to insufficient funds
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        OrderEventAny::Rejected(reject) => {
+            assert!(reject.reason.contains("Insufficient funds"));
+        }
+        _ => panic!("Expected Rejected event"),
+    }
+
+    // Verify no funds are locked
+    assert_eq!(exchange.total_locked(), dec!(0));
+}
+
+/// Test Account unlocks funds when order is canceled
+#[test]
+fn test_exchange_with_account_unlocks_on_cancel() {
+    use trading_common::accounts::Account;
+    use trading_common::execution::SimulatedExchange;
+    use trading_common::orders::OrderEventAny;
+
+    let venue = "TEST";
+
+    let mut account = Account::cash("test-account", "USD");
+    account.deposit("USD", dec!(100000));
+
+    let mut exchange = SimulatedExchange::new(venue).with_account(account);
+
+    // Submit and accept order
+    let order = Order::limit("BTCUSDT", OrderSide::Buy, dec!(1), dec!(50000))
+        .with_venue(venue)
+        .build()
+        .unwrap();
+    let order_id = order.client_order_id.clone();
+
+    exchange.submit_order(order);
+    exchange.process_inflight_commands();
+
+    // Verify locked
+    {
+        let acc = exchange.account().unwrap();
+        assert_eq!(acc.balance("USD").unwrap().locked, dec!(50000));
+    }
+
+    // Cancel the order
+    exchange.cancel_order(order_id);
+    let events = exchange.process_inflight_commands();
+
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], OrderEventAny::Canceled(_)));
+
+    // Verify funds unlocked
+    {
+        let acc = exchange.account().unwrap();
+        let balance = acc.balance("USD").unwrap();
+        assert_eq!(balance.locked, dec!(0));
+        assert_eq!(balance.free, dec!(100000));
+    }
+    assert_eq!(exchange.total_locked(), dec!(0));
+}
+
+/// Test Account consumes locked funds on fill
+#[test]
+fn test_exchange_with_account_fills_from_locked() {
+    use trading_common::accounts::Account;
+    use trading_common::data::types::Timeframe;
+    use trading_common::execution::SimulatedExchange;
+    use trading_common::orders::OrderEventAny;
+
+    let venue = "TEST";
+
+    let mut account = Account::cash("test-account", "USD");
+    account.deposit("USD", dec!(100000));
+
+    let mut exchange = SimulatedExchange::new(venue).with_account(account);
+
+    // Submit limit buy order
+    let order = Order::limit("BTCUSDT", OrderSide::Buy, dec!(1), dec!(50000))
+        .with_venue(venue)
+        .build()
+        .unwrap();
+
+    exchange.submit_order(order);
+    exchange.process_inflight_commands();
+
+    // Verify locked
+    assert_eq!(exchange.account().unwrap().balance("USD").unwrap().locked, dec!(50000));
+
+    // Process bar that fills the order
+    let bar = OHLCData {
+        timestamp: Utc::now(),
+        symbol: "BTCUSDT".to_string(),
+        timeframe: Timeframe::OneMinute,
+        open: dec!(50100),
+        high: dec!(50200),
+        low: dec!(49500),  // Below limit price
+        close: dec!(49800),
+        volume: dec!(100),
+        trade_count: 10,
+    };
+
+    let events = exchange.process_bar(&bar);
+
+    // Should have fill
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], OrderEventAny::Filled(_)));
+
+    // Verify locked funds consumed (fill from locked reduces total)
+    {
+        let acc = exchange.account().unwrap();
+        let balance = acc.balance("USD").unwrap();
+        assert_eq!(balance.locked, dec!(0)); // No longer locked
+        assert_eq!(balance.total, dec!(50000)); // 100000 - 50000 consumed
+        assert_eq!(balance.free, dec!(50000));  // All remaining is free
+    }
+    assert_eq!(exchange.total_locked(), dec!(0));
+}
