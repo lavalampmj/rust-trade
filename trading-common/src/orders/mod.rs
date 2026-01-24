@@ -140,12 +140,17 @@
 //! - `OrderExpired` - Time-in-force expired
 //! - `OrderTriggered` - Stop/conditional order triggered
 
+mod contingent_manager;
 mod events;
 mod manager;
 mod order;
+mod order_list;
 mod types;
 
 // Re-export all public types
+pub use contingent_manager::{ContingentAction, ContingentOrderManager};
+pub use order_list::OrderList;
+
 pub use events::{
     EventId, OrderAccepted, OrderCancelRejected, OrderCanceled, OrderDenied, OrderEvent,
     OrderEventAny, OrderExpired, OrderFilled, OrderInitialized, OrderModifyRejected,

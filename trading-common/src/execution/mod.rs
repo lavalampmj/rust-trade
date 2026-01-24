@@ -105,13 +105,28 @@
 //!     .with_fill_model(Box::new(fill_model));
 //! ```
 
+mod config;
 mod context;
 mod engine;
 mod fill_model;
+mod inflight_queue;
+mod latency_model;
+pub mod matching;
+mod simulated_exchange;
 
+pub use config::{
+    ContingentTomlConfig, ExchangeTomlConfig, FeeTomlConfig, FillModelTomlConfig,
+    LatencyTomlConfig, MatchingTomlConfig,
+};
 pub use context::{ContextError, StrategyContext, StrategyContextConfig};
 pub use engine::{ExecutionEngine, ExecutionEngineConfig, ExecutionMetrics};
 pub use fill_model::{
-    default_fill_model, FillModel, FillResult, ImmediateFillModel, LimitAwareFillModel,
-    MarketSnapshot, SlippageAwareFillModel,
+    default_fill_model, probabilistic_fill_model, FillModel, FillResult, ImmediateFillModel,
+    LimitAwareFillModel, MarketSnapshot, ProbabilisticFillModel, SlippageAwareFillModel,
 };
+pub use inflight_queue::{InflightCommand, InflightQueue, TradingCommand};
+pub use latency_model::{
+    default_latency_model, FixedLatencyModel, LatencyModel, NoLatencyModel, VariableLatencyModel,
+};
+pub use matching::{MatchResult, MatchingEngineConfig, OrderMatchingEngine};
+pub use simulated_exchange::{SimulatedExchange, SimulatedExchangeConfig};

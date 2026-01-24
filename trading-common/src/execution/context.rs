@@ -239,7 +239,11 @@ impl StrategyContext {
 
         // Validate we have sufficient position for sell orders
         if order.side == OrderSide::Sell {
-            let position = self.positions.get(order.symbol()).copied().unwrap_or(Decimal::ZERO);
+            let position = self
+                .positions
+                .get(order.symbol())
+                .copied()
+                .unwrap_or(Decimal::ZERO);
             if order.quantity > position {
                 return Err(ContextError::InsufficientPosition {
                     required: order.quantity,
@@ -256,9 +260,9 @@ impl StrategyContext {
             .build()
             .map_err(|e| ContextError::RuntimeError(e.to_string()))?;
 
-        runtime.block_on(async {
-            self.order_manager.submit_order(order).await
-        }).map_err(|e| ContextError::OrderManagerError(e.to_string()))?;
+        runtime
+            .block_on(async { self.order_manager.submit_order(order).await })
+            .map_err(|e| ContextError::OrderManagerError(e.to_string()))?;
 
         Ok(client_order_id)
     }
@@ -274,11 +278,13 @@ impl StrategyContext {
             .build()
             .map_err(|e| ContextError::RuntimeError(e.to_string()))?;
 
-        runtime.block_on(async {
-            self.order_manager
-                .cancel_order(client_order_id, self.config.account_id.clone())
-                .await
-        }).map_err(|e| ContextError::OrderManagerError(e.to_string()))
+        runtime
+            .block_on(async {
+                self.order_manager
+                    .cancel_order(client_order_id, self.config.account_id.clone())
+                    .await
+            })
+            .map_err(|e| ContextError::OrderManagerError(e.to_string()))
     }
 
     /// Cancel all open orders.
@@ -288,11 +294,13 @@ impl StrategyContext {
             .build()
             .map_err(|e| ContextError::RuntimeError(e.to_string()))?;
 
-        runtime.block_on(async {
-            self.order_manager
-                .cancel_all_orders(self.config.account_id.clone())
-                .await
-        }).map_err(|e| ContextError::OrderManagerError(e.to_string()))
+        runtime
+            .block_on(async {
+                self.order_manager
+                    .cancel_all_orders(self.config.account_id.clone())
+                    .await
+            })
+            .map_err(|e| ContextError::OrderManagerError(e.to_string()))
     }
 
     /// Cancel all open orders for a specific symbol.
@@ -305,11 +313,13 @@ impl StrategyContext {
             .build()
             .map_err(|e| ContextError::RuntimeError(e.to_string()))?;
 
-        runtime.block_on(async {
-            self.order_manager
-                .cancel_orders_for_symbol(symbol, self.config.account_id.clone())
-                .await
-        }).map_err(|e| ContextError::OrderManagerError(e.to_string()))
+        runtime
+            .block_on(async {
+                self.order_manager
+                    .cancel_orders_for_symbol(symbol, self.config.account_id.clone())
+                    .await
+            })
+            .map_err(|e| ContextError::OrderManagerError(e.to_string()))
     }
 
     // ========================================================================
@@ -343,9 +353,7 @@ impl StrategyContext {
             .build()
             .unwrap_or_else(|_| panic!("Failed to create runtime"));
 
-        runtime.block_on(async {
-            self.order_manager.get_open_orders_for_symbol(symbol).await
-        })
+        runtime.block_on(async { self.order_manager.get_open_orders_for_symbol(symbol).await })
     }
 
     /// Check if there are any open orders for a symbol.
@@ -409,7 +417,11 @@ impl StrategyContext {
             .positions
             .iter()
             .map(|(symbol, qty)| {
-                let price = self.current_prices.get(symbol).copied().unwrap_or(Decimal::ZERO);
+                let price = self
+                    .current_prices
+                    .get(symbol)
+                    .copied()
+                    .unwrap_or(Decimal::ZERO);
                 *qty * price
             })
             .sum();
@@ -521,10 +533,16 @@ pub enum ContextError {
     OrderManagerError(String),
 
     #[error("Insufficient funds: required {required}, available {available}")]
-    InsufficientFunds { required: Decimal, available: Decimal },
+    InsufficientFunds {
+        required: Decimal,
+        available: Decimal,
+    },
 
     #[error("Insufficient position: required {required}, available {available}")]
-    InsufficientPosition { required: Decimal, available: Decimal },
+    InsufficientPosition {
+        required: Decimal,
+        available: Decimal,
+    },
 
     #[error("Runtime error: {0}")]
     RuntimeError(String),
@@ -579,7 +597,10 @@ mod tests {
         ctx.update_price("BTCUSDT", dec!(50000));
 
         let result = ctx.market_order("BTCUSDT", OrderSide::Buy, dec!(1.0));
-        assert!(matches!(result, Err(ContextError::InsufficientFunds { .. })));
+        assert!(matches!(
+            result,
+            Err(ContextError::InsufficientFunds { .. })
+        ));
     }
 
     #[test]

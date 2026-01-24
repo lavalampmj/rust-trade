@@ -18,8 +18,11 @@
 //! ```
 
 use chrono::{DateTime, Utc};
+use rand::{Rng, SeedableRng};
+use rand::rngs::StdRng;
 use rust_decimal::Decimal;
 use std::fmt;
+use std::sync::Mutex;
 
 use crate::data::types::TickData;
 use crate::orders::{LiquiditySide, Order, OrderSide, OrderType, TradeId};
@@ -417,7 +420,13 @@ impl FillModel for LimitAwareFillModel {
                     _ => LiquiditySide::Taker,
                 };
 
-                FillResult::fill(fill_qty, price, commission, liquidity_side, market.timestamp)
+                FillResult::fill(
+                    fill_qty,
+                    price,
+                    commission,
+                    liquidity_side,
+                    market.timestamp,
+                )
             }
             None => FillResult::no_fill(),
         }
@@ -529,9 +538,262 @@ impl FillModel for SlippageAwareFillModel {
     }
 }
 
+/// Probabilistic fill model - adds randomness to fill decisions.
+///
+/// This model provides stochastic behavior for more realistic backtesting:
+/// - Configurable probability that limit orders fill when price is touched
+/// - Configurable probability and magnitude of slippage on market orders
+/// - Seeded RNG for reproducible backtest results
+///
+/// # Example
+/// ```ignore
+/// let model = ProbabilisticFillModel::new(0.8, 0.2, 2, 42);
+/// // 80% chance limit fills when touched
+/// // 20% chance of slippage on market orders
+/// // Up to 2 ticks of slippage
+/// // Seed 42 for reproducibility
+/// ```
+pub struct ProbabilisticFillModel {
+    /// Probability (0.0-1.0) that a limit order fills when price is touched
+    prob_fill_on_limit: f64,
+    /// Probability (0.0-1.0) of slippage on market orders
+    prob_slippage: f64,
+    /// Maximum slippage in price ticks
+    max_slippage_ticks: u32,
+    /// Price tick size for slippage calculation
+    tick_size: Decimal,
+    /// Seeded RNG for reproducibility (wrapped in Mutex for interior mutability)
+    rng: Mutex<StdRng>,
+    /// Current seed for display/debugging
+    seed: u64,
+    /// Inner fill model for basic limit/stop logic
+    inner: LimitAwareFillModel,
+}
+
+impl fmt::Debug for ProbabilisticFillModel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProbabilisticFillModel")
+            .field("prob_fill_on_limit", &self.prob_fill_on_limit)
+            .field("prob_slippage", &self.prob_slippage)
+            .field("max_slippage_ticks", &self.max_slippage_ticks)
+            .field("tick_size", &self.tick_size)
+            .field("seed", &self.seed)
+            .finish()
+    }
+}
+
+impl ProbabilisticFillModel {
+    /// Create a new probabilistic fill model.
+    ///
+    /// # Arguments
+    /// - `prob_fill_on_limit`: Probability (0.0-1.0) limit fills when price touched
+    /// - `prob_slippage`: Probability (0.0-1.0) of slippage on market orders
+    /// - `max_slippage_ticks`: Maximum slippage in ticks
+    /// - `seed`: RNG seed for reproducibility (0 = random seed)
+    pub fn new(
+        prob_fill_on_limit: f64,
+        prob_slippage: f64,
+        max_slippage_ticks: u32,
+        seed: u64,
+    ) -> Self {
+        let actual_seed = if seed == 0 {
+            rand::thread_rng().gen()
+        } else {
+            seed
+        };
+
+        Self {
+            prob_fill_on_limit: prob_fill_on_limit.clamp(0.0, 1.0),
+            prob_slippage: prob_slippage.clamp(0.0, 1.0),
+            max_slippage_ticks,
+            tick_size: Decimal::new(1, 2), // Default 0.01 tick size
+            rng: Mutex::new(StdRng::seed_from_u64(actual_seed)),
+            seed: actual_seed,
+            inner: LimitAwareFillModel::new(),
+        }
+    }
+
+    /// Set custom tick size for slippage calculation.
+    pub fn with_tick_size(mut self, tick_size: Decimal) -> Self {
+        self.tick_size = tick_size;
+        self
+    }
+
+    /// Reset the RNG with a new seed.
+    ///
+    /// Call this at the start of each backtest run for reproducibility.
+    pub fn set_seed(&self, seed: u64) {
+        let actual_seed = if seed == 0 {
+            rand::thread_rng().gen()
+        } else {
+            seed
+        };
+        let mut rng = self.rng.lock().unwrap();
+        *rng = StdRng::seed_from_u64(actual_seed);
+    }
+
+    /// Get the current seed.
+    pub fn seed(&self) -> u64 {
+        self.seed
+    }
+
+    /// Check if limit order should fill based on probability.
+    fn should_fill_limit(&self) -> bool {
+        let mut rng = self.rng.lock().unwrap();
+        rng.gen::<f64>() < self.prob_fill_on_limit
+    }
+
+    /// Check if slippage should be applied.
+    fn should_apply_slippage(&self) -> bool {
+        let mut rng = self.rng.lock().unwrap();
+        rng.gen::<f64>() < self.prob_slippage
+    }
+
+    /// Calculate random slippage amount in ticks.
+    fn random_slippage_ticks(&self) -> u32 {
+        if self.max_slippage_ticks == 0 {
+            return 0;
+        }
+        let mut rng = self.rng.lock().unwrap();
+        rng.gen_range(1..=self.max_slippage_ticks)
+    }
+}
+
+impl FillModel for ProbabilisticFillModel {
+    fn get_fill(
+        &self,
+        order: &Order,
+        market: &MarketSnapshot,
+        commission_rate: Decimal,
+    ) -> FillResult {
+        if order.is_closed() {
+            return FillResult::no_fill();
+        }
+
+        match order.order_type {
+            OrderType::Market => {
+                // Market orders always fill, but may have slippage
+                let base_price = market.last_price;
+                let (fill_price, slippage) = if self.should_apply_slippage() {
+                    let slippage_ticks = self.random_slippage_ticks();
+                    let slippage_amount = self.tick_size
+                        * Decimal::from(slippage_ticks);
+
+                    let adjusted_price = match order.side {
+                        OrderSide::Buy => base_price + slippage_amount,
+                        OrderSide::Sell => base_price - slippage_amount,
+                    };
+                    (adjusted_price, Some(slippage_amount))
+                } else {
+                    (base_price, None)
+                };
+
+                let fill_qty = order.leaves_qty;
+                let notional = fill_qty * fill_price;
+                let commission = notional * commission_rate;
+
+                if let Some(slip) = slippage {
+                    FillResult::fill_with_slippage(
+                        fill_qty,
+                        fill_price,
+                        commission,
+                        LiquiditySide::Taker,
+                        market.timestamp,
+                        slip,
+                    )
+                } else {
+                    FillResult::fill(
+                        fill_qty,
+                        fill_price,
+                        commission,
+                        LiquiditySide::Taker,
+                        market.timestamp,
+                    )
+                }
+            }
+            OrderType::Limit => {
+                // Check if price touched limit (using inner model's logic)
+                let base_fill = self.inner.get_fill(order, market, commission_rate);
+
+                if !base_fill.filled {
+                    return FillResult::no_fill();
+                }
+
+                // Apply probabilistic fill decision
+                if self.should_fill_limit() {
+                    base_fill
+                } else {
+                    FillResult::no_fill()
+                }
+            }
+            OrderType::Stop | OrderType::StopLimit => {
+                // Stop orders use underlying logic for trigger
+                // Apply slippage for stop market, probabilistic for stop-limit
+                let base_fill = self.inner.get_fill(order, market, commission_rate);
+
+                if !base_fill.filled {
+                    return base_fill;
+                }
+
+                // Stop orders that trigger get market treatment (potential slippage)
+                if order.order_type == OrderType::Stop && self.should_apply_slippage() {
+                    let base_price = base_fill.fill_price.unwrap();
+                    let slippage_ticks = self.random_slippage_ticks();
+                    let slippage_amount = self.tick_size
+                        * Decimal::from(slippage_ticks);
+
+                    let adjusted_price = match order.side {
+                        OrderSide::Buy => base_price + slippage_amount,
+                        OrderSide::Sell => base_price - slippage_amount,
+                    };
+
+                    let fill_qty = order.leaves_qty;
+                    let notional = fill_qty * adjusted_price;
+                    let commission = notional * commission_rate;
+
+                    FillResult::fill_with_slippage(
+                        fill_qty,
+                        adjusted_price,
+                        commission,
+                        LiquiditySide::Taker,
+                        market.timestamp,
+                        slippage_amount,
+                    )
+                } else if order.order_type == OrderType::StopLimit {
+                    // Stop-limit after trigger becomes limit - apply probabilistic fill
+                    if self.should_fill_limit() {
+                        base_fill
+                    } else {
+                        FillResult::no_fill()
+                    }
+                } else {
+                    base_fill
+                }
+            }
+            _ => {
+                // Other order types: delegate to inner model
+                self.inner.get_fill(order, market, commission_rate)
+            }
+        }
+    }
+
+    fn name(&self) -> &str {
+        "ProbabilisticFillModel"
+    }
+}
+
 /// Create a default fill model.
 pub fn default_fill_model() -> Box<dyn FillModel> {
     Box::new(LimitAwareFillModel::new())
+}
+
+/// Create a probabilistic fill model with common defaults.
+///
+/// - 80% chance limit orders fill when touched
+/// - 20% chance of slippage on market orders
+/// - Up to 2 ticks of slippage
+pub fn probabilistic_fill_model(seed: u64) -> Box<dyn FillModel> {
+    Box::new(ProbabilisticFillModel::new(0.8, 0.2, 2, seed))
 }
 
 #[cfg(test)]
@@ -701,5 +963,171 @@ mod tests {
 
         assert_eq!(snapshot.mid_price(), Some(dec!(50000)));
         assert_eq!(snapshot.spread(), Some(dec!(20)));
+    }
+
+    #[test]
+    fn test_probabilistic_fill_model_market_order() {
+        // With seed, behavior is deterministic
+        let model = ProbabilisticFillModel::new(0.8, 0.5, 2, 42);
+        let order = create_test_order(OrderType::Market, OrderSide::Buy, None);
+        let market = create_market_snapshot(dec!(50000));
+
+        let fill = model.get_fill(&order, &market, dec!(0.001));
+
+        // Market orders always fill
+        assert!(fill.filled);
+        assert!(fill.fill_price.is_some());
+    }
+
+    #[test]
+    fn test_probabilistic_fill_model_reproducibility() {
+        // Same seed should produce same sequence of decisions
+        let model1 = ProbabilisticFillModel::new(0.5, 0.5, 2, 12345);
+        let model2 = ProbabilisticFillModel::new(0.5, 0.5, 2, 12345);
+
+        let order = create_test_order(OrderType::Limit, OrderSide::Buy, Some(dec!(50000)));
+        let market = MarketSnapshot::from_ohlc(
+            dec!(50000),
+            dec!(50100),
+            dec!(49900),
+            dec!(50000),
+            dec!(100),
+            Utc::now(),
+        );
+
+        // Run multiple fills and compare
+        let mut results1 = Vec::new();
+        let mut results2 = Vec::new();
+
+        for _ in 0..10 {
+            results1.push(model1.get_fill(&order, &market, dec!(0.001)).filled);
+            results2.push(model2.get_fill(&order, &market, dec!(0.001)).filled);
+        }
+
+        // Same seed = same sequence
+        assert_eq!(results1, results2);
+    }
+
+    #[test]
+    fn test_probabilistic_fill_model_limit_probability() {
+        // prob_fill_on_limit = 0.0 means limit never fills even when touched
+        let model_never = ProbabilisticFillModel::new(0.0, 0.0, 0, 42);
+        // prob_fill_on_limit = 1.0 means limit always fills when touched
+        let model_always = ProbabilisticFillModel::new(1.0, 0.0, 0, 42);
+
+        let order = create_test_order(OrderType::Limit, OrderSide::Buy, Some(dec!(50000)));
+        let market = MarketSnapshot::from_ohlc(
+            dec!(50000),
+            dec!(50100),
+            dec!(49900),
+            dec!(50000),
+            dec!(100),
+            Utc::now(),
+        );
+
+        // With prob=0, should never fill
+        let fill = model_never.get_fill(&order, &market, dec!(0.001));
+        assert!(!fill.filled);
+
+        // With prob=1, should always fill
+        let fill = model_always.get_fill(&order, &market, dec!(0.001));
+        assert!(fill.filled);
+        assert_eq!(fill.fill_price, Some(dec!(50000)));
+    }
+
+    #[test]
+    fn test_probabilistic_fill_model_slippage() {
+        // prob_slippage = 1.0 means always slippage
+        let model = ProbabilisticFillModel::new(1.0, 1.0, 3, 42)
+            .with_tick_size(dec!(0.01));
+
+        let order = create_test_order(OrderType::Market, OrderSide::Buy, None);
+        let market = create_market_snapshot(dec!(100.00));
+
+        let fill = model.get_fill(&order, &market, dec!(0.001));
+
+        assert!(fill.filled);
+        // Buy with slippage should be higher than base price
+        let price = fill.fill_price.unwrap();
+        assert!(price > dec!(100.00));
+        // But within max slippage (3 ticks * 0.01 = 0.03)
+        assert!(price <= dec!(100.03));
+        assert!(fill.slippage.is_some());
+    }
+
+    #[test]
+    fn test_probabilistic_fill_model_no_slippage() {
+        // prob_slippage = 0.0 means no slippage
+        let model = ProbabilisticFillModel::new(1.0, 0.0, 5, 42);
+
+        let order = create_test_order(OrderType::Market, OrderSide::Buy, None);
+        let market = create_market_snapshot(dec!(50000));
+
+        let fill = model.get_fill(&order, &market, dec!(0.001));
+
+        assert!(fill.filled);
+        assert_eq!(fill.fill_price, Some(dec!(50000)));
+        assert!(fill.slippage.is_none());
+    }
+
+    #[test]
+    fn test_probabilistic_fill_model_set_seed() {
+        let model = ProbabilisticFillModel::new(0.5, 0.5, 2, 1);
+
+        let order = create_test_order(OrderType::Limit, OrderSide::Buy, Some(dec!(50000)));
+        let market = MarketSnapshot::from_ohlc(
+            dec!(50000),
+            dec!(50100),
+            dec!(49900),
+            dec!(50000),
+            dec!(100),
+            Utc::now(),
+        );
+
+        // Get initial sequence
+        let mut initial_results = Vec::new();
+        for _ in 0..5 {
+            initial_results.push(model.get_fill(&order, &market, dec!(0.001)).filled);
+        }
+
+        // Reset seed
+        model.set_seed(1);
+
+        // Should get same sequence again
+        let mut reset_results = Vec::new();
+        for _ in 0..5 {
+            reset_results.push(model.get_fill(&order, &market, dec!(0.001)).filled);
+        }
+
+        assert_eq!(initial_results, reset_results);
+    }
+
+    #[test]
+    fn test_probabilistic_fill_model_stop_order_slippage() {
+        // Stop orders that trigger can have slippage
+        let model = ProbabilisticFillModel::new(1.0, 1.0, 2, 42)
+            .with_tick_size(dec!(1.0));
+
+        // Sell stop at 49000
+        let mut order = create_test_order(OrderType::Stop, OrderSide::Sell, Some(dec!(49000)));
+        order.trigger_price = Some(dec!(49000));
+
+        // Market drops below trigger
+        let market = MarketSnapshot::from_ohlc(
+            dec!(50000),
+            dec!(50000),
+            dec!(48500),
+            dec!(48700),
+            dec!(100),
+            Utc::now(),
+        );
+
+        let fill = model.get_fill(&order, &market, dec!(0.001));
+
+        assert!(fill.filled);
+        // Sell with slippage should be lower than market price
+        let price = fill.fill_price.unwrap();
+        assert!(price < dec!(48700));
+        assert!(fill.slippage.is_some());
     }
 }

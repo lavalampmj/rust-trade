@@ -192,6 +192,14 @@ impl Portfolio {
         self.trades.iter().map(|trade| trade.commission).sum()
     }
 
+    /// Add commission from external source (e.g., exchange fee model).
+    ///
+    /// Use this when the exchange calculates fees separately from the portfolio's
+    /// internal commission rate. The commission is deducted from cash.
+    pub fn add_commission(&mut self, amount: Decimal) {
+        self.cash -= amount;
+    }
+
     pub fn has_position(&self, symbol: &str) -> bool {
         self.positions.contains_key(symbol)
             && self.positions.get(symbol).unwrap().quantity > Decimal::ZERO
