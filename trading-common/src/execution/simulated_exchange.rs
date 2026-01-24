@@ -539,15 +539,135 @@ impl SimulatedExchange {
     }
 
     /// Process a modify order command.
+    ///
+    /// Modifies an open order's price and/or quantity.
+    /// Returns OrderUpdated on success or OrderModifyRejected on failure.
     fn process_modify(
         &mut self,
-        _client_order_id: &ClientOrderId,
-        _new_price: Option<Decimal>,
-        _new_quantity: Option<Decimal>,
+        client_order_id: &ClientOrderId,
+        new_price: Option<Decimal>,
+        new_quantity: Option<Decimal>,
     ) -> Vec<OrderEventAny> {
-        // TODO: Implement order modification
-        // For now, modifications are not supported
-        Vec::new()
+        use crate::orders::{OrderModifyRejected, OrderUpdated};
+
+        let mut events = Vec::new();
+
+        // Find the stored order
+        if let Some(stored) = self.stored_orders.get_mut(client_order_id) {
+            // Validate order can be modified (must be in open state)
+            if !stored.order.is_open() {
+                events.push(OrderEventAny::ModifyRejected(OrderModifyRejected::new(
+                    client_order_id.clone(),
+                    Some(stored.venue_order_id.clone()),
+                    stored.order.account_id.clone(),
+                    format!("Order cannot be modified in status: {:?}", stored.order.status),
+                )));
+                return events;
+            }
+
+            // Validate new values
+            if let Some(qty) = new_quantity {
+                if qty <= Decimal::ZERO {
+                    events.push(OrderEventAny::ModifyRejected(OrderModifyRejected::new(
+                        client_order_id.clone(),
+                        Some(stored.venue_order_id.clone()),
+                        stored.order.account_id.clone(),
+                        "New quantity must be positive".to_string(),
+                    )));
+                    return events;
+                }
+                // Can't reduce quantity below filled amount
+                if qty < stored.order.filled_qty {
+                    events.push(OrderEventAny::ModifyRejected(OrderModifyRejected::new(
+                        client_order_id.clone(),
+                        Some(stored.venue_order_id.clone()),
+                        stored.order.account_id.clone(),
+                        format!(
+                            "New quantity {} less than filled quantity {}",
+                            qty, stored.order.filled_qty
+                        ),
+                    )));
+                    return events;
+                }
+            }
+
+            // Handle balance adjustment for buy orders if price/quantity changed
+            if stored.order.side == OrderSide::Buy {
+                if let Some(account) = &mut self.account {
+                    let old_locked = self.locked_amounts.get(client_order_id).copied();
+                    let old_price = stored.order.price.unwrap_or(Decimal::ZERO);
+                    let old_qty = stored.order.quantity;
+
+                    let final_price = new_price.unwrap_or(old_price);
+                    let final_qty = new_quantity.unwrap_or(old_qty);
+                    let new_required = final_price * final_qty;
+
+                    if let Some(old_locked_amt) = old_locked {
+                        let currency = &account.base_currency.clone();
+                        if let Some(balance) = account.balance_mut(currency) {
+                            if new_required > old_locked_amt {
+                                // Need to lock more
+                                let additional = new_required - old_locked_amt;
+                                if let Err(e) = balance.lock(additional) {
+                                    events.push(OrderEventAny::ModifyRejected(
+                                        OrderModifyRejected::new(
+                                            client_order_id.clone(),
+                                            Some(stored.venue_order_id.clone()),
+                                            stored.order.account_id.clone(),
+                                            format!("Insufficient funds for modification: {}", e),
+                                        ),
+                                    ));
+                                    return events;
+                                }
+                                self.locked_amounts.insert(client_order_id.clone(), new_required);
+                            } else if new_required < old_locked_amt {
+                                // Release excess locked
+                                let excess = old_locked_amt - new_required;
+                                let _ = balance.unlock(excess);
+                                self.locked_amounts.insert(client_order_id.clone(), new_required);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Update the order
+            if let Some(price) = new_price {
+                stored.order.price = Some(price);
+            }
+            if let Some(qty) = new_quantity {
+                stored.order.quantity = qty;
+                stored.order.leaves_qty = qty - stored.order.filled_qty;
+            }
+
+            // Update in matching engine
+            let instrument_id = stored.order.instrument_id.clone();
+            if let Some(engine) = self.matching_engines.get_mut(&instrument_id) {
+                // Remove old order and add updated one
+                engine.cancel_order(client_order_id);
+                engine.add_order(stored.order.clone());
+            }
+
+            // Generate updated event
+            events.push(OrderEventAny::Updated(OrderUpdated::new(
+                client_order_id.clone(),
+                Some(stored.venue_order_id.clone()),
+                stored.order.account_id.clone(),
+                stored.order.price,
+                stored.order.trigger_price,
+                stored.order.quantity,
+            )));
+        } else {
+            // Order not found
+            events.push(OrderEventAny::ModifyRejected(OrderModifyRejected::new(
+                client_order_id.clone(),
+                None,
+                crate::orders::AccountId::default(),
+                "Order not found".to_string(),
+            )));
+        }
+
+        events
     }
 
     /// Get or create a matching engine for an instrument.

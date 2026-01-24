@@ -1416,3 +1416,134 @@ fn test_exchange_with_account_fills_from_locked() {
     }
     assert_eq!(exchange.total_locked(), dec!(0));
 }
+
+/// Test order modification
+#[test]
+fn test_order_modification() {
+    use trading_common::execution::SimulatedExchange;
+    use trading_common::orders::OrderEventAny;
+
+    let venue = "TEST";
+    let mut exchange = SimulatedExchange::new(venue);
+
+    // Submit a limit order
+    let order = Order::limit("BTCUSDT", OrderSide::Buy, dec!(1), dec!(50000))
+        .with_venue(venue)
+        .build()
+        .unwrap();
+    let order_id = order.client_order_id.clone();
+
+    exchange.submit_order(order);
+    exchange.process_inflight_commands();
+
+    // Verify order exists
+    assert!(exchange.has_order(&order_id));
+
+    // Modify the order - change price and quantity
+    exchange.modify_order(order_id.clone(), Some(dec!(49000)), Some(dec!(2)));
+    let events = exchange.process_inflight_commands();
+
+    // Should get an Updated event
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        OrderEventAny::Updated(updated) => {
+            assert_eq!(updated.client_order_id, order_id);
+            assert_eq!(updated.price, Some(dec!(49000)));
+            assert_eq!(updated.quantity, dec!(2));
+        }
+        _ => panic!("Expected Updated event, got {:?}", events[0]),
+    }
+
+    // Order should still exist with new values
+    let stored = exchange.get_order(&order_id).unwrap();
+    assert_eq!(stored.price, Some(dec!(49000)));
+    assert_eq!(stored.quantity, dec!(2));
+}
+
+/// Test order modification rejected for non-existent order
+#[test]
+fn test_order_modification_rejected_not_found() {
+    use trading_common::execution::SimulatedExchange;
+    use trading_common::orders::{ClientOrderId, OrderEventAny};
+
+    let venue = "TEST";
+    let mut exchange = SimulatedExchange::new(venue);
+
+    // Try to modify non-existent order
+    let fake_id = ClientOrderId::new("fake-order-123");
+    exchange.modify_order(fake_id.clone(), Some(dec!(49000)), None);
+    let events = exchange.process_inflight_commands();
+
+    // Should get ModifyRejected
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        OrderEventAny::ModifyRejected(rejected) => {
+            assert_eq!(rejected.client_order_id, fake_id);
+            assert!(rejected.reason.contains("not found"));
+        }
+        _ => panic!("Expected ModifyRejected event"),
+    }
+}
+
+/// Test order modification with account adjusts locked funds
+#[test]
+fn test_order_modification_with_account() {
+    use trading_common::accounts::Account;
+    use trading_common::execution::SimulatedExchange;
+    use trading_common::orders::OrderEventAny;
+
+    let venue = "TEST";
+
+    let mut account = Account::cash("test-account", "USD");
+    account.deposit("USD", dec!(100000));
+
+    let mut exchange = SimulatedExchange::new(venue).with_account(account);
+
+    // Submit a limit order at $50,000
+    let order = Order::limit("BTCUSDT", OrderSide::Buy, dec!(1), dec!(50000))
+        .with_venue(venue)
+        .build()
+        .unwrap();
+    let order_id = order.client_order_id.clone();
+
+    exchange.submit_order(order);
+    exchange.process_inflight_commands();
+
+    // Verify initial locked amount
+    assert_eq!(exchange.get_locked_amount(&order_id), Some(dec!(50000)));
+    {
+        let acc = exchange.account().unwrap();
+        assert_eq!(acc.balance("USD").unwrap().locked, dec!(50000));
+        assert_eq!(acc.balance("USD").unwrap().free, dec!(50000));
+    }
+
+    // Modify to increase price - should lock more funds
+    exchange.modify_order(order_id.clone(), Some(dec!(60000)), None);
+    let events = exchange.process_inflight_commands();
+
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], OrderEventAny::Updated(_)));
+
+    // Verify increased locked amount
+    assert_eq!(exchange.get_locked_amount(&order_id), Some(dec!(60000)));
+    {
+        let acc = exchange.account().unwrap();
+        assert_eq!(acc.balance("USD").unwrap().locked, dec!(60000));
+        assert_eq!(acc.balance("USD").unwrap().free, dec!(40000));
+    }
+
+    // Modify to decrease price - should unlock excess
+    exchange.modify_order(order_id.clone(), Some(dec!(40000)), None);
+    let events = exchange.process_inflight_commands();
+
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], OrderEventAny::Updated(_)));
+
+    // Verify decreased locked amount
+    assert_eq!(exchange.get_locked_amount(&order_id), Some(dec!(40000)));
+    {
+        let acc = exchange.account().unwrap();
+        assert_eq!(acc.balance("USD").unwrap().locked, dec!(40000));
+        assert_eq!(acc.balance("USD").unwrap().free, dec!(60000));
+    }
+}
