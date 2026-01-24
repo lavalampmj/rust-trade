@@ -5,7 +5,7 @@ use crate::backtest::{
 use crate::data::types::{BarData, OHLCData, TickData};
 use crate::execution::{LatencyModel, SimulatedExchange};
 use crate::orders::{
-    ContingentAction, ContingentOrderManager, Order, OrderEventAny, OrderList, OrderSide,
+    ClientOrderId, ContingentAction, ContingentOrderManager, Order, OrderEventAny, OrderList, OrderSide,
 };
 use crate::risk::FeeModel;
 use crate::series::bars_context::BarsContext;
@@ -61,6 +61,8 @@ pub struct BacktestEngine {
     exchange: Option<SimulatedExchange>,
     /// Manager for contingent orders (bracket orders, OCO, etc.)
     contingent_manager: ContingentOrderManager,
+    /// Track locked funds per order for proper balance management
+    locked_amounts: HashMap<ClientOrderId, Decimal>,
 }
 
 impl BacktestEngine {
@@ -83,6 +85,7 @@ impl BacktestEngine {
             bars_context,
             exchange: None,
             contingent_manager: ContingentOrderManager::new(),
+            locked_amounts: HashMap::new(),
         })
     }
 
@@ -361,6 +364,7 @@ impl BacktestEngine {
             exchange.reset();
         }
         self.contingent_manager.clear();
+        self.locked_amounts.clear();
 
         // Process bar events
         let mut processed = 0;
@@ -447,15 +451,26 @@ impl BacktestEngine {
                     let price = fill.last_px;
                     let commission = fill.commission;
 
-                    // Use _with_commission to avoid double-counting
                     match side {
                         OrderSide::Buy => {
-                            let _ = self.portfolio.execute_buy_with_commission(
-                                symbol.clone(),
-                                quantity,
-                                price,
-                                commission,
-                            );
+                            // Check if we have locked funds for this order
+                            let locked_amount = self.locked_amounts.remove(&fill.client_order_id);
+                            if let Some(locked) = locked_amount {
+                                let _ = self.portfolio.execute_buy_with_locked_funds(
+                                    symbol.clone(),
+                                    quantity,
+                                    price,
+                                    commission,
+                                    locked,
+                                );
+                            } else {
+                                let _ = self.portfolio.execute_buy_with_commission(
+                                    symbol.clone(),
+                                    quantity,
+                                    price,
+                                    commission,
+                                );
+                            }
                         }
                         OrderSide::Sell => {
                             let _ = self.portfolio.execute_sell_with_commission(
@@ -471,6 +486,9 @@ impl BacktestEngine {
 
             println!("\nFinal state:");
             println!("  Open orders remaining: {}", exchange.open_order_count());
+            if !self.locked_amounts.is_empty() {
+                println!("  Locked funds remaining: {} orders", self.locked_amounts.len());
+            }
         }
 
         println!("\n{}", "=".repeat(60));
@@ -496,18 +514,43 @@ impl BacktestEngine {
                 // (exchange already calculated the commission in the fill event)
                 match side {
                     OrderSide::Buy => {
-                        if let Err(e) = self.portfolio.execute_buy_with_commission(
-                            symbol.clone(),
-                            quantity,
-                            price,
-                            commission,
-                        ) {
-                            println!("Buy failed {}: {}", symbol, e);
+                        // Check if we have locked funds for this order
+                        let locked_amount = self.locked_amounts.get(&fill.client_order_id).copied();
+
+                        let result = if let Some(locked) = locked_amount {
+                            // Use locked funds variant
+                            self.portfolio.execute_buy_with_locked_funds(
+                                symbol.clone(),
+                                quantity,
+                                price,
+                                commission,
+                                locked,
+                            )
                         } else {
-                            println!(
-                                "FILL BUY {} {} @ ${} (commission: ${})",
-                                symbol, quantity, price, commission
-                            );
+                            // Fallback to regular execution (for orders submitted without locking)
+                            self.portfolio.execute_buy_with_commission(
+                                symbol.clone(),
+                                quantity,
+                                price,
+                                commission,
+                            )
+                        };
+
+                        match result {
+                            Ok(()) => {
+                                println!(
+                                    "FILL BUY {} {} @ ${} (commission: ${})",
+                                    symbol, quantity, price, commission
+                                );
+                            }
+                            Err(e) => {
+                                println!("Buy failed {}: {}", symbol, e);
+                            }
+                        }
+
+                        // Remove locked amount if order is fully filled
+                        if fill.leaves_qty.is_zero() {
+                            self.locked_amounts.remove(&fill.client_order_id);
                         }
                     }
                     OrderSide::Sell => {
@@ -538,6 +581,15 @@ impl BacktestEngine {
                 self.execute_contingent_actions(actions);
             }
             OrderEventAny::Canceled(cancel) => {
+                // Unlock any funds that were locked for this order
+                if let Some(locked_amount) = self.locked_amounts.remove(&cancel.client_order_id) {
+                    self.portfolio.unlock_funds(locked_amount);
+                    println!(
+                        "Unlocked ${} for canceled order {}",
+                        locked_amount, cancel.client_order_id
+                    );
+                }
+
                 self.strategy.on_order_canceled(cancel);
 
                 // Process contingent order actions (OCO cancels siblings)
@@ -545,6 +597,15 @@ impl BacktestEngine {
                 self.execute_contingent_actions(actions);
             }
             OrderEventAny::Rejected(reject) => {
+                // Unlock any funds that were locked for this order
+                if let Some(locked_amount) = self.locked_amounts.remove(&reject.client_order_id) {
+                    self.portfolio.unlock_funds(locked_amount);
+                    println!(
+                        "Unlocked ${} for rejected order {}",
+                        locked_amount, reject.client_order_id
+                    );
+                }
+
                 println!("Order rejected: {} - {}", reject.client_order_id, reject.reason);
                 self.strategy.on_order_rejected(reject);
             }
@@ -556,11 +617,46 @@ impl BacktestEngine {
     }
 
     /// Submit an order to the exchange or execute immediately.
+    ///
+    /// For buy orders, this locks funds in the portfolio to prevent over-commitment.
+    /// The locked funds are released when the order fills, is canceled, or rejected.
     fn submit_order(&mut self, order: Order) {
         // Notify strategy of order submission
         self.strategy.on_order_submitted(&order);
 
         if let Some(exchange) = self.exchange.as_mut() {
+            // For buy orders, lock funds in portfolio
+            if order.side == OrderSide::Buy {
+                // Estimate cost: for limit orders use limit price, for market use last known price
+                let price_estimate = order.price.unwrap_or_else(|| {
+                    self.portfolio
+                        .current_prices
+                        .get(order.symbol())
+                        .copied()
+                        .unwrap_or(Decimal::ZERO)
+                });
+                let estimated_cost = order.quantity * price_estimate;
+                // Add estimated commission (use portfolio's commission rate as fallback)
+                let estimated_commission = estimated_cost * self.config.commission_rate;
+                let total_lock_amount = estimated_cost + estimated_commission;
+
+                // Try to lock funds
+                if let Err(e) = self.portfolio.lock_funds(total_lock_amount) {
+                    println!(
+                        "Order rejected - {}: {} (order_id: {})",
+                        order.symbol(),
+                        e,
+                        order.client_order_id
+                    );
+                    // Don't submit the order if we can't lock funds
+                    return;
+                }
+
+                // Track the locked amount
+                self.locked_amounts
+                    .insert(order.client_order_id.clone(), total_lock_amount);
+            }
+
             // Submit to exchange with latency
             exchange.submit_order(order);
         } else {

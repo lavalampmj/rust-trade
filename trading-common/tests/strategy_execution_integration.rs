@@ -875,13 +875,14 @@ fn test_order_state_updated_after_fill() {
     // Verify order is in exchange
     assert!(exchange.has_order(&order_id));
 
-    // Get initial order state
+    // Get initial order state (after acceptance)
     let stored_order = exchange.get_order(&order_id);
     assert!(stored_order.is_some());
     let initial_order = stored_order.unwrap();
     assert_eq!(initial_order.filled_qty, dec!(0));
     assert_eq!(initial_order.leaves_qty, dec!(1));
-    assert_eq!(initial_order.status, OrderStatus::Initialized);
+    // Order should be Accepted after process_inflight_commands
+    assert_eq!(initial_order.status, OrderStatus::Accepted);
 
     // Process bar that should fill the order (low at 49500 < limit 50000)
     let bar = OHLCData {
@@ -1088,4 +1089,138 @@ fn test_portfolio_with_explicit_commission() {
 
     // Total commission should be 0.10 + 0.11 = 0.21
     assert_eq!(portfolio.total_commission(), dec!(0.21));
+}
+
+/// Test portfolio balance locking functionality
+#[test]
+fn test_portfolio_balance_locking() {
+    use trading_common::backtest::portfolio::Portfolio;
+
+    let mut portfolio = Portfolio::new(dec!(10000));
+
+    // Initial state
+    assert_eq!(portfolio.cash, dec!(10000));
+    assert_eq!(portfolio.locked_cash, dec!(0));
+    assert_eq!(portfolio.available_cash(), dec!(10000));
+
+    // Lock some funds
+    let result = portfolio.lock_funds(dec!(5000));
+    assert!(result.is_ok());
+    assert_eq!(portfolio.cash, dec!(10000)); // Total cash unchanged
+    assert_eq!(portfolio.locked_cash, dec!(5000));
+    assert_eq!(portfolio.available_cash(), dec!(5000)); // Available reduced
+
+    // Try to lock more than available - should fail
+    let result = portfolio.lock_funds(dec!(6000));
+    assert!(result.is_err());
+    assert_eq!(portfolio.locked_cash, dec!(5000)); // Unchanged
+
+    // Lock remaining available funds
+    let result = portfolio.lock_funds(dec!(5000));
+    assert!(result.is_ok());
+    assert_eq!(portfolio.locked_cash, dec!(10000));
+    assert_eq!(portfolio.available_cash(), dec!(0));
+
+    // Unlock some funds
+    portfolio.unlock_funds(dec!(3000));
+    assert_eq!(portfolio.locked_cash, dec!(7000));
+    assert_eq!(portfolio.available_cash(), dec!(3000));
+}
+
+/// Test execute_buy_with_locked_funds
+#[test]
+fn test_portfolio_execute_with_locked_funds() {
+    use trading_common::backtest::portfolio::Portfolio;
+
+    let mut portfolio = Portfolio::new(dec!(10000));
+
+    // Lock funds first
+    let lock_amount = dec!(1010); // 1000 + estimated 10 commission
+    portfolio.lock_funds(lock_amount).unwrap();
+
+    // Available cash should be reduced
+    assert_eq!(portfolio.available_cash(), dec!(10000) - dec!(1010));
+
+    // Execute buy using locked funds
+    let result = portfolio.execute_buy_with_locked_funds(
+        "BTCUSDT".to_string(),
+        dec!(10),
+        dec!(100),       // price
+        dec!(1),         // commission
+        lock_amount,     // locked amount
+    );
+    assert!(result.is_ok());
+
+    // Locked cash should be released
+    assert_eq!(portfolio.locked_cash, dec!(0));
+
+    // Cash should be reduced by actual cost: 10 * 100 + 1 = 1001
+    assert_eq!(portfolio.cash, dec!(10000) - dec!(1001));
+
+    // Position should be created
+    assert!(portfolio.has_position("BTCUSDT"));
+    let position = portfolio.positions.get("BTCUSDT").unwrap();
+    assert_eq!(position.quantity, dec!(10));
+    assert_eq!(position.avg_price, dec!(100));
+}
+
+/// Test that order cancellation unlocks funds
+#[test]
+fn test_order_cancel_unlocks_funds() {
+    use trading_common::data::types::Timeframe;
+    use trading_common::execution::SimulatedExchange;
+
+    let venue = "TEST";
+    let mut exchange = SimulatedExchange::new(venue);
+
+    // Create an order
+    let order = Order::limit("BTCUSDT", OrderSide::Buy, dec!(1), dec!(50000))
+        .with_venue(venue)
+        .build()
+        .unwrap();
+    let order_id = order.client_order_id.clone();
+
+    // Submit and accept
+    exchange.submit_order(order);
+    exchange.process_inflight_commands();
+
+    // Verify order exists
+    assert!(exchange.has_order(&order_id));
+
+    // Cancel the order
+    exchange.cancel_order(order_id.clone());
+    let cancel_events = exchange.process_inflight_commands();
+
+    // Should have cancel event
+    assert_eq!(cancel_events.len(), 1);
+    match &cancel_events[0] {
+        trading_common::orders::OrderEventAny::Canceled(cancel) => {
+            assert_eq!(cancel.client_order_id, order_id);
+        }
+        _ => panic!("Expected Canceled event"),
+    }
+
+    // Order should no longer exist
+    assert!(!exchange.has_order(&order_id));
+}
+
+/// Test has_available_funds check
+#[test]
+fn test_has_available_funds() {
+    use trading_common::backtest::portfolio::Portfolio;
+
+    let mut portfolio = Portfolio::new(dec!(10000));
+
+    // Initially has all funds available
+    assert!(portfolio.has_available_funds(dec!(10000)));
+    assert!(portfolio.has_available_funds(dec!(5000)));
+    assert!(!portfolio.has_available_funds(dec!(10001))); // Over limit
+
+    // Lock some funds
+    portfolio.lock_funds(dec!(6000)).unwrap();
+
+    // Now less available
+    assert!(portfolio.has_available_funds(dec!(4000)));
+    assert!(!portfolio.has_available_funds(dec!(4001))); // Over available
+    assert!(!portfolio.has_available_funds(dec!(10000))); // Way over available
 }

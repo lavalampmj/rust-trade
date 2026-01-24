@@ -299,11 +299,34 @@ impl SimulatedExchange {
     // === INTERNAL PROCESSING ===
 
     /// Process a submit order command.
+    ///
+    /// Properly transitions order state:
+    /// Initialized → Submitted → Accepted (or Rejected)
     fn process_submit(&mut self, order: Order) -> Vec<OrderEventAny> {
+        use crate::orders::OrderStatus;
         let mut events = Vec::new();
+
+        // Create mutable order for state transitions
+        let mut stored_order = order.clone();
+
+        // Transition: Initialized → Submitted
+        if let Err(e) = stored_order.transition_to(OrderStatus::Submitted) {
+            // Order in invalid state for submission
+            events.push(OrderEventAny::Rejected(OrderRejected {
+                event_id: EventId(uuid::Uuid::new_v4()),
+                client_order_id: order.client_order_id.clone(),
+                account_id: order.account_id.clone(),
+                reason: format!("Invalid order state for submission: {}", e),
+                ts_event: self.current_datetime(),
+                ts_init: Utc::now(),
+            }));
+            return events;
+        }
 
         // Validate order
         if self.config.reject_stop_orders && order.is_stop_order() {
+            // Transition to Rejected state
+            let _ = stored_order.transition_to(OrderStatus::Rejected);
             events.push(OrderEventAny::Rejected(OrderRejected {
                 event_id: EventId(uuid::Uuid::new_v4()),
                 client_order_id: order.client_order_id.clone(),
@@ -318,15 +341,25 @@ impl SimulatedExchange {
         // Generate venue order ID
         let venue_order_id = VenueOrderId(format!("SIM-{}", uuid::Uuid::new_v4()));
 
-        // Create stored order with venue_order_id already set
-        let mut stored_order = order.clone();
+        // Set venue order ID and transition to Accepted
         stored_order.venue_order_id = Some(venue_order_id.clone());
+        if let Err(e) = stored_order.transition_to(OrderStatus::Accepted) {
+            events.push(OrderEventAny::Rejected(OrderRejected {
+                event_id: EventId(uuid::Uuid::new_v4()),
+                client_order_id: order.client_order_id.clone(),
+                account_id: order.account_id.clone(),
+                reason: format!("Failed to accept order: {}", e),
+                ts_event: self.current_datetime(),
+                ts_init: Utc::now(),
+            }));
+            return events;
+        }
 
         // Store order for later fill event creation
         self.stored_orders.insert(
             order.client_order_id.clone(),
             StoredOrder {
-                order: stored_order,
+                order: stored_order.clone(),
                 venue_order_id: venue_order_id.clone(),
                 cum_qty: Decimal::ZERO,
             },
@@ -342,32 +375,82 @@ impl SimulatedExchange {
             ts_init: Utc::now(),
         }));
 
-        // Add to matching engine
-        let engine = self.get_or_create_engine(&order.instrument_id);
-        engine.add_order(order);
+        // Add to matching engine (pass the state-transitioned order)
+        let engine = self.get_or_create_engine(&stored_order.instrument_id);
+        engine.add_order(stored_order);
 
         events
     }
 
     /// Process a cancel order command.
+    ///
+    /// Properly transitions order state to Canceled if cancelable.
     fn process_cancel(&mut self, client_order_id: &ClientOrderId) -> Vec<OrderEventAny> {
         let mut events = Vec::new();
 
-        // Find the stored order
-        if let Some(stored) = self.stored_orders.get(client_order_id).cloned() {
-            let instrument_id = stored.order.instrument_id.clone();
-            if let Some(engine) = self.matching_engines.get_mut(&instrument_id) {
-                if engine.cancel_order(client_order_id).is_some() {
-                    events.push(OrderEventAny::Canceled(OrderCanceled {
+        // Find the stored order (get mutable reference)
+        if let Some(stored) = self.stored_orders.get_mut(client_order_id) {
+            // Check if order is cancelable
+            if !stored.order.is_cancelable() {
+                // Cannot cancel - order in non-cancelable state
+                events.push(OrderEventAny::CancelRejected(
+                    crate::orders::OrderCancelRejected {
                         event_id: EventId(uuid::Uuid::new_v4()),
                         client_order_id: client_order_id.clone(),
-                        venue_order_id: Some(stored.venue_order_id),
+                        venue_order_id: Some(stored.venue_order_id.clone()),
                         account_id: stored.order.account_id.clone(),
+                        reason: format!(
+                            "Order cannot be canceled in status: {:?}",
+                            stored.order.status
+                        ),
                         ts_event: self.current_datetime(),
                         ts_init: Utc::now(),
-                    }));
-                    self.stored_orders.remove(client_order_id);
-                }
+                    },
+                ));
+                return events;
+            }
+
+            // Transition order to Canceled state
+            if let Err(e) = stored.order.cancel() {
+                events.push(OrderEventAny::CancelRejected(
+                    crate::orders::OrderCancelRejected {
+                        event_id: EventId(uuid::Uuid::new_v4()),
+                        client_order_id: client_order_id.clone(),
+                        venue_order_id: Some(stored.venue_order_id.clone()),
+                        account_id: stored.order.account_id.clone(),
+                        reason: format!("Failed to cancel order: {}", e),
+                        ts_event: self.current_datetime(),
+                        ts_init: Utc::now(),
+                    },
+                ));
+                return events;
+            }
+
+            // Get values for event before removing
+            let venue_order_id = stored.venue_order_id.clone();
+            let account_id = stored.order.account_id.clone();
+            let instrument_id = stored.order.instrument_id.clone();
+
+            // Remove from matching engine
+            if let Some(engine) = self.matching_engines.get_mut(&instrument_id) {
+                engine.cancel_order(client_order_id);
+            }
+
+            // Generate canceled event
+            events.push(OrderEventAny::Canceled(OrderCanceled {
+                event_id: EventId(uuid::Uuid::new_v4()),
+                client_order_id: client_order_id.clone(),
+                venue_order_id: Some(venue_order_id),
+                account_id,
+                ts_event: self.current_datetime(),
+                ts_init: Utc::now(),
+            }));
+        }
+
+        // Remove from stored orders after processing
+        if !events.is_empty() {
+            if let Some(OrderEventAny::Canceled(_)) = events.first() {
+                self.stored_orders.remove(client_order_id);
             }
         }
 

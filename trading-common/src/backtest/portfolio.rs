@@ -27,6 +27,8 @@ pub struct Trade {
 pub struct Portfolio {
     pub initial_capital: Decimal,
     pub cash: Decimal,
+    /// Cash locked for pending buy orders
+    pub locked_cash: Decimal,
     pub positions: HashMap<String, Position>,
     pub trades: Vec<Trade>,
     pub current_prices: HashMap<String, Decimal>,
@@ -38,6 +40,7 @@ impl Portfolio {
         Self {
             initial_capital,
             cash: initial_capital,
+            locked_cash: Decimal::ZERO,
             positions: HashMap::new(),
             trades: Vec::new(),
             current_prices: HashMap::new(),
@@ -48,6 +51,50 @@ impl Portfolio {
     pub fn with_commission_rate(mut self, rate: Decimal) -> Self {
         self.commission_rate = rate;
         self
+    }
+
+    // === BALANCE MANAGEMENT ===
+
+    /// Get available cash (total cash minus locked for pending orders).
+    pub fn available_cash(&self) -> Decimal {
+        self.cash - self.locked_cash
+    }
+
+    /// Lock funds for a pending buy order.
+    ///
+    /// This reserves funds so they can't be used by other orders.
+    /// Locked funds are released when the order fills or is canceled.
+    pub fn lock_funds(&mut self, amount: Decimal) -> Result<(), String> {
+        let available = self.available_cash();
+        if amount > available {
+            return Err(format!(
+                "Insufficient available funds: need ${}, available ${}",
+                amount, available
+            ));
+        }
+        self.locked_cash += amount;
+        Ok(())
+    }
+
+    /// Unlock funds when an order is canceled.
+    ///
+    /// Returns the funds to available cash.
+    pub fn unlock_funds(&mut self, amount: Decimal) {
+        self.locked_cash = (self.locked_cash - amount).max(Decimal::ZERO);
+    }
+
+    /// Release locked funds when an order fills.
+    ///
+    /// The funds are moved from locked to spent (reduces both locked_cash and cash).
+    /// Use this before execute_buy_with_locked_funds.
+    pub fn release_locked_funds(&mut self, amount: Decimal) {
+        // Just unlock - the actual cash reduction happens in execute_buy
+        self.locked_cash = (self.locked_cash - amount).max(Decimal::ZERO);
+    }
+
+    /// Check if there's enough available cash (excluding locked funds).
+    pub fn has_available_funds(&self, amount: Decimal) -> bool {
+        self.available_cash() >= amount
     }
 
     pub fn update_price(&mut self, symbol: &str, price: Decimal) {
@@ -88,6 +135,78 @@ impl Portfolio {
         if total_cost > self.cash {
             return Err(format!(
                 "Insufficient funds: need ${}, available ${}",
+                total_cost, self.cash
+            ));
+        }
+
+        self.cash -= total_cost;
+
+        match self.positions.get_mut(&symbol) {
+            Some(position) => {
+                let total_quantity = position.quantity + quantity;
+                let total_cost = position.quantity * position.avg_price + cost;
+                position.avg_price = total_cost / total_quantity;
+                position.quantity = total_quantity;
+                position.market_value = total_quantity * price;
+                position.unrealized_pnl = (price - position.avg_price) * total_quantity;
+            }
+            None => {
+                self.positions.insert(
+                    symbol.clone(),
+                    Position {
+                        symbol: symbol.clone(),
+                        quantity,
+                        avg_price: price,
+                        market_value: quantity * price,
+                        unrealized_pnl: Decimal::ZERO,
+                    },
+                );
+            }
+        }
+
+        self.trades.push(Trade {
+            symbol,
+            side: TradeSide::Buy,
+            quantity,
+            price,
+            timestamp: Utc::now(),
+            realized_pnl: None,
+            commission,
+        });
+
+        Ok(())
+    }
+
+    /// Execute a buy using previously locked funds.
+    ///
+    /// This method should be used when funds were locked at order submission time
+    /// (via `lock_funds`) and the order has now filled. The locked funds are released
+    /// and the actual cash is deducted.
+    ///
+    /// # Arguments
+    /// * `symbol` - The symbol to buy
+    /// * `quantity` - The quantity to buy
+    /// * `price` - The fill price
+    /// * `commission` - The commission (from exchange fee model)
+    /// * `locked_amount` - The amount that was locked at submission time
+    pub fn execute_buy_with_locked_funds(
+        &mut self,
+        symbol: String,
+        quantity: Decimal,
+        price: Decimal,
+        commission: Decimal,
+        locked_amount: Decimal,
+    ) -> Result<(), String> {
+        let cost = quantity * price;
+        let total_cost = cost + commission;
+
+        // Release the locked funds first
+        self.release_locked_funds(locked_amount);
+
+        // Check if we have enough cash (should always pass if locking was done correctly)
+        if total_cost > self.cash {
+            return Err(format!(
+                "Insufficient funds after unlock: need ${}, available ${}",
                 total_cost, self.cash
             ));
         }
