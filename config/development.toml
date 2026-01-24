@@ -55,6 +55,8 @@ port = 8080
 max_connections = 8  # Increased from 5 for 10 trading pairs
 min_connections = 2  # Keep warm connections ready
 max_lifetime = 1800  # 30 minutes
+acquire_timeout_secs = 30  # Connection acquire timeout
+idle_timeout_secs = 600    # Idle connection timeout (10 minutes)
 
 [cache]
 [cache.memory]
@@ -70,6 +72,182 @@ max_ticks_per_symbol = 10000
 enabled = true
 strategy = "rsi_python"
 initial_capital = 10000.0
+
+# =============================================================================
+# EXECUTION SIMULATION CONFIGURATION
+# =============================================================================
+# Controls how orders are simulated in backtesting and paper trading
+
+[execution]
+# Fee configuration
+[execution.fees]
+# Default fee model: "zero", "binance_spot", "binance_futures", "custom"
+default_model = "zero"
+
+# Binance spot fees (0.1% maker/taker - VIP0 level)
+[execution.fees.binance_spot]
+maker = "0.001"
+taker = "0.001"
+
+# Binance spot fees with BNB discount (0.075% maker/taker)
+[execution.fees.binance_spot_bnb]
+maker = "0.00075"
+taker = "0.00075"
+
+# Binance futures fees (0.02% maker, 0.04% taker - VIP0 level)
+[execution.fees.binance_futures]
+maker = "0.0002"
+taker = "0.0004"
+
+# Custom fee rates (used when default_model = "custom")
+[execution.fees.custom]
+maker = "0.001"
+taker = "0.001"
+
+# Tiered fee structure (for VIP levels)
+# Uncomment to enable tiered fees based on 30-day volume
+# [[execution.fees.tiered]]
+# name = "VIP0"
+# min_volume = "0"
+# maker = "0.001"
+# taker = "0.001"
+#
+# [[execution.fees.tiered]]
+# name = "VIP1"
+# min_volume = "1000000"
+# maker = "0.0009"
+# taker = "0.001"
+#
+# [[execution.fees.tiered]]
+# name = "VIP2"
+# min_volume = "5000000"
+# maker = "0.0008"
+# taker = "0.001"
+
+# Latency configuration for realistic order execution
+[execution.latency]
+# Latency model: "none", "fixed", "variable"
+model = "fixed"
+# Insert (order submission) latency in milliseconds
+insert_ms = 50
+# Update (order modification) latency in milliseconds
+update_ms = 50
+# Delete (order cancellation) latency in milliseconds
+delete_ms = 30
+# Jitter for variable latency model (max additional delay in ms)
+jitter_ms = 0
+# Random seed for variable latency (0 = random seed each run)
+seed = 0
+
+# =============================================================================
+# SERVICE CONFIGURATION
+# =============================================================================
+# Market data service and processing pipeline settings
+
+[service]
+# Channel capacity for tick processing pipeline
+# Larger buffer helps with backpressure during high-volume periods
+channel_capacity = 10000
+# Health monitor interval in seconds
+health_monitor_interval_secs = 30
+# Bar timer interval in seconds (for OHLC generation)
+bar_timer_interval_secs = 1
+# Reconnection delay on IPC failure in seconds
+reconnection_delay_secs = 5
+
+# =============================================================================
+# IPC CONFIGURATION
+# =============================================================================
+# IPC data source settings (used when receiving data from data-manager)
+
+[ipc]
+# Shared memory path prefix (must match data-manager)
+shm_path_prefix = "/data_manager_"
+# Poll interval in microseconds when no data available
+poll_interval_us = 100
+# Channel buffer size for tick forwarding
+channel_buffer_size = 10000
+# Stats logging interval in seconds
+stats_interval_secs = 30
+
+# =============================================================================
+# BUILT-IN STRATEGIES CONFIGURATION
+# =============================================================================
+# Default parameters for built-in trading strategies
+
+[builtin_strategies]
+# RSI Strategy defaults
+[builtin_strategies.rsi]
+period = 14                      # RSI calculation period
+oversold = 30                    # Buy signal threshold
+overbought = 70                  # Sell signal threshold
+order_quantity = "100"           # Default order quantity
+lookback_multiplier = 2.0        # Lookback = period * multiplier + buffer
+lookback_buffer = 10             # Additional lookback bars
+
+# SMA Strategy defaults
+[builtin_strategies.sma]
+short_period = 5                 # Fast moving average period
+long_period = 20                 # Slow moving average period
+order_quantity = "100"           # Default order quantity
+lookback_multiplier = 2.0        # Lookback = long_period * multiplier
+
+# =============================================================================
+# BACKTEST CONFIGURATION
+# =============================================================================
+# Backtest engine settings
+
+[backtest]
+# Default commission rate (0.1%)
+default_commission_rate = "0.001"
+# Default number of records for interactive backtest
+default_records = 10000
+# Default initial capital
+default_capital = "10000"
+# Minimum records required for backtest
+minimum_records = 100
+
+# Backtest metrics calculation settings
+[backtest.metrics]
+# Square root calculation tolerance (Newton's method precision)
+sqrt_tolerance = "0.000001"
+# Maximum iterations for square root calculation
+sqrt_max_iterations = 50
+
+# =============================================================================
+# REPOSITORY CONFIGURATION
+# =============================================================================
+# Database query and batch operation settings
+
+[repository]
+# Default query limit for database queries
+default_query_limit = 1000
+# Maximum query limit for database queries
+max_query_limit = 10000
+# Maximum batch size for bulk inserts
+max_batch_size = 1000
+
+# =============================================================================
+# TAURI DESKTOP APP CONFIGURATION
+# =============================================================================
+# Settings for the Tauri desktop frontend
+
+[tauri]
+# Default query limit for historical data requests
+default_query_limit = 1000
+# Maximum query limit for historical data requests
+max_query_limit = 10000
+
+# =============================================================================
+# METRICS CONFIGURATION
+# =============================================================================
+# Prometheus metrics server settings
+
+[metrics]
+# Bind address for metrics HTTP server (Prometheus endpoint)
+bind_address = "0.0.0.0:9090"
+# Tick interval for metrics updates in seconds
+tick_interval_secs = 1
 
 [strategies]
 # Directory containing Python strategy files

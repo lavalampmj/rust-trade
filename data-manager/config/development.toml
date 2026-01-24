@@ -29,6 +29,12 @@ default_symbols = [
     "ETHUSDT",
 ]
 
+# Binance reconnection settings
+[provider.binance.reconnection]
+initial_delay_secs = 1           # Initial reconnection delay
+max_delay_secs = 60              # Maximum reconnection delay (exponential backoff cap)
+max_attempts = 10                # Maximum reconnection attempts before giving up
+
 # =================================================================
 # IPC Transport Configuration
 # =================================================================
@@ -161,3 +167,60 @@ realtime = "databento"
 # dataset = "GLBX.MDP3"
 # [routing.symbols.provider_symbols]
 # databento = "ES.FUT"
+
+# =================================================================
+# DATA VALIDATION CONFIGURATION
+# =================================================================
+# Validation rules for incoming tick data to ensure data quality
+
+[validation]
+# Enable tick data validation
+enabled = true
+# Maximum price (reject ticks above this value) - $10M default
+max_price = "10000000"
+# Maximum price change per tick (percentage) - reject >50% changes
+max_price_change_percent = "50"
+# Maximum symbol length
+max_symbol_length = 20
+# Maximum exchange name length
+max_exchange_length = 20
+# Maximum trade ID length
+max_trade_id_length = 100
+# Maximum timestamp age in hours (reject ticks older than this)
+max_timestamp_age_hours = 24
+# Maximum timestamp future tolerance in seconds
+max_timestamp_future_secs = 60
+# Require trade ID on all ticks
+require_trade_id = false
+
+# Symbol-specific price change thresholds (overrides default)
+# Use lower thresholds for stablecoins, higher for volatile assets
+[validation.symbol_overrides]
+BTCUSDT = "10"    # 10% max change for Bitcoin
+ETHUSDT = "15"    # 15% max change for Ethereum
+USDTUSDC = "1"    # 1% max for stablecoin pairs
+BUSDUSDT = "1"    # 1% max for stablecoin pairs
+
+# =================================================================
+# SCHEDULER CONFIGURATION
+# =================================================================
+# Job scheduling and management settings
+
+[scheduler]
+# Maximum job history entries to retain
+max_job_history = 100
+# Job cleanup interval in seconds
+cleanup_interval_secs = 3600     # 1 hour
+
+# =================================================================
+# SUBSCRIPTION CONFIGURATION
+# =================================================================
+# Market data subscription settings
+
+[subscription]
+# Default snapshot depth for order book
+snapshot_depth = 100
+# Default backfill duration in minutes (when data is missing)
+default_backfill_duration_minutes = 5
+# Default backfill max records
+default_backfill_max_records = 10000

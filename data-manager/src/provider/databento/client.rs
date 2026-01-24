@@ -81,6 +81,8 @@ impl DatabentoClient {
         let settings = DatabentoSettings {
             api_key,
             default_dataset: "GLBX.MDP3".to_string(),
+            default_lookback_days: 30,
+            reconnection: Default::default(),
         };
         Self::new(&settings)
     }
@@ -344,6 +346,8 @@ mod tests {
         let settings = DatabentoSettings {
             api_key: "test_key".to_string(),
             default_dataset: "GLBX.MDP3".to_string(),
+            default_lookback_days: 30,
+            reconnection: Default::default(),
         };
         let client = DatabentoClient::new(&settings);
         assert_eq!(client.info().name, "databento");
@@ -355,6 +359,8 @@ mod tests {
         let settings = DatabentoSettings {
             api_key: String::new(),
             default_dataset: "GLBX.MDP3".to_string(),
+            default_lookback_days: 30,
+            reconnection: Default::default(),
         };
         let mut client = DatabentoClient::new(&settings);
         let result = client.connect().await;
