@@ -94,6 +94,41 @@ impl AccountsConfig {
             simulation: Vec::new(),
         }
     }
+
+    /// Create config with a custom default account.
+    pub fn with_default(id: &str, currency: &str, initial_balance: Decimal) -> Self {
+        Self {
+            default: DefaultAccountConfig {
+                id: id.to_string(),
+                currency: currency.to_string(),
+                initial_balance,
+            },
+            simulation: Vec::new(),
+        }
+    }
+
+    /// Add a simulation account to the config (builder pattern).
+    pub fn add_simulation_account(
+        mut self,
+        id: &str,
+        currency: &str,
+        initial_balance: Decimal,
+        strategies: Vec<String>,
+    ) -> Self {
+        self.simulation.push(SimulationAccountConfig {
+            id: id.to_string(),
+            currency: currency.to_string(),
+            initial_balance,
+            strategies,
+        });
+        self
+    }
+}
+
+impl Default for AccountsConfig {
+    fn default() -> Self {
+        Self::empty(Decimal::ZERO)
+    }
 }
 
 impl DefaultAccountConfig {
@@ -226,6 +261,51 @@ mod tests {
         let accounts = config.build_accounts();
         assert_eq!(accounts.len(), 1);
         assert_eq!(accounts[0].total_base(), dec!(10000));
+    }
+
+    #[test]
+    fn test_default_impl() {
+        let config = AccountsConfig::default();
+
+        assert_eq!(config.default.id, "DEFAULT");
+        assert_eq!(config.default.currency, "USDT");
+        assert_eq!(config.default.initial_balance, Decimal::ZERO);
+        assert!(config.simulation.is_empty());
+    }
+
+    #[test]
+    fn test_builder_pattern() {
+        let config = AccountsConfig::with_default("MAIN", "USDT", dec!(100000))
+            .add_simulation_account(
+                "AGGRESSIVE",
+                "USDT",
+                dec!(50000),
+                vec!["momentum".to_string(), "breakout".to_string()],
+            )
+            .add_simulation_account(
+                "CONSERVATIVE",
+                "USDT",
+                dec!(200000),
+                vec!["mean_reversion".to_string()],
+            );
+
+        assert_eq!(config.default.id, "MAIN");
+        assert_eq!(config.default.initial_balance, dec!(100000));
+        assert_eq!(config.simulation.len(), 2);
+
+        assert_eq!(config.simulation[0].id, "AGGRESSIVE");
+        assert_eq!(config.simulation[0].strategies.len(), 2);
+
+        assert_eq!(config.simulation[1].id, "CONSERVATIVE");
+        assert_eq!(config.simulation[1].initial_balance, dec!(200000));
+
+        // Test strategy lookups
+        assert_eq!(config.account_for_strategy("momentum"), "AGGRESSIVE");
+        assert_eq!(
+            config.account_for_strategy("mean_reversion"),
+            "CONSERVATIVE"
+        );
+        assert_eq!(config.account_for_strategy("unknown"), "MAIN");
     }
 
     #[test]
