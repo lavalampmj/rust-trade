@@ -276,6 +276,37 @@ pub trait Strategy {
 - Both generators produce identical `BarData` events given same input ticks
 - Synthetic bars ensure continuity: if no ticks during a period, bar generated with O=H=L=C=last_price
 
+**Multi-Account Support** (SimulatedExchange):
+
+The `SimulatedExchange` supports multiple simulation accounts with isolated balances:
+
+```rust
+// Single account (simple setup)
+let exchange = SimulatedExchange::new()
+    .with_account(Account::simulated("DEFAULT", "USDT"))
+    .with_default_account(AccountId::new("DEFAULT"));
+
+// Multi-account from TOML config
+let config = AccountsConfig::with_default("MAIN", "USDT", dec!(100000))
+    .add_simulation_account("AGGRESSIVE", "USDT", dec!(50000), vec!["momentum".into()])
+    .add_simulation_account("CONSERVATIVE", "USDT", dec!(200000), vec!["rsi".into()]);
+
+let exchange = SimulatedExchange::new()
+    .with_accounts_config(&config);
+```
+
+**Key features**:
+- `HashMap<AccountId, Account>`: Multiple accounts with isolated balances
+- `locked_amounts: HashMap<ClientOrderId, (AccountId, Decimal)>`: Per-order fund locking tracks source account
+- `resolve_account_id()`: Routes orders to correct account (falls back to default if empty)
+- Strategy-account mapping: Strategies can specify `account_id()` to use specific accounts
+
+**Account access methods**:
+- `account(&AccountId)`: Get specific account by ID
+- `default_account()`: Get the default account
+- `all_accounts()`: Iterate over all accounts
+- `total_locked_for_account(&AccountId)`: Get total locked funds for an account
+
 #### 6. Paper Trading (trading-core/src/live_trading/paper_trading.rs)
 
 Real-time strategy validation against live data.
@@ -383,6 +414,46 @@ ttl_seconds = 3600
 enabled = true
 strategy = "rsi"
 initial_capital = 10000.0
+
+# =============================================================================
+# SIMULATION ACCOUNTS (Multi-Account Support)
+# =============================================================================
+[accounts.default]
+id = "SIM-001"
+currency = "USDT"
+initial_balance = "100000"
+
+[[accounts.simulation]]
+id = "SIM-AGGRESSIVE"
+currency = "USDT"
+initial_balance = "50000"
+strategies = ["momentum", "breakout"]  # Strategies that use this account
+
+[[accounts.simulation]]
+id = "SIM-CONSERVATIVE"
+currency = "USDT"
+initial_balance = "200000"
+strategies = ["mean_reversion", "rsi"]
+```
+
+**Accounts configuration** (trading-common/src/accounts/config.rs):
+- `AccountsConfig`: Root config with default account + simulation accounts
+- `account_for_strategy(strategy_id)`: Maps strategy to its account (falls back to default)
+- `build_accounts()`: Creates `Vec<Account>` from config
+- `build_accounts_map()`: Creates `HashMap<AccountId, Account>` for exchange
+
+**Builder pattern for programmatic setup**:
+```rust
+use trading_common::accounts::AccountsConfig;
+use rust_decimal_macros::dec;
+
+let config = AccountsConfig::with_default("MAIN", "USDT", dec!(100000))
+    .add_simulation_account("AGGRESSIVE", "USDT", dec!(50000), vec!["momentum".into()])
+    .add_simulation_account("CONSERVATIVE", "USDT", dec!(200000), vec!["rsi".into()]);
+
+// Use with BacktestEngine
+let engine = BacktestEngine::new()
+    .with_accounts_config(&config);
 ```
 
 ## Database Setup
