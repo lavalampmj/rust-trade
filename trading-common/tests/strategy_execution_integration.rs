@@ -1547,3 +1547,145 @@ fn test_order_modification_with_account() {
         assert_eq!(acc.balance("USD").unwrap().free, dec!(60000));
     }
 }
+
+/// Test GTD order expiration
+#[test]
+fn test_gtd_order_expiration() {
+    use chrono::Duration;
+    use trading_common::data::types::Timeframe;
+    use trading_common::execution::SimulatedExchange;
+    use trading_common::orders::{OrderEventAny, TimeInForce};
+
+    let venue = "TEST";
+    let mut exchange = SimulatedExchange::new(venue);
+
+    // Create a GTD order that expires in the "past" (relative to bar time)
+    let expire_time = Utc::now() + Duration::seconds(60); // Expires in 60 seconds
+
+    let order = Order::limit("BTCUSDT", OrderSide::Buy, dec!(1), dec!(50000))
+        .with_venue(venue)
+        .with_time_in_force(TimeInForce::GTD)
+        .with_expire_time(expire_time)
+        .build()
+        .unwrap();
+    let order_id = order.client_order_id.clone();
+
+    exchange.submit_order(order);
+    exchange.process_inflight_commands();
+
+    // Verify order exists
+    assert!(exchange.has_order(&order_id));
+
+    // Process a bar BEFORE expiry - order should NOT expire
+    let bar1 = OHLCData {
+        timestamp: Utc::now(),
+        symbol: "BTCUSDT".to_string(),
+        timeframe: Timeframe::OneMinute,
+        open: dec!(51000),
+        high: dec!(51200),
+        low: dec!(50800), // Above limit, so no fill
+        close: dec!(51100),
+        volume: dec!(100),
+        trade_count: 10,
+    };
+
+    // Advance time but still before expiry
+    exchange.advance_time((Utc::now() + Duration::seconds(30)).timestamp_nanos_opt().unwrap() as u64);
+    let events = exchange.process_bar(&bar1);
+
+    // No fills or expirations
+    assert!(events.is_empty());
+    assert!(exchange.has_order(&order_id)); // Order still exists
+
+    // Process a bar AFTER expiry - order should expire
+    let bar2 = OHLCData {
+        timestamp: expire_time + Duration::seconds(10),
+        symbol: "BTCUSDT".to_string(),
+        timeframe: Timeframe::OneMinute,
+        open: dec!(51000),
+        high: dec!(51200),
+        low: dec!(50800), // Still above limit
+        close: dec!(51100),
+        volume: dec!(100),
+        trade_count: 10,
+    };
+
+    // Advance time past expiry
+    exchange.advance_time((expire_time + Duration::seconds(10)).timestamp_nanos_opt().unwrap() as u64);
+    let events = exchange.process_bar(&bar2);
+
+    // Should have expiration event
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        OrderEventAny::Expired(expired) => {
+            assert_eq!(expired.client_order_id, order_id);
+        }
+        _ => panic!("Expected Expired event, got {:?}", events[0]),
+    }
+
+    // Order should no longer exist
+    assert!(!exchange.has_order(&order_id));
+}
+
+/// Test GTD order with account unlocks funds on expiration
+#[test]
+fn test_gtd_order_expiration_unlocks_funds() {
+    use chrono::Duration;
+    use trading_common::accounts::Account;
+    use trading_common::data::types::Timeframe;
+    use trading_common::execution::SimulatedExchange;
+    use trading_common::orders::{OrderEventAny, TimeInForce};
+
+    let venue = "TEST";
+
+    let mut account = Account::cash("test-account", "USD");
+    account.deposit("USD", dec!(100000));
+
+    let mut exchange = SimulatedExchange::new(venue).with_account(account);
+
+    let expire_time = Utc::now() + Duration::seconds(60);
+
+    let order = Order::limit("BTCUSDT", OrderSide::Buy, dec!(1), dec!(50000))
+        .with_venue(venue)
+        .with_time_in_force(TimeInForce::GTD)
+        .with_expire_time(expire_time)
+        .build()
+        .unwrap();
+
+    exchange.submit_order(order);
+    exchange.process_inflight_commands();
+
+    // Verify funds locked
+    {
+        let acc = exchange.account().unwrap();
+        assert_eq!(acc.balance("USD").unwrap().locked, dec!(50000));
+    }
+
+    // Advance past expiry and process bar
+    let bar = OHLCData {
+        timestamp: expire_time + Duration::seconds(10),
+        symbol: "BTCUSDT".to_string(),
+        timeframe: Timeframe::OneMinute,
+        open: dec!(51000),
+        high: dec!(51200),
+        low: dec!(50800),
+        close: dec!(51100),
+        volume: dec!(100),
+        trade_count: 10,
+    };
+
+    exchange.advance_time((expire_time + Duration::seconds(10)).timestamp_nanos_opt().unwrap() as u64);
+    let events = exchange.process_bar(&bar);
+
+    // Should have expiration
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], OrderEventAny::Expired(_)));
+
+    // Funds should be unlocked
+    {
+        let acc = exchange.account().unwrap();
+        assert_eq!(acc.balance("USD").unwrap().locked, dec!(0));
+        assert_eq!(acc.balance("USD").unwrap().free, dec!(100000));
+    }
+    assert_eq!(exchange.total_locked(), dec!(0));
+}

@@ -285,7 +285,7 @@ impl SimulatedExchange {
 
     /// Process an OHLC bar.
     ///
-    /// Returns fill events for any orders that matched.
+    /// Returns fill events for any orders that matched, plus any expired orders.
     pub fn process_bar(&mut self, bar: &OHLCData) -> Vec<OrderEventAny> {
         let instrument_id = InstrumentId::new(&bar.symbol, &self.venue);
 
@@ -296,10 +296,17 @@ impl SimulatedExchange {
         let matches = engine.process_bar(bar);
 
         // Convert to events
-        self.process_matches(matches)
+        let mut events = self.process_matches(matches);
+
+        // Check for expired GTD orders
+        events.extend(self.check_expired_orders());
+
+        events
     }
 
     /// Process a trade tick.
+    ///
+    /// Returns fill events for any orders that matched, plus any expired orders.
     pub fn process_trade_tick(
         &mut self,
         instrument_id: &InstrumentId,
@@ -309,10 +316,14 @@ impl SimulatedExchange {
     ) -> Vec<OrderEventAny> {
         let engine = self.get_or_create_engine(instrument_id);
         let matches = engine.process_trade_tick(price, quantity, timestamp);
-        self.process_matches(matches)
+        let mut events = self.process_matches(matches);
+        events.extend(self.check_expired_orders());
+        events
     }
 
     /// Process a quote tick.
+    ///
+    /// Returns fill events for any orders that matched, plus any expired orders.
     pub fn process_quote_tick(
         &mut self,
         instrument_id: &InstrumentId,
@@ -322,7 +333,9 @@ impl SimulatedExchange {
     ) -> Vec<OrderEventAny> {
         let engine = self.get_or_create_engine(instrument_id);
         let matches = engine.process_quote_tick(bid, ask, timestamp);
-        self.process_matches(matches)
+        let mut events = self.process_matches(matches);
+        events.extend(self.check_expired_orders());
+        events
     }
 
     // === INTERNAL PROCESSING ===
@@ -835,6 +848,71 @@ impl SimulatedExchange {
             let leaves_qty = (s.order.quantity - cum_qty).max(Decimal::ZERO);
             (cum_qty, leaves_qty)
         })
+    }
+
+    /// Check and expire GTD (Good-Till-Date) orders that have passed their expiry time.
+    ///
+    /// This should be called periodically (e.g., with each bar/tick) to expire orders.
+    /// Returns events for any expired orders.
+    pub fn check_expired_orders(&mut self) -> Vec<OrderEventAny> {
+        use crate::orders::{OrderExpired, TimeInForce};
+
+        if !self.config.support_gtd_orders {
+            return Vec::new();
+        }
+
+        let current_time = self.current_datetime();
+        let mut events = Vec::new();
+        let mut expired_ids = Vec::new();
+
+        // Find expired orders
+        for (client_order_id, stored) in &self.stored_orders {
+            if stored.order.time_in_force == TimeInForce::GTD {
+                if let Some(expire_time) = stored.order.expire_time {
+                    if current_time >= expire_time {
+                        expired_ids.push((
+                            client_order_id.clone(),
+                            stored.venue_order_id.clone(),
+                            stored.order.account_id.clone(),
+                            stored.order.instrument_id.clone(),
+                            stored.order.side,
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Expire found orders
+        for (client_order_id, venue_order_id, account_id, instrument_id, side) in expired_ids {
+            // Remove from matching engine
+            if let Some(engine) = self.matching_engines.get_mut(&instrument_id) {
+                engine.cancel_order(&client_order_id);
+            }
+
+            // Remove from stored orders
+            self.stored_orders.remove(&client_order_id);
+
+            // Unlock any locked funds
+            if let Some(locked) = self.locked_amounts.remove(&client_order_id) {
+                if side == OrderSide::Buy {
+                    if let Some(account) = &mut self.account {
+                        let currency = &account.base_currency.clone();
+                        if let Some(balance) = account.balance_mut(currency) {
+                            let _ = balance.unlock(locked);
+                        }
+                    }
+                }
+            }
+
+            // Create expired event
+            events.push(OrderEventAny::Expired(OrderExpired::new(
+                client_order_id,
+                Some(venue_order_id),
+                account_id,
+            )));
+        }
+
+        events
     }
 
     /// Get the matching engine for an instrument (if exists).
