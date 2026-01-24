@@ -224,8 +224,9 @@ impl TimescaleOperations {
 
         Ok(CompressionStats {
             compressed_chunks: row.get::<Option<i64>, _>("compressed_chunks").unwrap_or(0) as u64,
-            uncompressed_chunks: row.get::<Option<i64>, _>("uncompressed_chunks").unwrap_or(0)
-                as u64,
+            uncompressed_chunks: row
+                .get::<Option<i64>, _>("uncompressed_chunks")
+                .unwrap_or(0) as u64,
             compressed_size: row
                 .get::<Option<String>, _>("compressed_size")
                 .unwrap_or_else(|| "0 bytes".to_string()),
@@ -244,10 +245,12 @@ impl TimescaleOperations {
             "1h" => "1 hour",
             "4h" => "4 hours",
             "1d" => "1 day",
-            _ => return Err(RepositoryError::InvalidData(format!(
-                "Unsupported timeframe: {}",
-                timeframe
-            ))),
+            _ => {
+                return Err(RepositoryError::InvalidData(format!(
+                    "Unsupported timeframe: {}",
+                    timeframe
+                )))
+            }
         };
 
         let view_name = format!("ohlc_{}", timeframe);

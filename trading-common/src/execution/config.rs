@@ -27,10 +27,12 @@ use rust_decimal::Decimal;
 use serde::Deserialize;
 
 use super::{
-    FixedLatencyModel, LatencyModel, MatchingEngineConfig, NoLatencyModel,
-    SimulatedExchangeConfig, VariableLatencyModel,
+    FixedLatencyModel, LatencyModel, MatchingEngineConfig, NoLatencyModel, SimulatedExchangeConfig,
+    VariableLatencyModel,
 };
-use crate::risk::{FeeModel, FeeTier, HybridFeeModel, PercentageFeeModel, TieredFeeModel, ZeroFeeModel};
+use crate::risk::{
+    FeeModel, FeeTier, HybridFeeModel, PercentageFeeModel, TieredFeeModel, ZeroFeeModel,
+};
 
 /// Root configuration for exchange simulation.
 #[derive(Debug, Clone, Deserialize)]
@@ -448,7 +450,9 @@ impl FeeTomlConfig {
                 Decimal::try_from(self.taker_rate).unwrap_or_default(),
             )),
             "tiered" => {
-                let num_tiers = self.tier_volume_thresholds.len()
+                let num_tiers = self
+                    .tier_volume_thresholds
+                    .len()
                     .min(self.tier_maker_rates.len())
                     .min(self.tier_taker_rates.len());
 
@@ -457,7 +461,8 @@ impl FeeTomlConfig {
                         .map(|i| {
                             FeeTier::new(
                                 format!("Tier {}", i + 1),
-                                Decimal::try_from(self.tier_volume_thresholds[i]).unwrap_or_default(),
+                                Decimal::try_from(self.tier_volume_thresholds[i])
+                                    .unwrap_or_default(),
                                 Decimal::try_from(self.tier_maker_rates[i]).unwrap_or_default(),
                                 Decimal::try_from(self.tier_taker_rates[i]).unwrap_or_default(),
                             )

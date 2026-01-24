@@ -96,10 +96,8 @@ impl OrderList {
     pub fn oto(entry: Order, children: Vec<Order>) -> Self {
         let id = OrderListId::generate();
         let entry_id = entry.client_order_id.clone();
-        let child_ids: HashSet<ClientOrderId> = children
-            .iter()
-            .map(|o| o.client_order_id.clone())
-            .collect();
+        let child_ids: HashSet<ClientOrderId> =
+            children.iter().map(|o| o.client_order_id.clone()).collect();
 
         let mut orders = vec![entry];
         orders.extend(children);
@@ -121,9 +119,9 @@ impl OrderList {
 
     /// Get the entry/primary order if this is an OTO list.
     pub fn entry_order(&self) -> Option<&Order> {
-        self.entry_order_id.as_ref().and_then(|id| {
-            self.orders.iter().find(|o| &o.client_order_id == id)
-        })
+        self.entry_order_id
+            .as_ref()
+            .and_then(|id| self.orders.iter().find(|o| &o.client_order_id == id))
     }
 
     /// Get child orders (orders triggered by entry fill).

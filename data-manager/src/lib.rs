@@ -31,12 +31,12 @@ pub mod validation;
 // Re-export commonly used types
 pub use config::Settings;
 pub use provider::{
-    DataProvider, HistoricalDataProvider, LiveStreamProvider,
-    ProviderError, ProviderResult, ProviderInfo,
+    DataProvider, HistoricalDataProvider, LiveStreamProvider, ProviderError, ProviderInfo,
+    ProviderResult,
 };
-pub use schema::{NormalizedTick, NormalizedOHLC, TradeSide};
+pub use schema::{NormalizedOHLC, NormalizedTick, TradeSide};
 pub use storage::MarketDataRepository;
-pub use subscription::{SubscriptionManager, SubscriptionRequest, BackfillRequest};
-pub use symbol::{SymbolUniverse, SymbolSpec, SymbolRegistry};
+pub use subscription::{BackfillRequest, SubscriptionManager, SubscriptionRequest};
+pub use symbol::{SymbolRegistry, SymbolSpec, SymbolUniverse};
 pub use transport::{Transport, TransportError};
 pub use validation::{TickValidator, ValidationConfig, ValidationError, ValidationResult};

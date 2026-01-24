@@ -37,15 +37,18 @@ impl BinanceNormalizer {
             .map_err(|e| ProviderError::Parse(format!("Invalid price '{}': {}", msg.price, e)))?;
 
         // Parse quantity
-        let quantity = Decimal::from_str(&msg.quantity)
-            .map_err(|e| ProviderError::Parse(format!("Invalid quantity '{}': {}", msg.quantity, e)))?;
+        let quantity = Decimal::from_str(&msg.quantity).map_err(|e| {
+            ProviderError::Parse(format!("Invalid quantity '{}': {}", msg.quantity, e))
+        })?;
 
         // Validate values
         if price <= Decimal::ZERO {
             return Err(ProviderError::Parse("Price must be positive".to_string()));
         }
         if quantity <= Decimal::ZERO {
-            return Err(ProviderError::Parse("Quantity must be positive".to_string()));
+            return Err(ProviderError::Parse(
+                "Quantity must be positive".to_string(),
+            ));
         }
 
         // Determine trade side
@@ -91,7 +94,9 @@ impl Default for BinanceNormalizer {
 /// Validate symbol format for Binance
 pub fn validate_symbol(symbol: &str) -> Result<String, ProviderError> {
     if symbol.is_empty() {
-        return Err(ProviderError::Configuration("Symbol cannot be empty".to_string()));
+        return Err(ProviderError::Configuration(
+            "Symbol cannot be empty".to_string(),
+        ));
     }
 
     let symbol = symbol.to_uppercase();
@@ -117,7 +122,9 @@ pub fn validate_symbol(symbol: &str) -> Result<String, ProviderError> {
 /// Build WebSocket subscription streams for Binance
 pub fn build_trade_streams(symbols: &[String]) -> Result<Vec<String>, ProviderError> {
     if symbols.is_empty() {
-        return Err(ProviderError::Configuration("No symbols provided".to_string()));
+        return Err(ProviderError::Configuration(
+            "No symbols provided".to_string(),
+        ));
     }
 
     let mut streams = Vec::with_capacity(symbols.len());

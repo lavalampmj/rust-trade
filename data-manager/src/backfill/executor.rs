@@ -12,9 +12,9 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use trading_common::data::backfill::{
-    BackfillError, BackfillRequest as CommonBackfillRequest, BackfillResult as CommonBackfillResult,
-    BackfillService, BackfillServiceResult, BackfillSource, BackfillStatus, CostEstimate, DataGap,
-    SpendStats,
+    BackfillError, BackfillRequest as CommonBackfillRequest,
+    BackfillResult as CommonBackfillResult, BackfillService, BackfillServiceResult, BackfillSource,
+    BackfillStatus, CostEstimate, DataGap, SpendStats,
 };
 use trading_common::data::backfill_config::BackfillConfig;
 use trading_common::data::gap_detection::{GapDetectionConfig, GapDetector};
@@ -108,7 +108,8 @@ impl<P: HistoricalDataProvider + 'static> BackfillExecutor<P> {
     /// Check if symbol is in cooldown
     fn is_in_cooldown(&self, symbol: &str) -> bool {
         if let Some(last_request) = self.cooldowns.read().get(symbol) {
-            let cooldown_duration = chrono::Duration::seconds(self.config.on_demand.cooldown_secs as i64);
+            let cooldown_duration =
+                chrono::Duration::seconds(self.config.on_demand.cooldown_secs as i64);
             Utc::now() < *last_request + cooldown_duration
         } else {
             false
@@ -117,7 +118,9 @@ impl<P: HistoricalDataProvider + 'static> BackfillExecutor<P> {
 
     /// Set cooldown for symbol
     fn set_cooldown(&self, symbol: &str) {
-        self.cooldowns.write().insert(symbol.to_string(), Utc::now());
+        self.cooldowns
+            .write()
+            .insert(symbol.to_string(), Utc::now());
     }
 
     /// Estimate cost for Databento data
@@ -194,8 +197,9 @@ impl<P: HistoricalDataProvider + 'static> BackfillExecutor<P> {
             .clone()
             .unwrap_or_else(|| self.config.provider.dataset.clone());
 
-        let request = HistoricalRequest::trades(symbols.clone(), job.request.start, job.request.end)
-            .with_dataset(dataset);
+        let request =
+            HistoricalRequest::trades(symbols.clone(), job.request.start, job.request.end)
+                .with_dataset(dataset);
 
         // Fetch data from provider
         info!(
@@ -569,12 +573,10 @@ impl<P: HistoricalDataProvider + Send + Sync + 'static> BackfillService for Back
                         "Cannot cancel running job".to_string(),
                     ))
                 }
-                _ => {
-                    Err(BackfillError::Internal(format!(
-                        "Job {} is already {} and cannot be cancelled",
-                        job_id, job.status
-                    )))
-                }
+                _ => Err(BackfillError::Internal(format!(
+                    "Job {} is already {} and cannot be cancelled",
+                    job_id, job.status
+                ))),
             }
         } else {
             Err(BackfillError::NotFound(job_id))

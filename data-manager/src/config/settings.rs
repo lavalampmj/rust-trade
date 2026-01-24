@@ -95,10 +95,7 @@ impl Default for BinanceSettings {
             ws_url: default_binance_ws_url(),
             rate_limit_attempts: default_rate_limit_attempts(),
             rate_limit_window_secs: default_rate_limit_window(),
-            default_symbols: vec![
-                "BTCUSDT".to_string(),
-                "ETHUSDT".to_string(),
-            ],
+            default_symbols: vec!["BTCUSDT".to_string(), "ETHUSDT".to_string()],
         }
     }
 }
@@ -236,8 +233,7 @@ impl Settings {
 
     /// Get the configuration directory path
     fn config_dir() -> String {
-        std::env::var("DATA_MANAGER_CONFIG_DIR")
-            .unwrap_or_else(|_| "config".into())
+        std::env::var("DATA_MANAGER_CONFIG_DIR").unwrap_or_else(|_| "config".into())
     }
 
     /// Create default settings (useful for testing)

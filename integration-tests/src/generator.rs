@@ -82,7 +82,8 @@ impl SymbolState {
     fn update_price(&mut self, rng: &mut ChaCha8Rng) {
         // Random walk: +/- 0.01% to 0.1%
         let change_pct = rng.gen_range(-0.001..0.001);
-        let change = self.current_price * Decimal::from_f64_retain(change_pct).unwrap_or(Decimal::ZERO);
+        let change =
+            self.current_price * Decimal::from_f64_retain(change_pct).unwrap_or(Decimal::ZERO);
         self.current_price += change;
         // Ensure price stays positive
         if self.current_price <= Decimal::ZERO {
@@ -147,8 +148,8 @@ impl TestDataGenerator {
         let end_time = start_time + Duration::seconds(self.config.time_window_secs as i64);
 
         // Initialize per-symbol state
-        let base_price = Decimal::from_f64_retain(self.config.base_price)
-            .unwrap_or(Decimal::from(50000));
+        let base_price =
+            Decimal::from_f64_retain(self.config.base_price).unwrap_or(Decimal::from(50000));
         let mut symbol_states: HashMap<String, SymbolState> = symbols
             .iter()
             .map(|s| (s.clone(), SymbolState::new(base_price)))
@@ -159,10 +160,8 @@ impl TestDataGenerator {
 
         // Generate ticks
         let mut ticks: Vec<TradeMsg> = Vec::with_capacity(timestamps.len());
-        let mut symbol_counts: HashMap<String, u64> = symbols
-            .iter()
-            .map(|s| (s.clone(), 0))
-            .collect();
+        let mut symbol_counts: HashMap<String, u64> =
+            symbols.iter().map(|s| (s.clone(), 0)).collect();
 
         for (ts_nanos, symbol) in timestamps {
             let state = symbol_states.get_mut(&symbol).unwrap();
@@ -299,7 +298,9 @@ impl TestDataGenerator {
             for i in 0..ticks_per_symbol {
                 // Uniform distribution with small jitter (+/- 10%)
                 let base_time = start_nanos + i * interval_nanos;
-                let jitter = self.rng.gen_range(-(interval_nanos as i64 / 10)..(interval_nanos as i64 / 10));
+                let jitter = self
+                    .rng
+                    .gen_range(-(interval_nanos as i64 / 10)..(interval_nanos as i64 / 10));
                 let ts = (base_time as i64 + jitter).max(start_nanos as i64) as u64;
 
                 if ts < start_nanos + window_nanos {
@@ -427,7 +428,10 @@ mod tests {
 
         for (_instrument_id, sizes) in sizes_by_instrument {
             for i in 1..sizes.len() {
-                assert!(sizes[i] > sizes[i - 1], "Size should be monotonically increasing");
+                assert!(
+                    sizes[i] > sizes[i - 1],
+                    "Size should be monotonically increasing"
+                );
             }
         }
     }
@@ -435,7 +439,11 @@ mod tests {
     #[test]
     fn test_volume_profiles() {
         // Test that each profile generates approximately the expected number of ticks
-        for profile in [VolumeProfile::Lite, VolumeProfile::Normal, VolumeProfile::Heavy] {
+        for profile in [
+            VolumeProfile::Lite,
+            VolumeProfile::Normal,
+            VolumeProfile::Heavy,
+        ] {
             let config = DataGenConfig {
                 symbol_count: 2,
                 time_window_secs: 5,
@@ -514,6 +522,9 @@ mod tests {
         let total = buy_count + sell_count;
         assert!(buy_count > 0 && sell_count > 0);
         let ratio = buy_count as f64 / total as f64;
-        assert!(ratio > 0.4 && ratio < 0.6, "Buy/sell ratio should be ~50/50");
+        assert!(
+            ratio > 0.4 && ratio < 0.6,
+            "Buy/sell ratio should be ~50/50"
+        );
     }
 }

@@ -83,6 +83,10 @@ pub use config::{
     DataGenConfig, EmulatorConfig, IntegrationTestConfig, MetricsConfig, StrategyConfig,
     TestConfig, VolumeProfile,
 };
+pub use db_verifier::{
+    DbVerificationOptions, DbVerifier, DbVerifierError, DbVerifierResult, PersistedTickStats,
+};
+pub use db_writer::{DbWriter, DbWriterConfig, DbWriterError, DbWriterMetrics, DbWriterResult};
 pub use emulator::{extract_latency_us, EmulatorMetrics, TestDataEmulator};
 pub use generator::{TestDataBundle, TestDataGenerator, TestDataMetadata};
 pub use metrics::{LatencyStats, MetricsCollector, StrategyMetrics, TestResults};
@@ -96,5 +100,3 @@ pub use transport::{
     create_transport, DirectTransport, TickTransport, TransportConfig, TransportMode,
     WebSocketConfig, WebSocketTransport,
 };
-pub use db_verifier::{DbVerifier, DbVerifierError, DbVerifierResult, DbVerificationOptions, PersistedTickStats};
-pub use db_writer::{DbWriter, DbWriterConfig, DbWriterError, DbWriterMetrics, DbWriterResult};

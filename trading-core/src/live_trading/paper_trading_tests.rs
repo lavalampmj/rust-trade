@@ -370,14 +370,22 @@ async fn test_average_cost_calculation() {
         "DoubleBuy",
         vec![
             Some(
-                Order::market("TESTUSDT", OrderSide::Buy, Decimal::from_str("10.0").unwrap())
-                    .build()
-                    .unwrap(),
+                Order::market(
+                    "TESTUSDT",
+                    OrderSide::Buy,
+                    Decimal::from_str("10.0").unwrap(),
+                )
+                .build()
+                .unwrap(),
             ),
             Some(
-                Order::market("TESTUSDT", OrderSide::Buy, Decimal::from_str("5.0").unwrap())
-                    .build()
-                    .unwrap(),
+                Order::market(
+                    "TESTUSDT",
+                    OrderSide::Buy,
+                    Decimal::from_str("5.0").unwrap(),
+                )
+                .build()
+                .unwrap(),
             ),
         ],
     ));
@@ -477,15 +485,23 @@ async fn test_multiple_ticks_sequential() {
         "BuyHoldSell",
         vec![
             Some(
-                Order::market("TESTUSDT", OrderSide::Buy, Decimal::from_str("10.0").unwrap())
-                    .build()
-                    .unwrap(),
+                Order::market(
+                    "TESTUSDT",
+                    OrderSide::Buy,
+                    Decimal::from_str("10.0").unwrap(),
+                )
+                .build()
+                .unwrap(),
             ),
             None, // Hold
             Some(
-                Order::market("TESTUSDT", OrderSide::Sell, Decimal::from_str("10.0").unwrap())
-                    .build()
-                    .unwrap(),
+                Order::market(
+                    "TESTUSDT",
+                    OrderSide::Sell,
+                    Decimal::from_str("10.0").unwrap(),
+                )
+                .build()
+                .unwrap(),
             ),
         ],
     ));

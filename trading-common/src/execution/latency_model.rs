@@ -23,8 +23,8 @@
 //! let model = VariableLatencyModel::new(30_000_000, 20_000_000, 42);
 //! ```
 
-use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use std::fmt::Debug;
 use std::sync::Mutex;
 
@@ -244,9 +244,9 @@ mod tests {
     #[test]
     fn test_fixed_latency_model_separate() {
         let model = FixedLatencyModel::with_separate_latencies(
-            50_000_000,  // 50ms insert
-            50_000_000,  // 50ms update
-            30_000_000,  // 30ms delete
+            50_000_000, // 50ms insert
+            50_000_000, // 50ms update
+            30_000_000, // 30ms delete
         );
         assert_eq!(model.insert_latency_nanos(), 50_000_000);
         assert_eq!(model.update_latency_nanos(), 50_000_000);

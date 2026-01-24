@@ -94,9 +94,11 @@ impl WebSocketServer {
             return Ok(());
         }
 
-        let addr: SocketAddr = self.config.server_url().parse().map_err(|e| {
-            ProviderError::Connection(format!("Invalid server address: {}", e))
-        })?;
+        let addr: SocketAddr = self
+            .config
+            .server_url()
+            .parse()
+            .map_err(|e| ProviderError::Connection(format!("Invalid server address: {}", e)))?;
 
         let listener = TcpListener::bind(&addr).await.map_err(|e| {
             ProviderError::Connection(format!("Failed to bind WebSocket server: {}", e))
@@ -114,8 +116,7 @@ impl WebSocketServer {
         let handle = tokio::spawn(async move {
             while running.load(Ordering::SeqCst) {
                 // Accept with timeout to allow shutdown checks
-                let accept_result =
-                    timeout(Duration::from_millis(100), listener.accept()).await;
+                let accept_result = timeout(Duration::from_millis(100), listener.accept()).await;
 
                 match accept_result {
                     Ok(Ok((stream, peer_addr))) => {
@@ -137,9 +138,7 @@ impl WebSocketServer {
 
                         tokio::spawn(async move {
                             client_count_clone.fetch_add(1, Ordering::SeqCst);
-                            if let Err(e) =
-                                Self::handle_client(stream, rx, running_clone).await
-                            {
+                            if let Err(e) = Self::handle_client(stream, rx, running_clone).await {
                                 tracing::debug!("Client {} disconnected: {}", peer_addr, e);
                             }
                             // Unregister the client
@@ -244,7 +243,9 @@ impl WebSocketServer {
         // Send to all connected clients with backpressure
         let clients_guard = self.clients.lock().await;
         if clients_guard.is_empty() {
-            return Err(ProviderError::Connection("No clients connected".to_string()));
+            return Err(ProviderError::Connection(
+                "No clients connected".to_string(),
+            ));
         }
 
         for (_id, tx) in clients_guard.iter() {
@@ -347,19 +348,13 @@ impl WebSocketClient {
                             attempts, e
                         )));
                     }
-                    tracing::debug!(
-                        "Connection attempt {} failed, retrying: {}",
-                        attempts,
-                        e
-                    );
+                    tracing::debug!("Connection attempt {} failed, retrying: {}", attempts, e);
                     tokio::time::sleep(retry_delay).await;
                 }
                 Err(_) => {
                     attempts += 1;
                     if attempts >= max_attempts {
-                        return Err(ProviderError::Connection(
-                            "Connection timeout".to_string(),
-                        ));
+                        return Err(ProviderError::Connection("Connection timeout".to_string()));
                     }
                     tokio::time::sleep(retry_delay).await;
                 }
@@ -428,19 +423,17 @@ impl WebSocketClient {
                     callback(StreamEvent::Tick(payload.tick.into()));
                 }
             }
-            TransportMessage::Status(status) => {
-                match status {
-                    StatusPayload::Connected => {
-                        callback(StreamEvent::Status(ConnectionStatus::Connected));
-                    }
-                    StatusPayload::Disconnected => {
-                        callback(StreamEvent::Status(ConnectionStatus::Disconnected));
-                    }
-                    StatusPayload::Error(e) => {
-                        callback(StreamEvent::Error(e));
-                    }
+            TransportMessage::Status(status) => match status {
+                StatusPayload::Connected => {
+                    callback(StreamEvent::Status(ConnectionStatus::Connected));
                 }
-            }
+                StatusPayload::Disconnected => {
+                    callback(StreamEvent::Status(ConnectionStatus::Disconnected));
+                }
+                StatusPayload::Error(e) => {
+                    callback(StreamEvent::Error(e));
+                }
+            },
             TransportMessage::Shutdown => {
                 callback(StreamEvent::Status(ConnectionStatus::Disconnected));
             }
@@ -563,7 +556,7 @@ impl TickTransport for WebSocketTransport {
             StreamEvent::Tick(tick) => {
                 let payload = TickPayload {
                     tick: tick.into(), // Convert TickData to NormalizedTick for transport
-                    ts_in_delta: 0, // TODO: could embed here if needed
+                    ts_in_delta: 0,    // TODO: could embed here if needed
                 };
 
                 if self.batching_enabled {
@@ -573,21 +566,27 @@ impl TickTransport for WebSocketTransport {
                     if buffer.len() >= self.batch_size {
                         let batch = std::mem::take(&mut *buffer);
                         drop(buffer); // Release lock before sending
-                        // Use async send with backpressure
-                        self.server.send_async(TransportMessage::Batch(batch)).await?;
+                                      // Use async send with backpressure
+                        self.server
+                            .send_async(TransportMessage::Batch(batch))
+                            .await?;
                     }
                 } else {
                     // Use async send with backpressure
-                    self.server.send_async(TransportMessage::Tick(payload)).await?;
+                    self.server
+                        .send_async(TransportMessage::Tick(payload))
+                        .await?;
                 }
             }
             StreamEvent::Status(status) => {
                 self.server
-                    .send_async(TransportMessage::Status(status.into())).await?;
+                    .send_async(TransportMessage::Status(status.into()))
+                    .await?;
             }
             StreamEvent::Error(e) => {
                 self.server
-                    .send_async(TransportMessage::Status(StatusPayload::Error(e))).await?;
+                    .send_async(TransportMessage::Status(StatusPayload::Error(e)))
+                    .await?;
             }
             StreamEvent::TickBatch(ticks) => {
                 // Convert batch to payloads (TickData -> NormalizedTick for transport)
@@ -598,7 +597,9 @@ impl TickTransport for WebSocketTransport {
                         ts_in_delta: 0,
                     })
                     .collect();
-                self.server.send_async(TransportMessage::Batch(batch)).await?;
+                self.server
+                    .send_async(TransportMessage::Batch(batch))
+                    .await?;
             }
         }
 
@@ -677,7 +678,10 @@ mod tests {
         // Send ticks (convert NormalizedTick to TickData for StreamEvent)
         let tick = create_test_tick();
         for _ in 0..10 {
-            transport.send(StreamEvent::Tick(tick.clone().into())).await.unwrap();
+            transport
+                .send(StreamEvent::Tick(tick.clone().into()))
+                .await
+                .unwrap();
         }
 
         // Wait for processing
@@ -717,7 +721,10 @@ mod tests {
         // Send 12 ticks (should trigger 2 batches of 5, with 2 remaining)
         let tick = create_test_tick();
         for _ in 0..12 {
-            transport.send(StreamEvent::Tick(tick.clone().into())).await.unwrap();
+            transport
+                .send(StreamEvent::Tick(tick.clone().into()))
+                .await
+                .unwrap();
         }
 
         tokio::time::sleep(Duration::from_millis(200)).await;

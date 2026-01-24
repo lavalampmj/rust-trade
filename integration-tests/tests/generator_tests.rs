@@ -43,11 +43,7 @@ fn test_generator_determinism_same_seed() {
             "Size mismatch at tick {}: {} vs {}",
             i, t1.size, t2.size
         );
-        assert_eq!(
-            t1.side, t2.side,
-            "Side mismatch at tick {}",
-            i
-        );
+        assert_eq!(t1.side, t2.side, "Side mismatch at tick {}", i);
         assert_eq!(
             t1.sequence, t2.sequence,
             "Sequence mismatch at tick {}: {} vs {}",
@@ -135,7 +131,11 @@ fn test_symbol_name_generation() {
 /// Test volume profile tick counts
 #[test]
 fn test_volume_profile_counts() {
-    for profile in [VolumeProfile::Lite, VolumeProfile::Normal, VolumeProfile::Heavy] {
+    for profile in [
+        VolumeProfile::Lite,
+        VolumeProfile::Normal,
+        VolumeProfile::Heavy,
+    ] {
         let config = DataGenConfig {
             symbol_count: 2,
             time_window_secs: 5,
@@ -376,11 +376,7 @@ fn test_per_symbol_counts() {
     // All symbols should have ticks
     for symbol in &bundle.metadata.symbols {
         let count = bundle.symbol_counts.get(symbol).unwrap_or(&0);
-        assert!(
-            *count > 0,
-            "Symbol {} should have some ticks",
-            symbol
-        );
+        assert!(*count > 0, "Symbol {} should have some ticks", symbol);
     }
 
     // Total should match

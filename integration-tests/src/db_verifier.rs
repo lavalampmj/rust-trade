@@ -130,9 +130,8 @@ impl DbVerifier {
         end: Option<DateTime<Utc>>,
     ) -> DbVerifierResult<u64> {
         let query = match (start, end) {
-            (Some(s), Some(e)) => {
-                sqlx::query(
-                    r#"
+            (Some(s), Some(e)) => sqlx::query(
+                r#"
                     SELECT COUNT(*) as count
                     FROM market_ticks
                     WHERE symbol LIKE 'TEST%'
@@ -140,22 +139,19 @@ impl DbVerifier {
                       AND ts_event >= $2
                       AND ts_event <= $3
                     "#,
-                )
-                .bind(exchange)
-                .bind(s)
-                .bind(e)
-            }
-            _ => {
-                sqlx::query(
-                    r#"
+            )
+            .bind(exchange)
+            .bind(s)
+            .bind(e),
+            _ => sqlx::query(
+                r#"
                     SELECT COUNT(*) as count
                     FROM market_ticks
                     WHERE symbol LIKE 'TEST%'
                       AND exchange = $1
                     "#,
-                )
-                .bind(exchange)
-            }
+            )
+            .bind(exchange),
         };
 
         let row = query.fetch_one(&self.pool).await?;
@@ -304,10 +300,7 @@ impl DbVerifier {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> DbVerifierResult<u64> {
-        info!(
-            "Cleaning up test ticks from {} to {}...",
-            start, end
-        );
+        info!("Cleaning up test ticks from {} to {}...", start, end);
 
         let result = sqlx::query(
             r#"

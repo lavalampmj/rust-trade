@@ -47,7 +47,12 @@ impl Transport for GrpcTransport {
         Ok(())
     }
 
-    fn send_batch(&self, _msgs: &[TradeMsg], _symbol: &str, _exchange: &str) -> TransportResult<usize> {
+    fn send_batch(
+        &self,
+        _msgs: &[TradeMsg],
+        _symbol: &str,
+        _exchange: &str,
+    ) -> TransportResult<usize> {
         // Placeholder
         Ok(0)
     }

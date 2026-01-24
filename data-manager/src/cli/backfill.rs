@@ -189,9 +189,17 @@ async fn execute_estimate(args: EstimateArgs) -> Result<()> {
     println!("=== Backfill Cost Estimate ===");
     println!();
     println!("Symbols:          {:?}", args.symbols);
-    println!("Time Range:       {} to {} ({} days)", args.start, args.end, (end - start).num_days());
+    println!(
+        "Time Range:       {} to {} ({} days)",
+        args.start,
+        args.end,
+        (end - start).num_days()
+    );
     println!("Estimated Cost:   ${:.2}", estimate.estimated_cost_usd);
-    println!("Estimated Records: ~{}", format_number(estimate.estimated_records));
+    println!(
+        "Estimated Records: ~{}",
+        format_number(estimate.estimated_records)
+    );
     println!();
 
     if estimate.exceeds_limits {
@@ -210,8 +218,14 @@ async fn execute_estimate(args: EstimateArgs) -> Result<()> {
     }
 
     println!("Current Spend:");
-    println!("   Daily:   ${:.2} / ${:.2}", estimate.current_daily_spend, settings.backfill.cost_limits.max_daily_spend);
-    println!("   Monthly: ${:.2} / ${:.2}", estimate.current_monthly_spend, settings.backfill.cost_limits.max_monthly_spend);
+    println!(
+        "   Daily:   ${:.2} / ${:.2}",
+        estimate.current_daily_spend, settings.backfill.cost_limits.max_daily_spend
+    );
+    println!(
+        "   Monthly: ${:.2} / ${:.2}",
+        estimate.current_monthly_spend, settings.backfill.cost_limits.max_monthly_spend
+    );
     println!();
 
     Ok(())
@@ -260,9 +274,17 @@ async fn execute_fetch(args: FetchBackfillArgs) -> Result<()> {
     println!("=== Backfill Cost Estimate ===");
     println!();
     println!("Symbols:          {:?}", args.symbols);
-    println!("Time Range:       {} to {} ({} days)", args.start, args.end, (end - start).num_days());
+    println!(
+        "Time Range:       {} to {} ({} days)",
+        args.start,
+        args.end,
+        (end - start).num_days()
+    );
     println!("Estimated Cost:   ${:.2}", estimate.estimated_cost_usd);
-    println!("Estimated Records: ~{}", format_number(estimate.estimated_records));
+    println!(
+        "Estimated Records: ~{}",
+        format_number(estimate.estimated_records)
+    );
     println!();
 
     if args.dry_run {
@@ -286,13 +308,9 @@ async fn execute_fetch(args: FetchBackfillArgs) -> Result<()> {
 
     // Create and submit request
     info!("Submitting backfill request...");
-    let mut request = BackfillRequest::with_symbols(
-        args.symbols.clone(),
-        start,
-        end,
-        BackfillSource::Manual,
-    )
-    .with_priority(args.priority);
+    let mut request =
+        BackfillRequest::with_symbols(args.symbols.clone(), start, end, BackfillSource::Manual)
+            .with_priority(args.priority);
 
     if args.confirm {
         request = request.with_auto_approve();
@@ -390,13 +408,13 @@ async fn execute_fill_gaps(args: FillGapsArgs) -> Result<()> {
 
     // Estimate total cost
     let total_minutes: i64 = total_gaps.iter().map(|g| g.duration_minutes).sum();
-    let total_estimated_records: u64 = total_gaps
-        .iter()
-        .filter_map(|g| g.estimated_records)
-        .sum();
+    let total_estimated_records: u64 = total_gaps.iter().filter_map(|g| g.estimated_records).sum();
 
     println!("Total gap duration: {} minutes", total_minutes);
-    println!("Total estimated records: ~{}", format_number(total_estimated_records));
+    println!(
+        "Total estimated records: ~{}",
+        format_number(total_estimated_records)
+    );
 
     if args.dry_run {
         println!();
@@ -449,11 +467,25 @@ async fn execute_status(args: StatusArgs) -> Result<()> {
     println!();
 
     println!("Cost Limits:");
-    println!("  Per-request max: ${:.2}", settings.backfill.cost_limits.max_cost_per_request);
-    println!("  Daily max:       ${:.2}", settings.backfill.cost_limits.max_daily_spend);
-    println!("  Monthly max:     ${:.2}", settings.backfill.cost_limits.max_monthly_spend);
-    println!("  Auto-approve:    {} (threshold: ${:.2})",
-        if settings.backfill.cost_limits.auto_approve_enabled { "enabled" } else { "disabled" },
+    println!(
+        "  Per-request max: ${:.2}",
+        settings.backfill.cost_limits.max_cost_per_request
+    );
+    println!(
+        "  Daily max:       ${:.2}",
+        settings.backfill.cost_limits.max_daily_spend
+    );
+    println!(
+        "  Monthly max:     ${:.2}",
+        settings.backfill.cost_limits.max_monthly_spend
+    );
+    println!(
+        "  Auto-approve:    {} (threshold: ${:.2})",
+        if settings.backfill.cost_limits.auto_approve_enabled {
+            "enabled"
+        } else {
+            "disabled"
+        },
         settings.backfill.cost_limits.auto_approve_threshold
     );
     println!();
@@ -461,15 +493,27 @@ async fn execute_status(args: StatusArgs) -> Result<()> {
     if args.detailed {
         println!("On-Demand Settings:");
         println!("  Enabled: {}", settings.backfill.on_demand.enabled);
-        println!("  Max lookback: {} days", settings.backfill.on_demand.max_lookback_days);
-        println!("  Min gap: {} minutes", settings.backfill.on_demand.min_gap_minutes);
-        println!("  Cooldown: {} seconds", settings.backfill.on_demand.cooldown_secs);
+        println!(
+            "  Max lookback: {} days",
+            settings.backfill.on_demand.max_lookback_days
+        );
+        println!(
+            "  Min gap: {} minutes",
+            settings.backfill.on_demand.min_gap_minutes
+        );
+        println!(
+            "  Cooldown: {} seconds",
+            settings.backfill.on_demand.cooldown_secs
+        );
         println!();
 
         println!("Provider Settings:");
         println!("  Name: {}", settings.backfill.provider.name);
         println!("  Dataset: {}", settings.backfill.provider.dataset);
-        println!("  Max concurrent: {}", settings.backfill.provider.max_concurrent_jobs);
+        println!(
+            "  Max concurrent: {}",
+            settings.backfill.provider.max_concurrent_jobs
+        );
         println!();
     }
 
@@ -492,8 +536,14 @@ async fn execute_cost_report(_args: CostReportArgs) -> Result<()> {
     }
 
     println!("Limits:");
-    println!("  Daily:   ${:.2}", settings.backfill.cost_limits.max_daily_spend);
-    println!("  Monthly: ${:.2}", settings.backfill.cost_limits.max_monthly_spend);
+    println!(
+        "  Daily:   ${:.2}",
+        settings.backfill.cost_limits.max_daily_spend
+    );
+    println!(
+        "  Monthly: ${:.2}",
+        settings.backfill.cost_limits.max_monthly_spend
+    );
     println!();
 
     // TODO: Show actual spend records when connected to persistent storage

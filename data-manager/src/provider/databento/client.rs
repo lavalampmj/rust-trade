@@ -323,7 +323,9 @@ impl LiveStreamProvider for DatabentoClient {
     }
 
     async fn unsubscribe(&mut self, symbols: &[SymbolSpec]) -> ProviderResult<()> {
-        self.subscription_status.symbols.retain(|s| !symbols.contains(s));
+        self.subscription_status
+            .symbols
+            .retain(|s| !symbols.contains(s));
         info!("Unsubscribed from {:?}", symbols);
         Ok(())
     }

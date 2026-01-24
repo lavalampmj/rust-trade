@@ -174,7 +174,10 @@ impl SpendTracker {
         // Add to daily records
         {
             let mut daily = self.daily_records.write();
-            daily.entry(daily_key).or_insert_with(Vec::new).push(record.clone());
+            daily
+                .entry(daily_key)
+                .or_insert_with(Vec::new)
+                .push(record.clone());
         }
 
         // Update monthly total
@@ -197,8 +200,8 @@ impl SpendTracker {
 
     /// Record a spend with job ID
     pub fn record_with_job(&self, amount: f64, description: &str, job_id: &str) {
-        let record = SpendRecord::new(amount, description.to_string())
-            .with_job_id(job_id.to_string());
+        let record =
+            SpendRecord::new(amount, description.to_string()).with_job_id(job_id.to_string());
         self.record_spend(record);
     }
 

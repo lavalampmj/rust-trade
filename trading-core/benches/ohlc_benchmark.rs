@@ -38,8 +38,7 @@ fn create_tick(
 
     // Distribute ticks evenly across the day (86400 seconds)
     let seconds_per_tick = 86400.0 / TICKS_PER_DAY as f64;
-    let timestamp = Utc::now()
-        - Duration::days(NUM_DAYS as i64 - day_offset as i64)
+    let timestamp = Utc::now() - Duration::days(NUM_DAYS as i64 - day_offset as i64)
         + Duration::milliseconds((intraday_offset as f64 * seconds_per_tick * 1000.0) as i64);
 
     // Alternate buy/sell
@@ -50,8 +49,7 @@ fn create_tick(
     };
 
     // Varying quantity
-    let quantity =
-        Decimal::from(1) + Decimal::from((tick_index % 10) as i64) / Decimal::from(10);
+    let quantity = Decimal::from(1) + Decimal::from((tick_index % 10) as i64) / Decimal::from(10);
 
     TickData::with_details(
         timestamp,
@@ -146,7 +144,10 @@ async fn insert_ticks_batch(pool: &PgPool, ticks: &[TickData]) -> usize {
                 .bind(tick.sequence);
         }
 
-        let result = sqlx_query.execute(pool).await.expect("Failed to insert batch");
+        let result = sqlx_query
+            .execute(pool)
+            .await
+            .expect("Failed to insert batch");
         total_inserted += result.rows_affected() as usize;
     }
 
@@ -175,21 +176,35 @@ async fn load_ticks_from_db(
     .expect("Failed to load ticks");
 
     rows.into_iter()
-        .map(|(ts_event, ts_recv, symbol, exchange, price, size, side, provider, trade_id, is_buyer_maker, sequence)| {
-            TickData::with_details(
+        .map(
+            |(
                 ts_event,
                 ts_recv,
                 symbol,
                 exchange,
                 price,
                 size,
-                TradeSide::from_db_str(&side).unwrap_or(TradeSide::Buy),
+                side,
                 provider,
                 trade_id,
                 is_buyer_maker,
                 sequence,
-            )
-        })
+            )| {
+                TickData::with_details(
+                    ts_event,
+                    ts_recv,
+                    symbol,
+                    exchange,
+                    price,
+                    size,
+                    TradeSide::from_db_str(&side).unwrap_or(TradeSide::Buy),
+                    provider,
+                    trade_id,
+                    is_buyer_maker,
+                    sequence,
+                )
+            },
+        )
         .collect()
 }
 
@@ -241,7 +256,10 @@ fn ohlc_pipeline_benchmark(c: &mut Criterion) {
     group.sample_size(10); // Fewer samples for this heavy benchmark
 
     group.bench_function(
-        BenchmarkId::new("full_pipeline", format!("{}ticks_{}bars", TOTAL_TICKS, EXPECTED_BARS)),
+        BenchmarkId::new(
+            "full_pipeline",
+            format!("{}ticks_{}bars", TOTAL_TICKS, EXPECTED_BARS),
+        ),
         |b| {
             b.to_async(&rt).iter(|| async {
                 // Step 1: Load ticks from database
@@ -269,11 +287,22 @@ fn ohlc_pipeline_benchmark(c: &mut Criterion) {
     );
 
     // Benchmark: OHLC generation only (from pre-loaded ticks)
-    let preloaded_ticks = rt.block_on(load_ticks_from_db(&pool, BENCH_SYMBOL, start_time, end_time));
-    println!("\nPre-loaded {} ticks for OHLC-only benchmark", preloaded_ticks.len());
+    let preloaded_ticks = rt.block_on(load_ticks_from_db(
+        &pool,
+        BENCH_SYMBOL,
+        start_time,
+        end_time,
+    ));
+    println!(
+        "\nPre-loaded {} ticks for OHLC-only benchmark",
+        preloaded_ticks.len()
+    );
 
     group.bench_function(
-        BenchmarkId::new("ohlc_gen_only", format!("{}ticks_to_{}bars", TOTAL_TICKS, EXPECTED_BARS)),
+        BenchmarkId::new(
+            "ohlc_gen_only",
+            format!("{}ticks_to_{}bars", TOTAL_TICKS, EXPECTED_BARS),
+        ),
         |b| {
             b.iter(|| {
                 let bars = generate_tick_bars(black_box(&preloaded_ticks), TICKS_PER_BAR);
@@ -289,7 +318,12 @@ fn ohlc_pipeline_benchmark(c: &mut Criterion) {
 
     // Time the full pipeline manually
     let pipeline_start = Instant::now();
-    let loaded = rt.block_on(load_ticks_from_db(&pool, BENCH_SYMBOL, start_time, end_time));
+    let loaded = rt.block_on(load_ticks_from_db(
+        &pool,
+        BENCH_SYMBOL,
+        start_time,
+        end_time,
+    ));
     let load_time = pipeline_start.elapsed();
 
     let ohlc_start = Instant::now();

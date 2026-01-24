@@ -34,7 +34,7 @@ impl Default for ExecutionEngineConfig {
     fn default() -> Self {
         Self {
             initial_capital: Decimal::new(10000, 0),
-            commission_rate: Decimal::new(1, 3), // 0.1%
+            commission_rate: Decimal::new(1, 3),       // 0.1%
             default_position_size: Decimal::new(1, 1), // 10% of portfolio
             use_all_available_cash: false,
         }

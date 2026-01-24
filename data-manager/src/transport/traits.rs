@@ -46,7 +46,8 @@ pub trait Transport: Send + Sync {
     fn send_msg(&self, msg: &TradeMsg, symbol: &str, exchange: &str) -> TransportResult<()>;
 
     /// Send a batch of TradeMsg to the same channel
-    fn send_batch(&self, msgs: &[TradeMsg], symbol: &str, exchange: &str) -> TransportResult<usize>;
+    fn send_batch(&self, msgs: &[TradeMsg], symbol: &str, exchange: &str)
+        -> TransportResult<usize>;
 
     /// Check if the transport is ready
     fn is_ready(&self) -> bool;

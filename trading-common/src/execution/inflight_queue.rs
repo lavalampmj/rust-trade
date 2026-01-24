@@ -54,7 +54,9 @@ impl TradingCommand {
         match self {
             TradingCommand::SubmitOrder(order) => &order.client_order_id,
             TradingCommand::CancelOrder(id) => id,
-            TradingCommand::ModifyOrder { client_order_id, .. } => client_order_id,
+            TradingCommand::ModifyOrder {
+                client_order_id, ..
+            } => client_order_id,
         }
     }
 
@@ -418,8 +420,14 @@ mod tests {
     fn test_clear() {
         let mut queue = InflightQueue::new();
 
-        queue.push(TradingCommand::SubmitOrder(create_test_order("BTCUSDT")), 100);
-        queue.push(TradingCommand::SubmitOrder(create_test_order("ETHUSDT")), 200);
+        queue.push(
+            TradingCommand::SubmitOrder(create_test_order("BTCUSDT")),
+            100,
+        );
+        queue.push(
+            TradingCommand::SubmitOrder(create_test_order("ETHUSDT")),
+            200,
+        );
 
         assert_eq!(queue.len(), 2);
 

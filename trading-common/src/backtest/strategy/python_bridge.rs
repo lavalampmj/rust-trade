@@ -2116,7 +2116,10 @@ mod tests {
 
                 // Get orders (should be empty with not enough data for SMA)
                 let orders = strategy.get_orders(&bar_data, &mut bars_context);
-                assert!(orders.is_empty(), "Expected no orders with insufficient SMA data");
+                assert!(
+                    orders.is_empty(),
+                    "Expected no orders with insufficient SMA data"
+                );
 
                 // Metrics should be updated
                 assert!(strategy.get_call_count() >= 1);

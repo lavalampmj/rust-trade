@@ -132,8 +132,8 @@ impl Iterator for TickIterator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use crate::symbol::SymbolSpec;
+    use chrono::Utc;
 
     #[tokio::test]
     async fn test_estimate_cost() {

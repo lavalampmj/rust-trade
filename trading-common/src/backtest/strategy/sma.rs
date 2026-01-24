@@ -55,8 +55,8 @@ impl Strategy for SmaStrategy {
         if let (Some(short), Some(long)) = (short_sma, long_sma) {
             // Golden cross: short MA crosses above long MA
             if short > long && self.last_side != Some(OrderSide::Buy) {
-                if let Ok(order) = Order::market(bars.symbol(), OrderSide::Buy, Decimal::from(100))
-                    .build()
+                if let Ok(order) =
+                    Order::market(bars.symbol(), OrderSide::Buy, Decimal::from(100)).build()
                 {
                     self.pending_orders.push(order);
                     self.last_side = Some(OrderSide::Buy);
@@ -64,8 +64,8 @@ impl Strategy for SmaStrategy {
             }
             // Death cross: short MA crosses below long MA
             else if short < long && self.last_side == Some(OrderSide::Buy) {
-                if let Ok(order) = Order::market(bars.symbol(), OrderSide::Sell, Decimal::from(100))
-                    .build()
+                if let Ok(order) =
+                    Order::market(bars.symbol(), OrderSide::Sell, Decimal::from(100)).build()
                 {
                     self.pending_orders.push(order);
                     self.last_side = Some(OrderSide::Sell);

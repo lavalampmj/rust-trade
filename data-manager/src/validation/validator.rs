@@ -188,12 +188,12 @@ pub struct ValidationConfig {
 impl Default for ValidationConfig {
     fn default() -> Self {
         Self {
-            max_price: Decimal::from(10_000_000), // $10M max
+            max_price: Decimal::from(10_000_000),        // $10M max
             max_price_change_percent: Decimal::from(50), // 50% max change
             max_symbol_length: 20,
             max_exchange_length: 20,
             max_trade_id_length: 100,
-            max_timestamp_age: Duration::hours(24),   // 24 hours old max
+            max_timestamp_age: Duration::hours(24), // 24 hours old max
             max_timestamp_future: Duration::seconds(60), // 60 seconds future tolerance
             require_trade_id: false,
             enabled: true,
@@ -386,7 +386,10 @@ impl TickValidator {
             }
 
             // Trade ID must be printable ASCII
-            if !trade_id.chars().all(|c| c.is_ascii() && !c.is_ascii_control()) {
+            if !trade_id
+                .chars()
+                .all(|c| c.is_ascii() && !c.is_ascii_control())
+            {
                 return Err(ValidationError::InvalidTradeIdChars {
                     trade_id: trade_id.to_string(),
                 });

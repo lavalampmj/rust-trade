@@ -6,11 +6,11 @@
 //! Each strategy runner subscribes to a specific symbol (e.g., rust_0 -> TEST0000,
 //! rust_1 -> TEST0001) to simulate realistic per-symbol strategy execution.
 
-mod rust_runner;
 mod python_runner;
+mod rust_runner;
 
-pub use rust_runner::RustStrategyRunner;
 pub use python_runner::PythonStrategyRunner;
+pub use rust_runner::RustStrategyRunner;
 
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -115,7 +115,10 @@ impl StrategyRunnerManager {
     /// Create a new manager with the given runners
     pub fn new(runners: Vec<Arc<dyn StrategyRunner>>) -> Self {
         let symbol_subscriptions = Self::build_subscription_map(&runners);
-        Self { runners, symbol_subscriptions }
+        Self {
+            runners,
+            symbol_subscriptions,
+        }
     }
 
     /// Build a map from symbol to subscribed runners
@@ -184,7 +187,13 @@ impl StrategyRunnerManager {
     pub fn subscription_info(&self) -> Vec<(String, String, String)> {
         self.runners
             .iter()
-            .map(|r| (r.id().to_string(), r.strategy_type().to_string(), r.subscribed_symbol().to_string()))
+            .map(|r| {
+                (
+                    r.id().to_string(),
+                    r.strategy_type().to_string(),
+                    r.subscribed_symbol().to_string(),
+                )
+            })
             .collect()
     }
 }
@@ -223,8 +232,14 @@ mod tests {
 
         assert_eq!(runners.len(), 5);
 
-        let rust_count = runners.iter().filter(|r| r.strategy_type() == "rust").count();
-        let python_count = runners.iter().filter(|r| r.strategy_type() == "python").count();
+        let rust_count = runners
+            .iter()
+            .filter(|r| r.strategy_type() == "rust")
+            .count();
+        let python_count = runners
+            .iter()
+            .filter(|r| r.strategy_type() == "python")
+            .count();
 
         assert_eq!(rust_count, 3);
         assert_eq!(python_count, 2);
@@ -317,13 +332,38 @@ mod tests {
             track_latency: true,
         };
 
-        let symbols = vec!["TEST0000".to_string(), "TEST0001".to_string(), "TEST0002".to_string()];
+        let symbols = vec![
+            "TEST0000".to_string(),
+            "TEST0001".to_string(),
+            "TEST0002".to_string(),
+        ];
         let manager = StrategyRunnerManager::from_config(&config, &symbols, 1000);
 
         let info = manager.subscription_info();
         assert_eq!(info.len(), 3);
-        assert_eq!(info[0], ("rust_0".to_string(), "rust".to_string(), "TEST0000".to_string()));
-        assert_eq!(info[1], ("rust_1".to_string(), "rust".to_string(), "TEST0001".to_string()));
-        assert_eq!(info[2], ("python_0".to_string(), "python".to_string(), "TEST0002".to_string()));
+        assert_eq!(
+            info[0],
+            (
+                "rust_0".to_string(),
+                "rust".to_string(),
+                "TEST0000".to_string()
+            )
+        );
+        assert_eq!(
+            info[1],
+            (
+                "rust_1".to_string(),
+                "rust".to_string(),
+                "TEST0001".to_string()
+            )
+        );
+        assert_eq!(
+            info[2],
+            (
+                "python_0".to_string(),
+                "python".to_string(),
+                "TEST0002".to_string()
+            )
+        );
     }
 }

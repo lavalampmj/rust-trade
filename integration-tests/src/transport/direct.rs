@@ -98,16 +98,25 @@ mod tests {
         let mut transport = DirectTransport::new(callback, rx);
 
         // Should fail before start
-        assert!(transport.send(StreamEvent::Status(ConnectionStatus::Connected)).await.is_err());
+        assert!(transport
+            .send(StreamEvent::Status(ConnectionStatus::Connected))
+            .await
+            .is_err());
 
         // Start and send
         transport.start().await.unwrap();
-        transport.send(StreamEvent::Status(ConnectionStatus::Connected)).await.unwrap();
+        transport
+            .send(StreamEvent::Status(ConnectionStatus::Connected))
+            .await
+            .unwrap();
         assert_eq!(received.load(Ordering::SeqCst), 1);
 
         // Stop
         transport.stop().await.unwrap();
-        assert!(transport.send(StreamEvent::Status(ConnectionStatus::Connected)).await.is_err());
+        assert!(transport
+            .send(StreamEvent::Status(ConnectionStatus::Connected))
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -120,7 +129,10 @@ mod tests {
 
         // Send multiple status events (not ticks)
         for _ in 0..5 {
-            transport.send(StreamEvent::Status(ConnectionStatus::Connected)).await.unwrap();
+            transport
+                .send(StreamEvent::Status(ConnectionStatus::Connected))
+                .await
+                .unwrap();
         }
         assert_eq!(transport.sent_count(), 0);
 
@@ -138,7 +150,10 @@ mod tests {
 
         for _ in 0..10 {
             // Convert NormalizedTick to TickData for StreamEvent
-            transport.send(StreamEvent::Tick(tick.clone().into())).await.unwrap();
+            transport
+                .send(StreamEvent::Tick(tick.clone().into()))
+                .await
+                .unwrap();
         }
         assert_eq!(transport.sent_count(), 10);
     }

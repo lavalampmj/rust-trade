@@ -475,9 +475,9 @@ mod tests {
     fn test_highest_high_source() {
         // True Donchian upper band uses highs
         let bars = vec![
-            (dec!(100), dec!(110), dec!(95), dec!(105)),   // H=110
-            (dec!(105), dec!(115), dec!(100), dec!(110)),  // H=115
-            (dec!(110), dec!(120), dec!(105), dec!(115)),  // H=120
+            (dec!(100), dec!(110), dec!(95), dec!(105)),  // H=110
+            (dec!(105), dec!(115), dec!(100), dec!(110)), // H=115
+            (dec!(110), dec!(120), dec!(105), dec!(115)), // H=120
         ];
         let ctx = create_bars_with_ohlc(&bars);
 
@@ -492,9 +492,9 @@ mod tests {
     fn test_lowest_low_source() {
         // True Donchian lower band uses lows
         let bars = vec![
-            (dec!(100), dec!(110), dec!(95), dec!(105)),   // L=95
-            (dec!(105), dec!(115), dec!(100), dec!(110)),  // L=100
-            (dec!(110), dec!(120), dec!(105), dec!(115)),  // L=105
+            (dec!(100), dec!(110), dec!(95), dec!(105)),  // L=95
+            (dec!(105), dec!(115), dec!(100), dec!(110)), // L=100
+            (dec!(110), dec!(120), dec!(105), dec!(115)), // L=105
         ];
         let ctx = create_bars_with_ohlc(&bars);
 
@@ -545,9 +545,9 @@ mod tests {
     fn test_true_donchian_channel() {
         // Proper Donchian channel: highest high and lowest low
         let bars = vec![
-            (dec!(100), dec!(110), dec!(90), dec!(100)),   // H=110, L=90
-            (dec!(100), dec!(115), dec!(95), dec!(105)),   // H=115, L=95
-            (dec!(105), dec!(120), dec!(100), dec!(115)),  // H=120, L=100
+            (dec!(100), dec!(110), dec!(90), dec!(100)), // H=110, L=90
+            (dec!(100), dec!(115), dec!(95), dec!(105)), // H=115, L=95
+            (dec!(105), dec!(120), dec!(100), dec!(115)), // H=120, L=100
         ];
         let ctx = create_bars_with_ohlc(&bars);
 
@@ -558,6 +558,6 @@ mod tests {
         let lower_band = lower.compute(&ctx).unwrap();
 
         assert_eq!(upper_band, dec!(120)); // Highest high
-        assert_eq!(lower_band, dec!(90));  // Lowest low
+        assert_eq!(lower_band, dec!(90)); // Lowest low
     }
 }

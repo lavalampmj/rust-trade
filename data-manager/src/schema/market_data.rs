@@ -286,8 +286,8 @@ impl CompactTick {
 
     /// Create a new CompactTick from a NormalizedTick
     pub fn from_normalized(tick: &NormalizedTick) -> Self {
-        use std::hash::{Hash, Hasher};
         use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
 
         let mut hasher = DefaultHasher::new();
         tick.symbol.hash(&mut hasher);
@@ -311,11 +311,13 @@ impl CompactTick {
 
         // Convert price and size to fixed-point
         use rust_decimal::prelude::ToPrimitive;
-        let price_fixed = tick.price
+        let price_fixed = tick
+            .price
             .checked_mul(Decimal::from(Self::PRICE_SCALE))
             .and_then(|d| d.trunc().to_i64())
             .unwrap_or(0);
-        let size_fixed = tick.size
+        let size_fixed = tick
+            .size
             .checked_mul(Decimal::from(Self::PRICE_SCALE))
             .and_then(|d| d.trunc().to_i64())
             .unwrap_or(0);
@@ -372,7 +374,11 @@ impl CompactTick {
             exchange,
             price,
             size,
-            side: if self.side == 0 { TradeSide::Buy } else { TradeSide::Sell },
+            side: if self.side == 0 {
+                TradeSide::Buy
+            } else {
+                TradeSide::Sell
+            },
             provider,
             provider_trade_id: None,
             is_buyer_maker: Some(self.flags & 0x01 != 0),

@@ -304,7 +304,10 @@ mod tests {
         assert_eq!(route.provider, "databento");
         assert_eq!(route.dataset, Some("GLBX.MDP3".to_string()));
         assert_eq!(route.provider_symbol, "ES.FUT");
-        assert_eq!(route.resolution_source, RouteResolutionSource::SymbolSpecific);
+        assert_eq!(
+            route.resolution_source,
+            RouteResolutionSource::SymbolSpecific
+        );
     }
 
     #[test]
@@ -337,7 +340,10 @@ mod tests {
         assert_eq!(route.provider, "databento");
         assert_eq!(route.dataset, Some("GLBX.MDP3".to_string())); // Default dataset
         assert_eq!(route.provider_symbol, "UNKNOWN");
-        assert_eq!(route.resolution_source, RouteResolutionSource::GlobalDefault);
+        assert_eq!(
+            route.resolution_source,
+            RouteResolutionSource::GlobalDefault
+        );
     }
 
     #[test]
@@ -407,7 +413,10 @@ mod tests {
             .resolve_historical(&symbol_lower, Some(AssetType::Futures))
             .unwrap();
 
-        assert_eq!(route.resolution_source, RouteResolutionSource::SymbolSpecific);
+        assert_eq!(
+            route.resolution_source,
+            RouteResolutionSource::SymbolSpecific
+        );
         assert_eq!(route.provider_symbol, "ES.FUT");
     }
 

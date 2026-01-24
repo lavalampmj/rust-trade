@@ -33,7 +33,7 @@ impl Default for SharedMemoryConfig {
     fn default() -> Self {
         Self {
             path_prefix: "/data_manager_".to_string(),
-            buffer_entries: 65536, // 64K entries
+            buffer_entries: 65536,                       // 64K entries
             entry_size: std::mem::size_of::<TradeMsg>(), // 48 bytes per entry
         }
     }
@@ -66,7 +66,11 @@ unsafe impl Sync for SharedMemoryChannel {}
 
 impl SharedMemoryChannel {
     /// Create a new shared memory channel with auto-generated name
-    pub fn create(symbol: &str, exchange: &str, config: SharedMemoryConfig) -> TransportResult<Self> {
+    pub fn create(
+        symbol: &str,
+        exchange: &str,
+        config: SharedMemoryConfig,
+    ) -> TransportResult<Self> {
         let shm_name = format!("{}{}_{}", config.path_prefix, symbol, exchange);
         Self::create_named(&shm_name, symbol, exchange, config)
     }
@@ -101,7 +105,10 @@ impl SharedMemoryChannel {
 
         info!(
             "Created IPC shared memory channel {} for {}@{} ({} KB)",
-            shm_name, symbol, exchange, total_size / 1024
+            shm_name,
+            symbol,
+            exchange,
+            total_size / 1024
         );
 
         Ok(Self {
@@ -146,11 +153,7 @@ impl SharedMemoryChannel {
     }
 
     /// Open an existing shared memory channel with auto-generated name
-    pub fn open(
-        symbol: &str,
-        exchange: &str,
-        path_prefix: &str,
-    ) -> TransportResult<Self> {
+    pub fn open(symbol: &str, exchange: &str, path_prefix: &str) -> TransportResult<Self> {
         let shm_name = format!("{}{}_{}", path_prefix, symbol, exchange);
         Self::open_named(&shm_name, symbol, exchange)
     }
@@ -210,7 +213,10 @@ impl SharedMemoryChannel {
 impl Drop for SharedMemoryChannel {
     fn drop(&mut self) {
         if self.is_owner {
-            debug!("Dropping shared memory channel for {}@{}", self.symbol, self.exchange);
+            debug!(
+                "Dropping shared memory channel for {}@{}",
+                self.symbol, self.exchange
+            );
             // The Shmem will be dropped automatically
             // On owner drop, we could unlink but that might affect other consumers
         }
@@ -358,7 +364,11 @@ impl SharedMemoryTransport {
         let channel = SharedMemoryChannel::create(symbol, exchange, self.config.clone())?;
         channels.insert(key.clone(), channel);
 
-        info!("IPC channel active: {} (total channels: {})", key, channels.len());
+        info!(
+            "IPC channel active: {} (total channels: {})",
+            key,
+            channels.len()
+        );
         Ok(())
     }
 
@@ -416,7 +426,12 @@ impl Transport for SharedMemoryTransport {
         self.send_to_channel(msg, symbol, exchange)
     }
 
-    fn send_batch(&self, msgs: &[TradeMsg], symbol: &str, exchange: &str) -> TransportResult<usize> {
+    fn send_batch(
+        &self,
+        msgs: &[TradeMsg],
+        symbol: &str,
+        exchange: &str,
+    ) -> TransportResult<usize> {
         let mut count = 0;
         for msg in msgs {
             self.send_to_channel(msg, symbol, exchange)?;
@@ -514,9 +529,15 @@ mod tests {
             ..Default::default()
         });
 
-        transport.send_msg(&create_test_msg("ES", "CME", 1), "ES", "CME").unwrap();
-        transport.send_msg(&create_test_msg("NQ", "CME", 1), "NQ", "CME").unwrap();
-        transport.send_msg(&create_test_msg("CL", "NYMEX", 1), "CL", "NYMEX").unwrap();
+        transport
+            .send_msg(&create_test_msg("ES", "CME", 1), "ES", "CME")
+            .unwrap();
+        transport
+            .send_msg(&create_test_msg("NQ", "CME", 1), "NQ", "CME")
+            .unwrap();
+        transport
+            .send_msg(&create_test_msg("CL", "NYMEX", 1), "CL", "NYMEX")
+            .unwrap();
 
         let symbols = transport.active_symbols();
         assert_eq!(symbols.len(), 3);

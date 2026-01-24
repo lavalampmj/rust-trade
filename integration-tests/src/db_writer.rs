@@ -191,10 +191,7 @@ impl DbWriter {
 
     /// Send a tick to be written
     pub async fn write_tick(&self, tick: NormalizedTick) -> DbWriterResult<()> {
-        let sender = self
-            .sender
-            .as_ref()
-            .ok_or(DbWriterError::NotStarted)?;
+        let sender = self.sender.as_ref().ok_or(DbWriterError::NotStarted)?;
 
         self.metrics.ticks_received.fetch_add(1, Ordering::SeqCst);
 
@@ -316,7 +313,9 @@ async fn flush_batch(pool: &PgPool, batch: &mut Vec<NormalizedTick>, metrics: &D
 
     match insert_batch(pool, batch).await {
         Ok(written) => {
-            metrics.ticks_written.fetch_add(written as u64, Ordering::SeqCst);
+            metrics
+                .ticks_written
+                .fetch_add(written as u64, Ordering::SeqCst);
             metrics.batch_writes.fetch_add(1, Ordering::SeqCst);
 
             if written < batch_len {
@@ -327,7 +326,9 @@ async fn flush_batch(pool: &PgPool, batch: &mut Vec<NormalizedTick>, metrics: &D
         }
         Err(e) => {
             error!("Failed to write batch: {}", e);
-            metrics.ticks_dropped.fetch_add(batch_len as u64, Ordering::SeqCst);
+            metrics
+                .ticks_dropped
+                .fetch_add(batch_len as u64, Ordering::SeqCst);
         }
     }
 

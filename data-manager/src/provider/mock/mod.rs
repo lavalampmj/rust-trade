@@ -65,7 +65,9 @@ impl MockProvider {
         limit: Option<usize>,
     ) -> Vec<TickData> {
         let duration = end - start;
-        let num_ticks = limit.unwrap_or(self.ticks_per_symbol).min(self.ticks_per_symbol);
+        let num_ticks = limit
+            .unwrap_or(self.ticks_per_symbol)
+            .min(self.ticks_per_symbol);
         let interval = duration / num_ticks as i32;
 
         let mut ticks = Vec::with_capacity(num_ticks);
@@ -89,7 +91,11 @@ impl MockProvider {
                 symbol.exchange.clone(),
                 current_price,
                 Decimal::from(i % 100 + 1), // size 1-100
-                if i % 2 == 0 { TradeSide::Buy } else { TradeSide::Sell },
+                if i % 2 == 0 {
+                    TradeSide::Buy
+                } else {
+                    TradeSide::Sell
+                },
                 "mock".to_string(),
                 format!("mock_trade_{}", i),
                 i % 2 == 0,
@@ -275,7 +281,9 @@ impl LiveStreamProvider for MockProvider {
     }
 
     async fn unsubscribe(&mut self, symbols: &[SymbolSpec]) -> ProviderResult<()> {
-        self.subscription_status.symbols.retain(|s| !symbols.contains(s));
+        self.subscription_status
+            .symbols
+            .retain(|s| !symbols.contains(s));
         Ok(())
     }
 
@@ -294,7 +302,10 @@ fn create_ohlc_from_ticks(ticks: &[TickData], timestamp: DateTime<Utc>) -> Norma
     NormalizedOHLC::new(
         timestamp,
         ticks.first().map(|t| t.symbol.clone()).unwrap_or_default(),
-        ticks.first().map(|t| t.exchange.clone()).unwrap_or_default(),
+        ticks
+            .first()
+            .map(|t| t.exchange.clone())
+            .unwrap_or_default(),
         "1m".to_string(),
         open,
         high,
@@ -334,11 +345,7 @@ mod tests {
             Utc::now(),
         );
 
-        let ticks: Vec<_> = provider
-            .fetch_ticks(&request)
-            .await
-            .unwrap()
-            .collect();
+        let ticks: Vec<_> = provider.fetch_ticks(&request).await.unwrap().collect();
 
         assert_eq!(ticks.len(), 100);
         assert!(ticks.iter().all(|t| t.is_ok()));

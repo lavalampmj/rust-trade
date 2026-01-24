@@ -145,7 +145,9 @@ impl RingBufferProducer {
             std::sync::atomic::fence(Ordering::Release);
 
             // Update write position
-            header.write_pos.store(write_pos.wrapping_add(1), Ordering::Release);
+            header
+                .write_pos
+                .store(write_pos.wrapping_add(1), Ordering::Release);
 
             Ok(())
         }
@@ -236,7 +238,9 @@ impl RingBufferConsumer {
             std::sync::atomic::fence(Ordering::Acquire);
 
             // Update read position
-            (*self.header).read_pos.store(read_pos.wrapping_add(1), Ordering::Release);
+            (*self.header)
+                .read_pos
+                .store(read_pos.wrapping_add(1), Ordering::Release);
 
             Some(tick)
         }
@@ -293,7 +297,10 @@ mod tests {
 
     #[test]
     fn test_header_size() {
-        assert_eq!(std::mem::size_of::<RingBufferHeader>(), RingBufferHeader::SIZE);
+        assert_eq!(
+            std::mem::size_of::<RingBufferHeader>(),
+            RingBufferHeader::SIZE
+        );
     }
 
     #[test]

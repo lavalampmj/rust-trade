@@ -48,15 +48,15 @@ impl DatabentoNormalizer {
     /// the raw field values.
     pub fn normalize_trade(
         &mut self,
-        ts_event: i64,      // nanoseconds since epoch
-        ts_recv: i64,       // nanoseconds since epoch
+        ts_event: i64, // nanoseconds since epoch
+        ts_recv: i64,  // nanoseconds since epoch
         symbol: &str,
         exchange: &str,
-        price: i64,         // fixed-point price
-        price_scale: u32,   // price decimal places
-        size: i64,          // fixed-point size
-        size_scale: u32,    // size decimal places
-        side: char,         // 'B' or 'S'
+        price: i64,       // fixed-point price
+        price_scale: u32, // price decimal places
+        size: i64,        // fixed-point size
+        size_scale: u32,  // size decimal places
+        side: char,       // 'B' or 'S'
         trade_id: Option<&str>,
     ) -> Result<TickData, ProviderError> {
         let ts_event_dt = Self::nanos_to_datetime(ts_event);
@@ -64,9 +64,8 @@ impl DatabentoNormalizer {
         let price_dec = Self::price_to_decimal(price, price_scale);
         let quantity_dec = Self::price_to_decimal(size, size_scale);
 
-        let side = TradeSide::from_db_char(side).ok_or_else(|| {
-            ProviderError::Parse(format!("Invalid trade side: {}", side))
-        })?;
+        let side = TradeSide::from_db_char(side)
+            .ok_or_else(|| ProviderError::Parse(format!("Invalid trade side: {}", side)))?;
 
         let sequence = self.next_sequence();
 
@@ -194,7 +193,13 @@ mod tests {
     #[test]
     fn test_dataset_to_exchange() {
         assert_eq!(DatabentoNormalizer::dataset_to_exchange("GLBX.MDP3"), "CME");
-        assert_eq!(DatabentoNormalizer::dataset_to_exchange("XNAS.ITCH"), "NASDAQ");
-        assert_eq!(DatabentoNormalizer::dataset_to_exchange("unknown"), "UNKNOWN");
+        assert_eq!(
+            DatabentoNormalizer::dataset_to_exchange("XNAS.ITCH"),
+            "NASDAQ"
+        );
+        assert_eq!(
+            DatabentoNormalizer::dataset_to_exchange("unknown"),
+            "UNKNOWN"
+        );
     }
 }

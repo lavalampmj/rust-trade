@@ -152,7 +152,12 @@ impl ContingentOrderManager {
                 // Entry order filled -> submit children
                 if list.is_entry_order(order_id) {
                     // Check if we haven't already submitted children
-                    if !self.submitted_children.get(&list_id).copied().unwrap_or(false) {
+                    if !self
+                        .submitted_children
+                        .get(&list_id)
+                        .copied()
+                        .unwrap_or(false)
+                    {
                         let children = list.child_orders_owned();
                         if !children.is_empty() {
                             actions.push(ContingentAction::SubmitOrders(children));
@@ -277,12 +282,13 @@ impl ContingentOrderManager {
             ContingencyType::OTO => {
                 // If entry is canceled before fill, cancel children too (if submitted)
                 if list.is_entry_order(order_id) {
-                    if self.submitted_children.get(&list_id).copied().unwrap_or(false) {
-                        let children: Vec<_> = list
-                            .child_order_ids
-                            .iter()
-                            .cloned()
-                            .collect();
+                    if self
+                        .submitted_children
+                        .get(&list_id)
+                        .copied()
+                        .unwrap_or(false)
+                    {
+                        let children: Vec<_> = list.child_order_ids.iter().cloned().collect();
                         if !children.is_empty() {
                             actions.push(ContingentAction::CancelOrders(children));
                         }

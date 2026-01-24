@@ -238,7 +238,10 @@ fn test_trade_id_too_long_fails() {
     tick.provider_trade_id = Some("a".repeat(101)); // Exceeds 100 char limit
 
     let result = validator.validate(&tick);
-    assert!(matches!(result, Err(ValidationError::TradeIdTooLong { .. })));
+    assert!(matches!(
+        result,
+        Err(ValidationError::TradeIdTooLong { .. })
+    ));
 }
 
 #[test]
@@ -430,8 +433,7 @@ fn test_multiple_symbols_tracked_independently() {
 
 #[test]
 fn test_config_get_max_price_change() {
-    let config =
-        ValidationConfig::default().with_symbol_override("BTCUSDT", dec!(5)); // 5% for BTC
+    let config = ValidationConfig::default().with_symbol_override("BTCUSDT", dec!(5)); // 5% for BTC
 
     assert_eq!(config.get_max_price_change("BTCUSDT"), dec!(5));
     assert_eq!(config.get_max_price_change("ETHUSDT"), dec!(50)); // Default

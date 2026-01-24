@@ -161,10 +161,10 @@ impl LatencyStats {
 
         // Parallel algorithm for combining means and variances
         let delta = other.mean - self.mean;
-        self.mean = (self.count as f64 * self.mean + other.count as f64 * other.mean)
-            / total_count as f64;
-        self.m2 += other.m2 + delta * delta * self.count as f64 * other.count as f64
-            / total_count as f64;
+        self.mean =
+            (self.count as f64 * self.mean + other.count as f64 * other.mean) / total_count as f64;
+        self.m2 +=
+            other.m2 + delta * delta * self.count as f64 * other.count as f64 / total_count as f64;
 
         self.count = total_count;
         self.sum_us += other.sum_us;
@@ -173,11 +173,8 @@ impl LatencyStats {
 
         // Merge samples (keeping within limit)
         let remaining = self.sample_limit.saturating_sub(self.samples.len());
-        self.samples.extend(
-            other.samples.iter()
-                .take(remaining)
-                .copied()
-        );
+        self.samples
+            .extend(other.samples.iter().take(remaining).copied());
     }
 }
 
@@ -355,8 +352,7 @@ impl TestResults {
             self.passed = false;
             self.failures.push(format!(
                 "Average latency {:.1}μs exceeds max {}μs",
-                avg_lat,
-                config.max_avg_latency_us
+                avg_lat, config.max_avg_latency_us
             ));
         }
 
@@ -366,8 +362,7 @@ impl TestResults {
             self.passed = false;
             self.failures.push(format!(
                 "P99 latency {}μs exceeds max {}μs",
-                p99_lat,
-                config.max_p99_latency_us
+                p99_lat, config.max_p99_latency_us
             ));
         }
     }
@@ -457,7 +452,12 @@ impl MetricsCollector {
         ticks_persisted: Option<u64>,
     ) -> TestResults {
         let strategy_metrics = self.strategies.lock().values().cloned().collect();
-        self.build_results_with_metrics(ticks_generated, ticks_sent, ticks_persisted, strategy_metrics)
+        self.build_results_with_metrics(
+            ticks_generated,
+            ticks_sent,
+            ticks_persisted,
+            strategy_metrics,
+        )
     }
 
     /// Build test results with externally provided strategy metrics
@@ -564,11 +564,7 @@ mod tests {
 
     #[test]
     fn test_strategy_metrics() {
-        let metrics = StrategyMetrics::new(
-            "test_strategy".to_string(),
-            "rust".to_string(),
-            1000,
-        );
+        let metrics = StrategyMetrics::new("test_strategy".to_string(), "rust".to_string(), 1000);
 
         metrics.record_tick(Some(100));
         metrics.record_tick(Some(200));

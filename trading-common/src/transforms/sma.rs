@@ -309,8 +309,8 @@ mod tests {
     #[test]
     fn test_sma_with_typical_price() {
         let bars = vec![
-            (dec!(100), dec!(110), dec!(90), dec!(100)),  // Typical = (110+90+100)/3 = 100
-            (dec!(100), dec!(120), dec!(90), dec!(105)),  // Typical = (120+90+105)/3 = 105
+            (dec!(100), dec!(110), dec!(90), dec!(100)), // Typical = (110+90+100)/3 = 100
+            (dec!(100), dec!(120), dec!(90), dec!(105)), // Typical = (120+90+105)/3 = 105
             (dec!(105), dec!(130), dec!(100), dec!(115)), // Typical = (130+100+115)/3 = 115
         ];
         let ctx = create_bars_with_ohlc(&bars);

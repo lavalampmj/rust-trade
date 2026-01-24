@@ -48,23 +48,15 @@ impl Strategy for TestStrategy {
 
         if self.bar_count == 1 {
             // Buy on first bar
-            if let Ok(order) = Order::market(
-                &bar_data.ohlc_bar.symbol,
-                OrderSide::Buy,
-                Decimal::from(1),
-            )
-            .build()
+            if let Ok(order) =
+                Order::market(&bar_data.ohlc_bar.symbol, OrderSide::Buy, Decimal::from(1)).build()
             {
                 self.pending_orders.push(order);
             }
         } else if self.bar_count == self.total_bars {
             // Sell on last bar
-            if let Ok(order) = Order::market(
-                &bar_data.ohlc_bar.symbol,
-                OrderSide::Sell,
-                Decimal::from(1),
-            )
-            .build()
+            if let Ok(order) =
+                Order::market(&bar_data.ohlc_bar.symbol, OrderSide::Sell, Decimal::from(1)).build()
             {
                 self.pending_orders.push(order);
             }

@@ -252,7 +252,12 @@ fn test_overflow_behavior() {
 /// Test multiple symbol channels
 #[test]
 fn test_multiple_symbols() {
-    let symbols = vec![("ES", "CME"), ("NQ", "CME"), ("CL", "NYMEX"), ("GC", "COMEX")];
+    let symbols = vec![
+        ("ES", "CME"),
+        ("NQ", "CME"),
+        ("CL", "NYMEX"),
+        ("GC", "COMEX"),
+    ];
     let tick_count = 1_000i64; // Reduced for faster test
 
     let mut channels = Vec::new();

@@ -51,7 +51,12 @@ impl RustStrategyRunner {
 
     /// Create a new Rust strategy runner with the default TestTickCounterStrategy
     pub fn with_tick_counter(id: String, symbol: String, sample_limit: usize) -> Self {
-        Self::new(id, symbol, Box::new(TestTickCounterStrategy::new()), sample_limit)
+        Self::new(
+            id,
+            symbol,
+            Box::new(TestTickCounterStrategy::new()),
+            sample_limit,
+        )
     }
 
     /// Get mutable access to the strategy

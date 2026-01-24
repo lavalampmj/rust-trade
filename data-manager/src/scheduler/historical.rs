@@ -1,15 +1,15 @@
 //! Historical data fetch job scheduler
 
 use chrono::{DateTime, Duration, Utc};
+use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::sync::Arc;
-use parking_lot::Mutex;
 use tracing::debug;
 use uuid::Uuid;
 
 use crate::provider::HistoricalRequest;
-use crate::symbol::SymbolSpec;
 use crate::storage::JobStatus;
+use crate::symbol::SymbolSpec;
 
 /// Historical fetch job
 #[derive(Debug, Clone)]
@@ -84,11 +84,7 @@ impl HistoricalFetchJob {
 
     /// Convert to historical request
     pub fn to_request(&self) -> HistoricalRequest {
-        let mut request = HistoricalRequest::trades(
-            self.symbols.clone(),
-            self.start,
-            self.end,
-        );
+        let mut request = HistoricalRequest::trades(self.symbols.clone(), self.start, self.end);
         if let Some(ref dataset) = self.dataset {
             request = request.with_dataset(dataset.clone());
         }

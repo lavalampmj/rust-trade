@@ -35,48 +35,158 @@ fn generate_pretty_report(results: &TestResults) -> String {
     // Note: Could add ANSI color codes here for terminal display
 
     // Header
-    writeln!(report, "╔════════════════════════════════════════════════════════════════╗").unwrap();
-    writeln!(report, "║            INTEGRATION TEST RESULTS                            ║").unwrap();
-    writeln!(report, "╠════════════════════════════════════════════════════════════════╣").unwrap();
+    writeln!(
+        report,
+        "╔════════════════════════════════════════════════════════════════╗"
+    )
+    .unwrap();
+    writeln!(
+        report,
+        "║            INTEGRATION TEST RESULTS                            ║"
+    )
+    .unwrap();
+    writeln!(
+        report,
+        "╠════════════════════════════════════════════════════════════════╣"
+    )
+    .unwrap();
     writeln!(report, "║ Status: {:<55}║", status).unwrap();
-    writeln!(report, "║ Duration: {:<53}║", format!("{:.1}s", results.test_duration.as_secs_f64())).unwrap();
+    writeln!(
+        report,
+        "║ Duration: {:<53}║",
+        format!("{:.1}s", results.test_duration.as_secs_f64())
+    )
+    .unwrap();
 
     // Tick Counts Section
-    writeln!(report, "╠════════════════════════════════════════════════════════════════╣").unwrap();
-    writeln!(report, "║ TICK COUNTS:                                                   ║").unwrap();
-    writeln!(report, "║   Generated:       {:>12}                                ║", format_number(results.ticks_generated)).unwrap();
-    writeln!(report, "║   Sent:            {:>12}                                ║", format_number(results.ticks_sent)).unwrap();
-    writeln!(report, "║   Received (all):  {:>12}                                ║", format_number(results.ticks_received_total)).unwrap();
+    writeln!(
+        report,
+        "╠════════════════════════════════════════════════════════════════╣"
+    )
+    .unwrap();
+    writeln!(
+        report,
+        "║ TICK COUNTS:                                                   ║"
+    )
+    .unwrap();
+    writeln!(
+        report,
+        "║   Generated:       {:>12}                                ║",
+        format_number(results.ticks_generated)
+    )
+    .unwrap();
+    writeln!(
+        report,
+        "║   Sent:            {:>12}                                ║",
+        format_number(results.ticks_sent)
+    )
+    .unwrap();
+    writeln!(
+        report,
+        "║   Received (all):  {:>12}                                ║",
+        format_number(results.ticks_received_total)
+    )
+    .unwrap();
 
     if let Some(persisted) = results.ticks_persisted {
-        writeln!(report, "║   Persisted (DB):  {:>12}                                ║", format_number(persisted)).unwrap();
+        writeln!(
+            report,
+            "║   Persisted (DB):  {:>12}                                ║",
+            format_number(persisted)
+        )
+        .unwrap();
     }
 
     let loss_rate = results.tick_loss_rate();
-    writeln!(report, "║   Loss Rate:       {:>12}                                ║", format!("{:.2}%", loss_rate * 100.0)).unwrap();
+    writeln!(
+        report,
+        "║   Loss Rate:       {:>12}                                ║",
+        format!("{:.2}%", loss_rate * 100.0)
+    )
+    .unwrap();
 
     // Latency Section
-    writeln!(report, "╠════════════════════════════════════════════════════════════════╣").unwrap();
-    writeln!(report, "║ LATENCY (μs):                                                  ║").unwrap();
+    writeln!(
+        report,
+        "╠════════════════════════════════════════════════════════════════╣"
+    )
+    .unwrap();
+    writeln!(
+        report,
+        "║ LATENCY (μs):                                                  ║"
+    )
+    .unwrap();
 
     let stats = &results.latency_aggregate;
     if stats.count > 0 {
-        writeln!(report, "║   Average:             {:>12.1}                           ║", stats.average_us()).unwrap();
-        writeln!(report, "║   Median:              {:>12}                           ║", stats.median_us()).unwrap();
-        writeln!(report, "║   Std Dev:             {:>12.1}                           ║", stats.std_dev_us()).unwrap();
-        writeln!(report, "║   Min:                 {:>12}                           ║", stats.min_us).unwrap();
-        writeln!(report, "║   Max:                 {:>12}                           ║", stats.max_us).unwrap();
-        writeln!(report, "║   p95:                 {:>12}                           ║", stats.p95_us()).unwrap();
-        writeln!(report, "║   p99:                 {:>12}                           ║", stats.p99_us()).unwrap();
-        writeln!(report, "║   p99.9:               {:>12}                           ║", stats.p999_us()).unwrap();
+        writeln!(
+            report,
+            "║   Average:             {:>12.1}                           ║",
+            stats.average_us()
+        )
+        .unwrap();
+        writeln!(
+            report,
+            "║   Median:              {:>12}                           ║",
+            stats.median_us()
+        )
+        .unwrap();
+        writeln!(
+            report,
+            "║   Std Dev:             {:>12.1}                           ║",
+            stats.std_dev_us()
+        )
+        .unwrap();
+        writeln!(
+            report,
+            "║   Min:                 {:>12}                           ║",
+            stats.min_us
+        )
+        .unwrap();
+        writeln!(
+            report,
+            "║   Max:                 {:>12}                           ║",
+            stats.max_us
+        )
+        .unwrap();
+        writeln!(
+            report,
+            "║   p95:                 {:>12}                           ║",
+            stats.p95_us()
+        )
+        .unwrap();
+        writeln!(
+            report,
+            "║   p99:                 {:>12}                           ║",
+            stats.p99_us()
+        )
+        .unwrap();
+        writeln!(
+            report,
+            "║   p99.9:               {:>12}                           ║",
+            stats.p999_us()
+        )
+        .unwrap();
     } else {
-        writeln!(report, "║   No latency data collected                                  ║").unwrap();
+        writeln!(
+            report,
+            "║   No latency data collected                                  ║"
+        )
+        .unwrap();
     }
 
     // Per-Strategy Breakdown
     if !results.strategy_metrics.is_empty() {
-        writeln!(report, "╠════════════════════════════════════════════════════════════════╣").unwrap();
-        writeln!(report, "║ PER-STRATEGY BREAKDOWN:                                        ║").unwrap();
+        writeln!(
+            report,
+            "╠════════════════════════════════════════════════════════════════╣"
+        )
+        .unwrap();
+        writeln!(
+            report,
+            "║ PER-STRATEGY BREAKDOWN:                                        ║"
+        )
+        .unwrap();
 
         for strategy in &results.strategy_metrics {
             let stats = strategy.latency_stats.lock();
@@ -93,8 +203,16 @@ fn generate_pretty_report(results: &TestResults) -> String {
 
     // Failures Section
     if !results.failures.is_empty() {
-        writeln!(report, "╠════════════════════════════════════════════════════════════════╣").unwrap();
-        writeln!(report, "║ FAILURES:                                                      ║").unwrap();
+        writeln!(
+            report,
+            "╠════════════════════════════════════════════════════════════════╣"
+        )
+        .unwrap();
+        writeln!(
+            report,
+            "║ FAILURES:                                                      ║"
+        )
+        .unwrap();
         for failure in &results.failures {
             // Truncate long failure messages
             let msg = if failure.len() > 60 {
@@ -107,7 +225,11 @@ fn generate_pretty_report(results: &TestResults) -> String {
     }
 
     // Footer
-    writeln!(report, "╚════════════════════════════════════════════════════════════════╝").unwrap();
+    writeln!(
+        report,
+        "╚════════════════════════════════════════════════════════════════╝"
+    )
+    .unwrap();
 
     report
 }
@@ -121,17 +243,37 @@ fn generate_simple_report(results: &TestResults) -> String {
     writeln!(report, "=== INTEGRATION TEST RESULTS ===").unwrap();
     writeln!(report).unwrap();
     writeln!(report, "Status: {}", status).unwrap();
-    writeln!(report, "Duration: {:.1}s", results.test_duration.as_secs_f64()).unwrap();
+    writeln!(
+        report,
+        "Duration: {:.1}s",
+        results.test_duration.as_secs_f64()
+    )
+    .unwrap();
     writeln!(report).unwrap();
 
     writeln!(report, "TICK COUNTS:").unwrap();
-    writeln!(report, "  Generated: {}", format_number(results.ticks_generated)).unwrap();
+    writeln!(
+        report,
+        "  Generated: {}",
+        format_number(results.ticks_generated)
+    )
+    .unwrap();
     writeln!(report, "  Sent: {}", format_number(results.ticks_sent)).unwrap();
-    writeln!(report, "  Received: {}", format_number(results.ticks_received_total)).unwrap();
+    writeln!(
+        report,
+        "  Received: {}",
+        format_number(results.ticks_received_total)
+    )
+    .unwrap();
     if let Some(persisted) = results.ticks_persisted {
         writeln!(report, "  Persisted: {}", format_number(persisted)).unwrap();
     }
-    writeln!(report, "  Loss Rate: {:.2}%", results.tick_loss_rate() * 100.0).unwrap();
+    writeln!(
+        report,
+        "  Loss Rate: {:.2}%",
+        results.tick_loss_rate() * 100.0
+    )
+    .unwrap();
     writeln!(report).unwrap();
 
     writeln!(report, "LATENCY (μs):").unwrap();
@@ -161,7 +303,8 @@ fn generate_simple_report(results: &TestResults) -> String {
                 format_number(strategy.received_count()),
                 stats.average_us(),
                 stats.p99_us()
-            ).unwrap();
+            )
+            .unwrap();
         }
         writeln!(report).unwrap();
     }
@@ -252,7 +395,9 @@ mod tests {
             strategy1.latency_stats.lock().record(lat);
         }
         for _ in 0..150_000 {
-            strategy1.ticks_received.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            strategy1
+                .ticks_received
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         results.strategy_metrics.push(strategy1);
 
@@ -265,7 +410,9 @@ mod tests {
             strategy2.latency_stats.lock().record(lat);
         }
         for _ in 0..149_925 {
-            strategy2.ticks_received.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            strategy2
+                .ticks_received
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         results.strategy_metrics.push(strategy2);
 
@@ -318,7 +465,9 @@ mod tests {
     fn test_failed_report() {
         let mut results = create_test_results();
         results.passed = false;
-        results.failures.push("Tick loss rate exceeded tolerance".to_string());
+        results
+            .failures
+            .push("Tick loss rate exceeded tolerance".to_string());
 
         let report = generate_report(&results, ReportFormat::Pretty);
 

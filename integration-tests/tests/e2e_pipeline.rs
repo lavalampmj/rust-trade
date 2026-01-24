@@ -11,11 +11,10 @@ use tokio::time::timeout;
 
 use data_manager::provider::{DataProvider, LiveStreamProvider, LiveSubscription, StreamEvent};
 use integration_tests::{
-    generate_report,
-    DataGenConfig, EmulatorConfig, IntegrationTestConfig, MetricsConfig,
-    MetricsCollector, ReportFormat, StrategyConfig, StrategyRunnerManager,
-    TestDataEmulator, TestDataGenerator, TransportConfig, TransportMode, VolumeProfile,
-    WebSocketConfig, DbWriter, DbWriterConfig, DbVerifier,
+    generate_report, DataGenConfig, DbVerifier, DbWriter, DbWriterConfig, EmulatorConfig,
+    IntegrationTestConfig, MetricsCollector, MetricsConfig, ReportFormat, StrategyConfig,
+    StrategyRunnerManager, TestDataEmulator, TestDataGenerator, TransportConfig, TransportMode,
+    VolumeProfile, WebSocketConfig,
 };
 
 /// Helper function to run a test with the given configuration
@@ -56,7 +55,10 @@ async fn run_pipeline_test(config: IntegrationTestConfig) -> integration_tests::
     let emulator_metrics = emulator.metrics_clone();
 
     // 5. Connect emulator
-    emulator.connect().await.expect("Failed to connect emulator");
+    emulator
+        .connect()
+        .await
+        .expect("Failed to connect emulator");
 
     // 6. Set up callback to route ticks to subscribed strategy runners
     let manager_clone = manager.clone();
@@ -130,10 +132,7 @@ async fn test_lite_pipeline() {
     println!("{}", report);
 
     // Basic assertions
-    assert!(
-        results.ticks_sent > 0,
-        "Should have sent some ticks"
-    );
+    assert!(results.ticks_sent > 0, "Should have sent some ticks");
 
     // Lite test should complete quickly
     assert!(
@@ -158,10 +157,7 @@ async fn test_normal_pipeline() {
     println!("{}", report);
 
     // Assertions
-    assert!(
-        results.ticks_sent > 0,
-        "Should have sent some ticks"
-    );
+    assert!(results.ticks_sent > 0, "Should have sent some ticks");
 
     // Check tick throughput
     let expected = config.data_gen.expected_tick_count();
@@ -312,8 +308,7 @@ async fn test_early_shutdown() {
             exchange: "TEST".to_string(),
             base_price: 50000.0,
         },
-        emulator: EmulatorConfig::default()
-            .with_port(19400), // Unique port for early shutdown test
+        emulator: EmulatorConfig::default().with_port(19400), // Unique port for early shutdown test
         strategies: StrategyConfig {
             rust_count: 1,
             python_count: 0,
@@ -473,9 +468,12 @@ async fn test_websocket_transport() {
     println!("WebSocket average latency: {:.1}μs", avg_latency);
 
     // Just verify it completed - latency will be higher than direct
-    assert!(results.passed || results.failures.is_empty() ||
-        results.failures.iter().all(|f| f.contains("latency")),
-        "Test should pass or only have latency-related issues");
+    assert!(
+        results.passed
+            || results.failures.is_empty()
+            || results.failures.iter().all(|f| f.contains("latency")),
+        "Test should pass or only have latency-related issues"
+    );
 }
 
 /// Compare Direct vs WebSocket transport latencies
@@ -574,7 +572,11 @@ async fn test_transport_comparison() {
     println!(
         "Latency overhead: {:.1}μs ({:.1}x)",
         ws_latency - direct_latency,
-        if direct_latency > 0.0 { ws_latency / direct_latency } else { 0.0 }
+        if direct_latency > 0.0 {
+            ws_latency / direct_latency
+        } else {
+            0.0
+        }
     );
 
     // Both should have processed ticks
@@ -658,7 +660,10 @@ async fn test_database_persistence() {
         .with_flush_interval_ms(50);
     let mut db_writer = DbWriter::new(db_config);
 
-    db_writer.connect().await.expect("Failed to connect to database");
+    db_writer
+        .connect()
+        .await
+        .expect("Failed to connect to database");
     let db_sender = db_writer.start().expect("Failed to start db writer");
 
     // 3. Create metrics collector and strategy runners with symbol subscriptions
@@ -673,7 +678,10 @@ async fn test_database_persistence() {
     // 4. Create emulator
     let mut emulator = TestDataEmulator::new(bundle.clone(), config.emulator.clone());
     let emulator_metrics = emulator.metrics_clone();
-    emulator.connect().await.expect("Failed to connect emulator");
+    emulator
+        .connect()
+        .await
+        .expect("Failed to connect emulator");
 
     // 5. Set up callback that routes to subscribed strategy runners AND database writer
     let manager_clone = manager.clone();
@@ -749,7 +757,10 @@ async fn test_database_persistence() {
     println!("Database Stats:");
     println!("  Total ticks:     {}", stats.total_count);
     println!("  Distinct symbols: {}", stats.symbol_count);
-    println!("  Time range:       {:?} - {:?}", stats.earliest_time, stats.latest_time);
+    println!(
+        "  Time range:       {:?} - {:?}",
+        stats.earliest_time, stats.latest_time
+    );
 
     // Per-symbol breakdown
     println!("\nPer-symbol counts:");
@@ -850,7 +861,10 @@ async fn test_db_verifier_functionality() {
         .expect("Failed to connect to database");
 
     // Count all test ticks (should work even if empty)
-    let total_count = verifier.count_test_ticks().await.expect("Failed to count ticks");
+    let total_count = verifier
+        .count_test_ticks()
+        .await
+        .expect("Failed to count ticks");
     println!("Total test ticks in database: {}", total_count);
 
     // Get stats

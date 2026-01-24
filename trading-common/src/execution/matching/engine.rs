@@ -173,13 +173,9 @@ impl OrderMatchingEngine {
         self.last_trade = Some(price);
 
         // Check triggers
-        let triggered = self.core.check_triggers(
-            self.last_bid,
-            self.last_ask,
-            Some(price),
-            None,
-            None,
-        );
+        let triggered =
+            self.core
+                .check_triggers(self.last_bid, self.last_ask, Some(price), None, None);
 
         for order in triggered {
             self.core.add_order(order);
@@ -213,27 +209,17 @@ impl OrderMatchingEngine {
         // Check triggers with mid price as last
         let mid = (bid + ask) / Decimal::TWO;
 
-        let triggered = self.core.check_triggers(
-            Some(bid),
-            Some(ask),
-            Some(mid),
-            None,
-            None,
-        );
+        let triggered = self
+            .core
+            .check_triggers(Some(bid), Some(ask), Some(mid), None, None);
 
         for order in triggered {
             self.core.add_order(order);
         }
 
         // Match orders
-        self.core.match_orders(
-            Some(bid),
-            Some(ask),
-            self.last_trade,
-            None,
-            None,
-            timestamp,
-        )
+        self.core
+            .match_orders(Some(bid), Some(ask), self.last_trade, None, None, timestamp)
     }
 
     /// Add an order to the matching engine.
@@ -317,9 +303,7 @@ mod tests {
     }
 
     fn create_market_order(side: OrderSide) -> Order {
-        Order::market("BTCUSDT", side, dec!(1.0))
-            .build()
-            .unwrap()
+        Order::market("BTCUSDT", side, dec!(1.0)).build().unwrap()
     }
 
     #[test]

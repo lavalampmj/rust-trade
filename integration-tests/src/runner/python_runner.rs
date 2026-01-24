@@ -144,7 +144,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_python_runner() {
-        let runner = PythonStrategyRunner::new("python_0".to_string(), "TEST0000".to_string(), 1000);
+        let runner =
+            PythonStrategyRunner::new("python_0".to_string(), "TEST0000".to_string(), 1000);
 
         assert_eq!(runner.id(), "python_0");
         assert_eq!(runner.strategy_type(), "python");
@@ -154,7 +155,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_python_runner_process_tick() {
-        let runner = PythonStrategyRunner::new("python_0".to_string(), "TEST0000".to_string(), 1000);
+        let runner =
+            PythonStrategyRunner::new("python_0".to_string(), "TEST0000".to_string(), 1000);
 
         let tick = create_test_tick();
         runner.process_tick(&tick).await;
@@ -164,7 +166,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_python_runner_multiple_ticks() {
-        let runner = PythonStrategyRunner::new("python_0".to_string(), "TEST0000".to_string(), 1000);
+        let runner =
+            PythonStrategyRunner::new("python_0".to_string(), "TEST0000".to_string(), 1000);
 
         let tick = create_test_tick();
         for _ in 0..50 {
@@ -176,7 +179,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_python_runner_latency() {
-        let runner = PythonStrategyRunner::new("python_0".to_string(), "TEST0000".to_string(), 1000);
+        let runner =
+            PythonStrategyRunner::new("python_0".to_string(), "TEST0000".to_string(), 1000);
 
         // Create tick with recent timestamp
         let tick = NormalizedTick::with_details(
@@ -202,7 +206,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_python_runner_shutdown() {
-        let runner = PythonStrategyRunner::new("python_0".to_string(), "TEST0000".to_string(), 1000);
+        let runner =
+            PythonStrategyRunner::new("python_0".to_string(), "TEST0000".to_string(), 1000);
 
         let tick = create_test_tick();
         runner.process_tick(&tick).await;

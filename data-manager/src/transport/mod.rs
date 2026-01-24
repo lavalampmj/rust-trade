@@ -4,8 +4,8 @@
 //! market data to consumers. The primary transport is shared memory IPC
 //! for ultra-low latency within a single host.
 
-mod traits;
-pub mod ipc;
 pub mod grpc;
+pub mod ipc;
+mod traits;
 
 pub use traits::*;

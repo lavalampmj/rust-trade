@@ -106,11 +106,7 @@ async fn execute_list(args: ListArgs) -> Result<()> {
         if args.verbose {
             info!(
                 "  {} ({}) - Status: {:?}, Data: {:?} to {:?}",
-                symbol.spec,
-                symbol.id,
-                symbol.status,
-                symbol.data_start,
-                symbol.data_end
+                symbol.spec, symbol.id, symbol.status, symbol.data_start, symbol.data_end
             );
         } else {
             info!("  {}", symbol.spec);
@@ -159,7 +155,10 @@ async fn execute_remove(args: RemoveArgs) -> Result<()> {
 
 async fn execute_discover(args: DiscoverArgs) -> Result<()> {
     if args.provider != "databento" {
-        error!("Unknown provider: {}. Only 'databento' is currently supported.", args.provider);
+        error!(
+            "Unknown provider: {}. Only 'databento' is currently supported.",
+            args.provider
+        );
         return Ok(());
     }
 

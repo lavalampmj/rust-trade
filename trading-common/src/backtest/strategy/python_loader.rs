@@ -430,11 +430,7 @@ impl Strategy for PythonStrategyWrapper {
         self.inner.name()
     }
 
-    fn on_bar_data(
-        &mut self,
-        bar_data: &crate::data::types::BarData,
-        bars: &mut BarsContext,
-    ) {
+    fn on_bar_data(&mut self, bar_data: &crate::data::types::BarData, bars: &mut BarsContext) {
         // We need mutable access but only have Arc
         // PythonStrategy uses internal Mutex for state, so this is safe
         unsafe {

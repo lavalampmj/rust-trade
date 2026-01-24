@@ -178,7 +178,11 @@ impl SubscriptionManager {
                     }
                 }
             }
-            debug!("Consumer {} unsubscribed from {} symbols", consumer_id, symbols.len());
+            debug!(
+                "Consumer {} unsubscribed from {} symbols",
+                consumer_id,
+                symbols.len()
+            );
             true
         } else {
             false
@@ -299,10 +303,7 @@ mod tests {
 
         let request = SubscriptionRequest::new(
             "consumer1".to_string(),
-            vec![
-                SymbolSpec::new("ES", "CME"),
-                SymbolSpec::new("NQ", "CME"),
-            ],
+            vec![SymbolSpec::new("ES", "CME"), SymbolSpec::new("NQ", "CME")],
         );
 
         let result = manager.subscribe(request);
@@ -310,10 +311,8 @@ mod tests {
         assert_eq!(result.total_subscribed, 2);
 
         // Subscribe to same symbols again - should not add duplicates
-        let request2 = SubscriptionRequest::new(
-            "consumer1".to_string(),
-            vec![SymbolSpec::new("ES", "CME")],
-        );
+        let request2 =
+            SubscriptionRequest::new("consumer1".to_string(), vec![SymbolSpec::new("ES", "CME")]);
         let result2 = manager.subscribe(request2);
         assert_eq!(result2.symbols_added.len(), 0);
         assert_eq!(result2.total_subscribed, 2);
@@ -325,10 +324,7 @@ mod tests {
 
         manager.subscribe(SubscriptionRequest::new(
             "consumer1".to_string(),
-            vec![
-                SymbolSpec::new("ES", "CME"),
-                SymbolSpec::new("NQ", "CME"),
-            ],
+            vec![SymbolSpec::new("ES", "CME"), SymbolSpec::new("NQ", "CME")],
         ));
 
         assert!(manager.unsubscribe("consumer1", &[SymbolSpec::new("ES", "CME")]));

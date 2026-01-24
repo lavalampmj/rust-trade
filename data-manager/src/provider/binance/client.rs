@@ -5,10 +5,14 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
-use governor::{Quota, RateLimiter, clock::DefaultClock, state::{InMemoryState, NotKeyed}};
+use governor::{
+    clock::DefaultClock,
+    state::{InMemoryState, NotKeyed},
+    Quota, RateLimiter,
+};
 use std::num::NonZeroU32;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::time::sleep;
@@ -16,13 +20,12 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{debug, error, info, warn};
 
 use crate::provider::{
-    ConnectionStatus, DataProvider, DataType, LiveStreamProvider, LiveSubscription,
-    ProviderError, ProviderInfo, ProviderResult, StreamCallback, StreamEvent,
-    SubscriptionStatus,
+    ConnectionStatus, DataProvider, DataType, LiveStreamProvider, LiveSubscription, ProviderError,
+    ProviderInfo, ProviderResult, StreamCallback, StreamEvent, SubscriptionStatus,
 };
 use crate::symbol::SymbolSpec;
 
-use super::normalizer::{BinanceNormalizer, build_trade_streams};
+use super::normalizer::{build_trade_streams, BinanceNormalizer};
 use super::types::{BinanceStreamMessage, BinanceSubscribeMessage, BinanceTradeMessage};
 
 /// Default Binance US WebSocket URL
@@ -136,11 +139,16 @@ impl BinanceProvider {
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(text) {
             if value.get("result").is_some() || value.get("id").is_some() {
                 debug!("Received subscription confirmation: {}", text);
-                return Err(ProviderError::Internal("Control message, not trade data".to_string()));
+                return Err(ProviderError::Internal(
+                    "Control message, not trade data".to_string(),
+                ));
             }
         }
 
-        Err(ProviderError::Parse(format!("Unable to parse message: {}", text)))
+        Err(ProviderError::Parse(format!(
+            "Unable to parse message: {}",
+            text
+        )))
     }
 
     /// Handle WebSocket connection with reconnection logic
@@ -153,7 +161,10 @@ impl BinanceProvider {
         let symbol_names: Vec<String> = symbols.iter().map(|s| s.symbol.clone()).collect();
         let streams = build_trade_streams(&symbol_names)?;
 
-        info!("Connecting to Binance WebSocket with {} streams", streams.len());
+        info!(
+            "Connecting to Binance WebSocket with {} streams",
+            streams.len()
+        );
 
         let mut reconnect_attempts = 0;
         let mut current_delay = INITIAL_RECONNECT_DELAY;
@@ -254,13 +265,16 @@ impl BinanceProvider {
 
         // Send subscription message
         let subscribe_msg = BinanceSubscribeMessage::new(streams.to_vec());
-        let subscribe_json = serde_json::to_string(&subscribe_msg)
-            .map_err(|e| ProviderError::Internal(format!("Failed to serialize subscription: {}", e)))?;
+        let subscribe_json = serde_json::to_string(&subscribe_msg).map_err(|e| {
+            ProviderError::Internal(format!("Failed to serialize subscription: {}", e))
+        })?;
 
         write
             .send(Message::Text(subscribe_json))
             .await
-            .map_err(|e| ProviderError::Connection(format!("Failed to send subscription: {}", e)))?;
+            .map_err(|e| {
+                ProviderError::Connection(format!("Failed to send subscription: {}", e))
+            })?;
 
         info!("Subscription sent for {} streams", streams.len());
 
@@ -390,7 +404,9 @@ impl LiveStreamProvider for BinanceProvider {
         shutdown_rx: broadcast::Receiver<()>,
     ) -> ProviderResult<()> {
         if subscription.symbols.is_empty() {
-            return Err(ProviderError::Subscription("No symbols provided".to_string()));
+            return Err(ProviderError::Subscription(
+                "No symbols provided".to_string(),
+            ));
         }
 
         info!(
@@ -407,7 +423,9 @@ impl LiveStreamProvider for BinanceProvider {
     }
 
     async fn unsubscribe(&mut self, symbols: &[SymbolSpec]) -> ProviderResult<()> {
-        self.subscription_status.symbols.retain(|s| !symbols.contains(s));
+        self.subscription_status
+            .symbols
+            .retain(|s| !symbols.contains(s));
         info!("Unsubscribed from {:?}", symbols);
         Ok(())
     }

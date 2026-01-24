@@ -142,16 +142,12 @@ pub fn create_transport(
     shutdown_rx: broadcast::Receiver<()>,
 ) -> Box<dyn TickTransport> {
     match config.mode {
-        TransportMode::Direct => {
-            Box::new(DirectTransport::new(callback, shutdown_rx))
-        }
-        TransportMode::WebSocket => {
-            Box::new(WebSocketTransport::new(
-                config.websocket.clone(),
-                callback,
-                shutdown_rx,
-            ))
-        }
+        TransportMode::Direct => Box::new(DirectTransport::new(callback, shutdown_rx)),
+        TransportMode::WebSocket => Box::new(WebSocketTransport::new(
+            config.websocket.clone(),
+            callback,
+            shutdown_rx,
+        )),
     }
 }
 

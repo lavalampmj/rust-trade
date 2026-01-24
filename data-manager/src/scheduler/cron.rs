@@ -1,9 +1,9 @@
 //! Cron-based scheduling for recurring jobs
 
 use chrono::{DateTime, Datelike, Duration, Utc, Weekday};
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::RwLock;
 use tokio::sync::broadcast;
 use tracing::debug;
 
@@ -86,15 +86,9 @@ impl ScheduleExpression {
     /// Calculate next occurrence from a given time
     pub fn next_occurrence(&self, from: DateTime<Utc>) -> Option<DateTime<Utc>> {
         match self {
-            ScheduleExpression::EverySeconds(s) => {
-                Some(from + Duration::seconds(*s as i64))
-            }
-            ScheduleExpression::EveryMinutes(m) => {
-                Some(from + Duration::minutes(*m as i64))
-            }
-            ScheduleExpression::EveryHours(h) => {
-                Some(from + Duration::hours(*h as i64))
-            }
+            ScheduleExpression::EverySeconds(s) => Some(from + Duration::seconds(*s as i64)),
+            ScheduleExpression::EveryMinutes(m) => Some(from + Duration::minutes(*m as i64)),
+            ScheduleExpression::EveryHours(h) => Some(from + Duration::hours(*h as i64)),
             ScheduleExpression::DailyAt(hour, minute) => {
                 let today = from.date_naive();
                 let time = chrono::NaiveTime::from_hms_opt(*hour, *minute, 0)?;

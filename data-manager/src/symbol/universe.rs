@@ -2,9 +2,9 @@
 //!
 //! Manages the active set of symbols being tracked by the data manager.
 
+use parking_lot::RwLock;
 use std::collections::HashSet;
 use std::sync::Arc;
-use parking_lot::RwLock;
 use tracing::debug;
 
 use super::SymbolSpec;
@@ -185,10 +185,7 @@ mod tests {
 
     #[test]
     fn test_defaults() {
-        let defaults = vec![
-            SymbolSpec::new("ES", "CME"),
-            SymbolSpec::new("NQ", "CME"),
-        ];
+        let defaults = vec![SymbolSpec::new("ES", "CME"), SymbolSpec::new("NQ", "CME")];
         let universe = SymbolUniverse::with_defaults(defaults);
 
         assert_eq!(universe.len(), 2);

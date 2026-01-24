@@ -7,8 +7,8 @@ use sqlx::{PgPool, Row};
 use std::collections::HashMap;
 use tracing::debug;
 
-use crate::storage::RepositoryError;
 use super::{SymbolSpec, SymbolStatus};
+use crate::storage::RepositoryError;
 
 /// Symbol registry backed by the database
 pub struct SymbolRegistry {
@@ -57,7 +57,11 @@ impl SymbolRegistry {
     }
 
     /// Get a symbol by its specification
-    pub async fn get(&self, symbol: &str, exchange: &str) -> Result<Option<RegisteredSymbol>, RepositoryError> {
+    pub async fn get(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<Option<RegisteredSymbol>, RepositoryError> {
         let row = sqlx::query(
             r#"
             SELECT id, symbol, exchange, provider_symbols, status,
@@ -95,7 +99,10 @@ impl SymbolRegistry {
     }
 
     /// List symbols by exchange
-    pub async fn list_by_exchange(&self, exchange: &str) -> Result<Vec<RegisteredSymbol>, RepositoryError> {
+    pub async fn list_by_exchange(
+        &self,
+        exchange: &str,
+    ) -> Result<Vec<RegisteredSymbol>, RepositoryError> {
         let rows = sqlx::query(
             r#"
             SELECT id, symbol, exchange, provider_symbols, status,
@@ -114,7 +121,10 @@ impl SymbolRegistry {
     }
 
     /// List symbols by status
-    pub async fn list_by_status(&self, status: SymbolStatus) -> Result<Vec<RegisteredSymbol>, RepositoryError> {
+    pub async fn list_by_status(
+        &self,
+        status: SymbolStatus,
+    ) -> Result<Vec<RegisteredSymbol>, RepositoryError> {
         let rows = sqlx::query(
             r#"
             SELECT id, symbol, exchange, provider_symbols, status,
@@ -219,14 +229,16 @@ pub struct RegisteredSymbol {
     pub updated_at: DateTime<Utc>,
 }
 
-fn row_to_registered_symbol(row: &sqlx::postgres::PgRow) -> Result<RegisteredSymbol, RepositoryError> {
+fn row_to_registered_symbol(
+    row: &sqlx::postgres::PgRow,
+) -> Result<RegisteredSymbol, RepositoryError> {
     let symbol: String = row.get("symbol");
     let exchange: String = row.get("exchange");
     let provider_symbols: serde_json::Value = row.get("provider_symbols");
     let status_str: String = row.get("status");
 
-    let provider_mapping: HashMap<String, String> = serde_json::from_value(provider_symbols)
-        .unwrap_or_default();
+    let provider_mapping: HashMap<String, String> =
+        serde_json::from_value(provider_symbols).unwrap_or_default();
 
     let mut spec = SymbolSpec::new(symbol, exchange);
     spec.provider_mapping = provider_mapping;

@@ -18,8 +18,8 @@
 //! ```
 
 use chrono::{DateTime, Utc};
-use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use rust_decimal::Decimal;
 use std::fmt;
 use std::sync::Mutex;
@@ -676,8 +676,7 @@ impl FillModel for ProbabilisticFillModel {
                 let base_price = market.last_price;
                 let (fill_price, slippage) = if self.should_apply_slippage() {
                     let slippage_ticks = self.random_slippage_ticks();
-                    let slippage_amount = self.tick_size
-                        * Decimal::from(slippage_ticks);
+                    let slippage_amount = self.tick_size * Decimal::from(slippage_ticks);
 
                     let adjusted_price = match order.side {
                         OrderSide::Buy => base_price + slippage_amount,
@@ -739,8 +738,7 @@ impl FillModel for ProbabilisticFillModel {
                 if order.order_type == OrderType::Stop && self.should_apply_slippage() {
                     let base_price = base_fill.fill_price.unwrap();
                     let slippage_ticks = self.random_slippage_ticks();
-                    let slippage_amount = self.tick_size
-                        * Decimal::from(slippage_ticks);
+                    let slippage_amount = self.tick_size * Decimal::from(slippage_ticks);
 
                     let adjusted_price = match order.side {
                         OrderSide::Buy => base_price + slippage_amount,
@@ -1038,8 +1036,7 @@ mod tests {
     #[test]
     fn test_probabilistic_fill_model_slippage() {
         // prob_slippage = 1.0 means always slippage
-        let model = ProbabilisticFillModel::new(1.0, 1.0, 3, 42)
-            .with_tick_size(dec!(0.01));
+        let model = ProbabilisticFillModel::new(1.0, 1.0, 3, 42).with_tick_size(dec!(0.01));
 
         let order = create_test_order(OrderType::Market, OrderSide::Buy, None);
         let market = create_market_snapshot(dec!(100.00));
@@ -1105,8 +1102,7 @@ mod tests {
     #[test]
     fn test_probabilistic_fill_model_stop_order_slippage() {
         // Stop orders that trigger can have slippage
-        let model = ProbabilisticFillModel::new(1.0, 1.0, 2, 42)
-            .with_tick_size(dec!(1.0));
+        let model = ProbabilisticFillModel::new(1.0, 1.0, 2, 42).with_tick_size(dec!(1.0));
 
         // Sell stop at 49000
         let mut order = create_test_order(OrderType::Stop, OrderSide::Sell, Some(dec!(49000)));

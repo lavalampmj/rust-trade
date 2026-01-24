@@ -45,12 +45,12 @@ impl IpcConsumerBuilder {
     pub fn build(self) -> crate::transport::TransportResult<IpcConsumer> {
         use super::shared_memory::SharedMemoryChannel;
 
-        let symbol = self
-            .symbol
-            .ok_or_else(|| crate::transport::TransportError::Connection("Symbol not specified".to_string()))?;
-        let exchange = self
-            .exchange
-            .ok_or_else(|| crate::transport::TransportError::Connection("Exchange not specified".to_string()))?;
+        let symbol = self.symbol.ok_or_else(|| {
+            crate::transport::TransportError::Connection("Symbol not specified".to_string())
+        })?;
+        let exchange = self.exchange.ok_or_else(|| {
+            crate::transport::TransportError::Connection("Exchange not specified".to_string())
+        })?;
 
         let channel = SharedMemoryChannel::open(&symbol, &exchange, &self.path_prefix)?;
         Ok(channel.consumer())

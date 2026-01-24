@@ -11,10 +11,10 @@ use crate::config::Settings;
 use crate::provider::binance::{BinanceProvider, BinanceSettings as BinanceProviderSettings};
 use crate::provider::{DataProvider, LiveStreamProvider, LiveSubscription, StreamEvent};
 use crate::storage::{MarketDataRepository, TimescaleOperations};
-use trading_common::data::types::TickData;
 use crate::symbol::SymbolSpec;
 use crate::transport::ipc::{SharedMemoryConfig, SharedMemoryTransport};
 use crate::transport::Transport;
+use trading_common::data::types::TickData;
 
 /// Arguments for the serve command
 #[derive(Args)]
@@ -123,7 +123,8 @@ pub async fn execute(args: ServeArgs) -> Result<()> {
         // Start the appropriate provider
         match args.provider.as_str() {
             "binance" => {
-                run_binance_provider(symbols, repository, transport, shutdown_tx.subscribe()).await?;
+                run_binance_provider(symbols, repository, transport, shutdown_tx.subscribe())
+                    .await?;
             }
             "databento" => {
                 warn!("Databento live streaming not yet implemented");
@@ -273,7 +274,9 @@ async fn run_binance_provider(
 
     // Start streaming (this will block until shutdown)
     info!("Starting live data stream...");
-    provider.subscribe(subscription, callback, shutdown_rx).await?;
+    provider
+        .subscribe(subscription, callback, shutdown_rx)
+        .await?;
 
     // Final statistics
     info!(

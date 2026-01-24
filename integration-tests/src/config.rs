@@ -276,9 +276,8 @@ impl Default for IntegrationTestConfig {
 impl IntegrationTestConfig {
     /// Load configuration from a TOML file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
-        let content = std::fs::read_to_string(path.as_ref()).map_err(|e| {
-            ConfigError::IoError(format!("Failed to read config file: {}", e))
-        })?;
+        let content = std::fs::read_to_string(path.as_ref())
+            .map_err(|e| ConfigError::IoError(format!("Failed to read config file: {}", e)))?;
         Self::from_str(&content)
     }
 
@@ -302,7 +301,9 @@ impl IntegrationTestConfig {
     fn find_config_file(name: &str) -> Option<std::path::PathBuf> {
         // Try relative to CARGO_MANIFEST_DIR (for tests)
         if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-            let path = std::path::PathBuf::from(&manifest_dir).join("config").join(name);
+            let path = std::path::PathBuf::from(&manifest_dir)
+                .join("config")
+                .join(name);
             if path.exists() {
                 return Some(path);
             }

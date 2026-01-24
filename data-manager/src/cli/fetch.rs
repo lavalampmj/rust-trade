@@ -78,7 +78,10 @@ pub async fn execute(args: FetchArgs) -> Result<()> {
 
     // Check provider
     if args.provider != "databento" {
-        error!("Unknown provider: {}. Only 'databento' is currently supported.", args.provider);
+        error!(
+            "Unknown provider: {}. Only 'databento' is currently supported.",
+            args.provider
+        );
         return Ok(());
     }
 

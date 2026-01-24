@@ -6,13 +6,13 @@
 //! - SymbolRegistry: Database-backed symbol storage
 //! - Discovery: Provider-based symbol discovery
 
-mod universe;
 mod discovery;
 mod registry;
+mod universe;
 
-pub use universe::*;
 pub use discovery::*;
 pub use registry::*;
+pub use universe::*;
 
 use crate::config::routing::AssetType;
 use serde::{Deserialize, Serialize};
@@ -163,8 +163,7 @@ mod tests {
 
     #[test]
     fn test_provider_mapping() {
-        let spec = SymbolSpec::new("ES", "CME")
-            .with_provider_mapping("databento", "ESH5");
+        let spec = SymbolSpec::new("ES", "CME").with_provider_mapping("databento", "ESH5");
 
         assert_eq!(spec.symbol_for_provider("databento"), "ESH5");
         assert_eq!(spec.symbol_for_provider("unknown"), "ES");
@@ -173,6 +172,9 @@ mod tests {
     #[test]
     fn test_symbol_status() {
         assert_eq!(SymbolStatus::Active.as_str(), "active");
-        assert_eq!(SymbolStatus::from_str("inactive"), Some(SymbolStatus::Inactive));
+        assert_eq!(
+            SymbolStatus::from_str("inactive"),
+            Some(SymbolStatus::Inactive)
+        );
     }
 }

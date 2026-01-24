@@ -23,9 +23,8 @@ use tokio::sync::broadcast;
 use tokio::time::{sleep, Duration};
 
 use data_manager::provider::{
-    ConnectionStatus, DataProvider, DataType, LiveStreamProvider, LiveSubscription,
-    ProviderError, ProviderInfo, ProviderResult, StreamCallback, StreamEvent,
-    SubscriptionStatus,
+    ConnectionStatus, DataProvider, DataType, LiveStreamProvider, LiveSubscription, ProviderError,
+    ProviderInfo, ProviderResult, StreamCallback, StreamEvent, SubscriptionStatus,
 };
 use data_manager::schema::{NormalizedTick, TradeSide};
 use data_manager::symbol::SymbolSpec;
@@ -98,8 +97,10 @@ impl TestDataEmulator {
         // Build instrument_id -> symbol mapping
         let mut instrument_to_symbol = HashMap::new();
         for symbol in &bundle.metadata.symbols {
-            let instrument_id =
-                trading_common::data::dbn_types::symbol_to_instrument_id(symbol, &bundle.metadata.exchange);
+            let instrument_id = trading_common::data::dbn_types::symbol_to_instrument_id(
+                symbol,
+                &bundle.metadata.exchange,
+            );
             instrument_to_symbol.insert(instrument_id, symbol.clone());
         }
 
@@ -144,11 +145,7 @@ impl TestDataEmulator {
     /// This function:
     /// 1. Rewrites ts_event and ts_recv to current system time
     /// 2. Embeds the send time (microseconds) in the ts_in_delta field
-    fn trade_msg_to_normalized_tick(
-        &self,
-        msg: &TradeMsg,
-        symbol: &str,
-    ) -> (NormalizedTick, i32) {
+    fn trade_msg_to_normalized_tick(&self, msg: &TradeMsg, symbol: &str) -> (NormalizedTick, i32) {
         let now = Utc::now();
         let now_micros = now.timestamp_micros();
 
@@ -253,7 +250,11 @@ impl TestDataEmulator {
             let (normalized, _ts_in_delta) = self.trade_msg_to_normalized_tick(tick, &symbol);
 
             // Send through transport layer (convert NormalizedTick to TickData)
-            if transport.send(StreamEvent::Tick(normalized.into())).await.is_ok() {
+            if transport
+                .send(StreamEvent::Tick(normalized.into()))
+                .await
+                .is_ok()
+            {
                 self.metrics.inc_sent();
             } else {
                 self.metrics.inc_dropped();
@@ -331,7 +332,9 @@ impl LiveStreamProvider for TestDataEmulator {
         transport.start().await?;
 
         // Notify connection status through transport
-        transport.send(StreamEvent::Status(ConnectionStatus::Connected)).await?;
+        transport
+            .send(StreamEvent::Status(ConnectionStatus::Connected))
+            .await?;
 
         // Replay ticks through transport
         self.replay_ticks(transport.as_ref(), shutdown_rx).await?;
@@ -344,7 +347,9 @@ impl LiveStreamProvider for TestDataEmulator {
         );
 
         // Notify completion through transport
-        let _ = transport.send(StreamEvent::Status(ConnectionStatus::Disconnected)).await;
+        let _ = transport
+            .send(StreamEvent::Status(ConnectionStatus::Disconnected))
+            .await;
 
         // Stop transport
         transport.stop().await?;
@@ -493,24 +498,27 @@ mod tests {
         emulator.connect().await.unwrap();
 
         let start = Instant::now();
-        emulator.subscribe(
-            LiveSubscription::trades(vec![]),
-            callback,
-            shutdown_rx,
-        ).await.unwrap();
+        emulator
+            .subscribe(LiveSubscription::trades(vec![]), callback, shutdown_rx)
+            .await
+            .unwrap();
         let duration = start.elapsed();
 
         assert_eq!(received.load(Ordering::SeqCst), expected_ticks as u64);
         assert_eq!(emulator.metrics.sent_count(), expected_ticks as u64);
 
         // With 100x speed, should complete very quickly
-        assert!(duration.as_secs() < 5, "Replay took too long: {:?}", duration);
+        assert!(
+            duration.as_secs() < 5,
+            "Replay took too long: {:?}",
+            duration
+        );
     }
 
     #[tokio::test]
     async fn test_emulator_shutdown() {
         let bundle = create_test_bundle(3, 10); // Longer time window
-        // Use Direct transport for reliable unit testing
+                                                // Use Direct transport for reliable unit testing
         let config = EmulatorConfig {
             replay_speed: 1.0, // Real-time (will be slow)
             embed_send_time: true,
@@ -536,11 +544,8 @@ mod tests {
         emulator.connect().await.unwrap();
 
         // Spawn replay in background and send shutdown after 100ms
-        let emulator_future = emulator.subscribe(
-            LiveSubscription::trades(vec![]),
-            callback,
-            shutdown_rx,
-        );
+        let emulator_future =
+            emulator.subscribe(LiveSubscription::trades(vec![]), callback, shutdown_rx);
 
         let shutdown_future = async {
             sleep(Duration::from_millis(100)).await;

@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 use tracing::info;
 
-use crate::provider::{DataProvider, ProviderResult};
 use super::{SymbolSpec, SymbolStatus};
+use crate::provider::{DataProvider, ProviderResult};
 
 /// Symbol discovery result
 #[derive(Debug, Clone)]
@@ -69,21 +69,27 @@ impl SymbolDiscovery {
 
         let specs = provider.discover_symbols(exchange).await?;
 
-        let discovered: Vec<DiscoveredSymbol> = specs
-            .into_iter()
-            .map(DiscoveredSymbol::new)
-            .collect();
+        let discovered: Vec<DiscoveredSymbol> =
+            specs.into_iter().map(DiscoveredSymbol::new).collect();
 
         // Cache results
         let cache_key = format!("{}:{}", provider_name, exchange.unwrap_or("all"));
         self.cache.insert(cache_key, discovered.clone());
 
-        info!("Discovered {} symbols from {}", discovered.len(), provider_name);
+        info!(
+            "Discovered {} symbols from {}",
+            discovered.len(),
+            provider_name
+        );
         Ok(discovered)
     }
 
     /// Get cached discovery results
-    pub fn get_cached(&self, provider: &str, exchange: Option<&str>) -> Option<&Vec<DiscoveredSymbol>> {
+    pub fn get_cached(
+        &self,
+        provider: &str,
+        exchange: Option<&str>,
+    ) -> Option<&Vec<DiscoveredSymbol>> {
         let cache_key = format!("{}:{}", provider, exchange.unwrap_or("all"));
         self.cache.get(&cache_key)
     }
@@ -126,21 +132,21 @@ pub mod mappings {
     /// Get standard futures symbols for CME
     pub fn cme_futures() -> Vec<SymbolSpec> {
         vec![
-            SymbolSpec::new("ES", "CME"), // E-mini S&P 500
-            SymbolSpec::new("NQ", "CME"), // E-mini Nasdaq 100
-            SymbolSpec::new("YM", "CME"), // E-mini Dow
+            SymbolSpec::new("ES", "CME"),  // E-mini S&P 500
+            SymbolSpec::new("NQ", "CME"),  // E-mini Nasdaq 100
+            SymbolSpec::new("YM", "CME"),  // E-mini Dow
             SymbolSpec::new("RTY", "CME"), // E-mini Russell 2000
-            SymbolSpec::new("CL", "CME"), // Crude Oil
-            SymbolSpec::new("GC", "CME"), // Gold
-            SymbolSpec::new("SI", "CME"), // Silver
-            SymbolSpec::new("ZN", "CME"), // 10-Year T-Note
-            SymbolSpec::new("ZB", "CME"), // 30-Year T-Bond
-            SymbolSpec::new("ZC", "CME"), // Corn
-            SymbolSpec::new("ZS", "CME"), // Soybeans
-            SymbolSpec::new("ZW", "CME"), // Wheat
-            SymbolSpec::new("6E", "CME"), // Euro FX
-            SymbolSpec::new("6J", "CME"), // Japanese Yen
-            SymbolSpec::new("6B", "CME"), // British Pound
+            SymbolSpec::new("CL", "CME"),  // Crude Oil
+            SymbolSpec::new("GC", "CME"),  // Gold
+            SymbolSpec::new("SI", "CME"),  // Silver
+            SymbolSpec::new("ZN", "CME"),  // 10-Year T-Note
+            SymbolSpec::new("ZB", "CME"),  // 30-Year T-Bond
+            SymbolSpec::new("ZC", "CME"),  // Corn
+            SymbolSpec::new("ZS", "CME"),  // Soybeans
+            SymbolSpec::new("ZW", "CME"),  // Wheat
+            SymbolSpec::new("6E", "CME"),  // Euro FX
+            SymbolSpec::new("6J", "CME"),  // Japanese Yen
+            SymbolSpec::new("6B", "CME"),  // British Pound
         ]
     }
 
@@ -163,16 +169,16 @@ pub mod mappings {
     /// Get standard equity ETF symbols
     pub fn equity_etfs() -> Vec<SymbolSpec> {
         vec![
-            SymbolSpec::new("SPY", "NYSE"),  // S&P 500 ETF
+            SymbolSpec::new("SPY", "NYSE"),   // S&P 500 ETF
             SymbolSpec::new("QQQ", "NASDAQ"), // Nasdaq 100 ETF
-            SymbolSpec::new("IWM", "NYSE"),  // Russell 2000 ETF
-            SymbolSpec::new("DIA", "NYSE"),  // Dow Jones ETF
-            SymbolSpec::new("VTI", "NYSE"),  // Total Stock Market
-            SymbolSpec::new("VOO", "NYSE"),  // Vanguard S&P 500
-            SymbolSpec::new("GLD", "NYSE"),  // Gold ETF
-            SymbolSpec::new("SLV", "NYSE"),  // Silver ETF
+            SymbolSpec::new("IWM", "NYSE"),   // Russell 2000 ETF
+            SymbolSpec::new("DIA", "NYSE"),   // Dow Jones ETF
+            SymbolSpec::new("VTI", "NYSE"),   // Total Stock Market
+            SymbolSpec::new("VOO", "NYSE"),   // Vanguard S&P 500
+            SymbolSpec::new("GLD", "NYSE"),   // Gold ETF
+            SymbolSpec::new("SLV", "NYSE"),   // Silver ETF
             SymbolSpec::new("TLT", "NASDAQ"), // 20+ Year Treasury
-            SymbolSpec::new("VIX", "CBOE"),  // Volatility Index
+            SymbolSpec::new("VIX", "CBOE"),   // Volatility Index
         ]
     }
 }
@@ -189,7 +195,10 @@ mod tests {
             .with_asset_class("futures".to_string());
 
         assert_eq!(discovered.spec.symbol, "ES");
-        assert_eq!(discovered.description, Some("E-mini S&P 500 Futures".to_string()));
+        assert_eq!(
+            discovered.description,
+            Some("E-mini S&P 500 Futures".to_string())
+        );
         assert_eq!(discovered.asset_class, Some("futures".to_string()));
     }
 

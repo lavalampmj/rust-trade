@@ -348,8 +348,13 @@ impl RoutingConfig {
     }
 
     /// Add an asset type routing rule.
-    pub fn add_asset_type_routing(mut self, asset_type: AssetType, routing: AssetTypeRouting) -> Self {
-        self.asset_types.insert(asset_type.as_str().to_string(), routing);
+    pub fn add_asset_type_routing(
+        mut self,
+        asset_type: AssetType,
+        routing: AssetTypeRouting,
+    ) -> Self {
+        self.asset_types
+            .insert(asset_type.as_str().to_string(), routing);
         self
     }
 }
@@ -465,10 +470,19 @@ mod tests {
     fn test_databento_routing() {
         let routing = DatabentoRouting::default();
         assert_eq!(routing.get_dataset(AssetType::Futures, "CME"), "GLBX.MDP3");
-        assert_eq!(routing.get_dataset(AssetType::Equity, "NASDAQ"), "XNAS.ITCH");
-        assert_eq!(routing.get_dataset(AssetType::Equity, "NYSE"), "XNYS.TRADES");
+        assert_eq!(
+            routing.get_dataset(AssetType::Equity, "NASDAQ"),
+            "XNAS.ITCH"
+        );
+        assert_eq!(
+            routing.get_dataset(AssetType::Equity, "NYSE"),
+            "XNYS.TRADES"
+        );
         // Unknown exchange falls back to default
-        assert_eq!(routing.get_dataset(AssetType::Futures, "UNKNOWN"), "GLBX.MDP3");
+        assert_eq!(
+            routing.get_dataset(AssetType::Futures, "UNKNOWN"),
+            "GLBX.MDP3"
+        );
     }
 
     #[test]
