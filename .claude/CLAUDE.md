@@ -636,6 +636,107 @@ cargo bench
 cargo flamegraph --bin trading-core -- live
 ```
 
+## Docker Deployment
+
+The system supports running data-manager, TimescaleDB, and Redis in Docker containers while trading-core runs on the host for lowest latency.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Docker Containers                         │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │ TimescaleDB │  │   Redis     │  │   data-manager      │  │
+│  │  :5432      │  │   :6379     │  │  (Binance WS)       │  │
+│  └─────────────┘  └─────────────┘  └──────────┬──────────┘  │
+│                                               │              │
+│                                     /dev/shm/trading (IPC)  │
+└─────────────────────────────────────────────────────────────┘
+                                               │
+                                        volume mount
+                                               │
+┌─────────────────────────────────────────────────────────────┐
+│                         Host                                 │
+│  ┌─────────────────────┐                                    │
+│  │   trading-core      │◄───── /dev/shm/trading (IPC)       │
+│  │   (paper trading)   │                                    │
+│  └─────────────────────┘                                    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Quick Start
+
+```bash
+# 1. Copy environment example and configure
+cp .env.docker.example .env
+# Edit .env with your POSTGRES_PASSWORD and other settings
+
+# 2. Start containers
+docker-compose up -d
+
+# 3. Verify services are healthy
+docker-compose ps
+
+# 4. Start trading-core on host
+cd trading-core && cargo run live --paper-trading
+```
+
+### Configuration Files
+
+- `docker-compose.yml`: Main orchestration file
+- `docker/Dockerfile.data-manager`: Multi-stage build for data-manager
+- `.env.docker.example`: Environment variable template
+- `config/schema.sql`: Database initialization (mounted as init script)
+
+### Services
+
+| Service | Container Name | Ports | Purpose |
+|---------|---------------|-------|---------|
+| timescaledb | trading-timescaledb | 5432:5432 | Time-series database for tick storage |
+| redis | trading-redis | 6379:6379 | L2 cache layer |
+| data-manager | trading-data-manager | - | Market data ingestion and IPC distribution |
+
+### IPC Communication
+
+Data flows via shared memory at `/dev/shm/trading`:
+- **Container side**: data-manager writes ticks to ring buffer
+- **Host side**: trading-core reads from same location via volume mount
+- **Performance**: Near-native speed (~10µs latency)
+
+### Commands
+
+```bash
+# View logs
+docker-compose logs -f data-manager
+docker-compose logs -f timescaledb
+
+# Stop all services
+docker-compose down
+
+# Stop and remove volumes (WARNING: deletes data)
+docker-compose down -v
+
+# Rebuild data-manager image
+docker-compose build data-manager
+
+# Check database stats
+docker-compose exec timescaledb psql -U trading -d trading_core -c "SELECT COUNT(*) FROM tick_data;"
+```
+
+### Environment Variables
+
+Required:
+- `POSTGRES_PASSWORD`: Database password (no default, must be set)
+
+Optional:
+- `POSTGRES_USER`: Database user (default: trading)
+- `POSTGRES_DB`: Database name (default: trading_core)
+- `TRADING_SYMBOLS`: Symbols to subscribe (default: BTCUSDT,ETHUSDT)
+- `RUST_LOG`: Log levels (default: data_manager=info,sqlx=warn)
+- `LOG_FORMAT`: Log format (default: json)
+- `BINANCE_API_KEY`, `BINANCE_API_SECRET`: For authenticated Binance endpoints
+- `DATABENTO_API_KEY`: For historical data fetching
+
 ## Known Constraints and Trade-offs
 
 1. **IPC dependency**: trading-core requires data-manager to be running for live data - start data-manager first

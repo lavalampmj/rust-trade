@@ -85,7 +85,7 @@
 ## 🔧 Infrastructure & Operations
 
 ### Deployment
-- [ ] Docker containerization
+- [x] Docker containerization - **COMPLETE** (docker-compose.yml for data-manager + TimescaleDB + Redis, trading-core runs on host for lowest latency)
 - [ ] Kubernetes deployment manifests
 - [ ] CI/CD pipeline (GitHub Actions)
 - [ ] Staging environment setup
@@ -156,6 +156,21 @@
 ---
 
 ## ✅ Recently Completed
+
+### Docker Containerization (2026-01-24)
+- [x] **docker-compose.yml**: Orchestrates TimescaleDB, Redis, and data-manager containers
+- [x] **docker/Dockerfile.data-manager**: Multi-stage build (builder + runtime) for minimal image size
+- [x] **.env.docker.example**: Environment variable template with documentation
+- [x] **Architecture**:
+  - Data-manager + TimescaleDB + Redis in containers
+  - Trading-core on host for lowest latency
+  - IPC via shared memory (`/dev/shm/trading`) volume mount
+- [x] **Features**:
+  - Health checks for all services
+  - PostgreSQL performance tuning for time-series workloads
+  - Redis with AOF persistence and LRU eviction
+  - Non-root user in data-manager container
+- [x] **Documentation**: Added Docker Deployment section to CLAUDE.md
 
 ### Standardized Logging Format (2026-01-24)
 - [x] **Shared Logging Module** (`trading-common/src/logging/`):

@@ -1,0 +1,69 @@
+# =============================================================================
+# Stage 1: Builder
+# =============================================================================
+FROM rust:1.75-bookworm AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy workspace files
+COPY Cargo.toml Cargo.lock ./
+
+# Copy all workspace members
+COPY trading-common ./trading-common
+COPY data-manager ./data-manager
+
+# Create dummy files for other workspace members to satisfy Cargo
+RUN mkdir -p trading-core/src src-tauri/src integration-tests/src && \
+    echo "fn main() {}" > trading-core/src/main.rs && \
+    echo "fn main() {}" > src-tauri/src/main.rs && \
+    echo "" > integration-tests/src/lib.rs
+
+# Copy workspace member Cargo.toml files
+COPY trading-core/Cargo.toml ./trading-core/
+COPY src-tauri/Cargo.toml ./src-tauri/
+COPY integration-tests/Cargo.toml ./integration-tests/
+
+# Build only the data-manager binary in release mode
+RUN cargo build --release --package data-manager --bin data-manager
+
+# =============================================================================
+# Stage 2: Runtime
+# =============================================================================
+FROM debian:bookworm-slim AS runtime
+
+WORKDIR /app
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for security
+RUN useradd -m -u 1000 -s /bin/bash appuser
+
+# Copy the binary from builder
+COPY --from=builder /app/target/release/data-manager /usr/local/bin/data-manager
+
+# Create directories for config and shared memory
+RUN mkdir -p /app/config /dev/shm/trading && \
+    chown -R appuser:appuser /app /dev/shm/trading
+
+# Switch to non-root user
+USER appuser
+
+# Set default environment variables
+ENV RUST_LOG=data_manager=info,sqlx=warn
+ENV LOG_FORMAT=json
+
+# Entrypoint
+ENTRYPOINT ["data-manager"]
+
+# Default command (can be overridden)
+CMD ["serve", "--live", "--provider", "binance", "--ipc", "--persist"]

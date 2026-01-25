@@ -1,0 +1,146 @@
+# Docker Compose for Trading System
+#
+# Architecture:
+#   - TimescaleDB: PostgreSQL with time-series extensions
+#   - data-manager: Market data ingestion and IPC distribution
+#   - trading-core: Runs on HOST (not in Docker) for lowest latency
+#
+# IPC Communication:
+#   data-manager writes to /dev/shm/trading (shared memory)
+#   trading-core on host reads from same location
+#
+# Usage:
+#   docker-compose up -d              # Start services
+#   docker-compose logs -f data-manager  # View logs
+#   docker-compose down               # Stop services
+#
+# Then on host:
+#   cd trading-core && cargo run live --paper-trading
+
+services:
+  # =============================================================================
+  # TimescaleDB - Time-series database for tick data storage
+  # =============================================================================
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: trading-timescaledb
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-trading}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-trading_core}
+      # TimescaleDB tuning
+      TIMESCALEDB_TELEMETRY: "off"
+    volumes:
+      # Persistent data storage
+      - timescale_data:/var/lib/postgresql/data
+      # Custom initialization scripts
+      - ./config/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trading} -d ${POSTGRES_DB:-trading_core}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - trading-network
+    # Performance tuning for time-series workloads
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=768MB"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      - "-c"
+      - "max_connections=100"
+      - "-c"
+      - "synchronous_commit=off"
+      - "-c"
+      - "wal_level=minimal"
+      - "-c"
+      - "max_wal_senders=0"
+
+  # =============================================================================
+  # Redis - Caching layer for tick data
+  # =============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: trading-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - trading-network
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+
+  # =============================================================================
+  # Data Manager - Market data ingestion and IPC distribution
+  # =============================================================================
+  data-manager:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.data-manager
+    container_name: trading-data-manager
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Database connection (internal Docker network)
+      DATABASE_URL: postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD}@timescaledb:5432/${POSTGRES_DB:-trading_core}
+      REDIS_URL: redis://redis:6379
+      RUST_LOG: ${RUST_LOG:-data_manager=info,sqlx=warn}
+      LOG_FORMAT: ${LOG_FORMAT:-pretty}
+      # Binance API (if needed for authenticated endpoints)
+      BINANCE_API_KEY: ${BINANCE_API_KEY:-}
+      BINANCE_API_SECRET: ${BINANCE_API_SECRET:-}
+      # Databento API (for historical data)
+      DATABENTO_API_KEY: ${DATABENTO_API_KEY:-}
+    volumes:
+      # Shared memory for IPC with host trading-core
+      # CRITICAL: This enables zero-copy data transfer to host
+      - /dev/shm/trading:/dev/shm/trading
+      # Configuration files
+      - ./config:/app/config:ro
+    networks:
+      - trading-network
+    # Default command - override in docker-compose.override.yml if needed
+    command:
+      - "serve"
+      - "--live"
+      - "--provider"
+      - "binance"
+      - "--ipc"
+      - "--persist"
+      - "--symbols"
+      - "${TRADING_SYMBOLS:-BTCUSDT,ETHUSDT}"
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  trading-network:
+    driver: bridge
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  timescale_data:
+    driver: local
+  redis_data:
+    driver: local
