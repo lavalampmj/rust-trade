@@ -7,11 +7,12 @@ use trading_common::{
         engine::{BacktestConfig, BacktestData, BacktestEngine, BacktestResult},
         strategy::create_strategy,
     },
+    config::{ConfigAction, ValidationResult},
     data::types::TradeSide,
 };
 
 use std::str::FromStr;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[tauri::command]
 pub async fn get_data_info(state: State<'_, AppState>) -> Result<DataInfoResponse, String> {
@@ -324,4 +325,244 @@ pub async fn get_ohlc_preview(
 
     info!("Generated {} OHLC preview records", response.len());
     Ok(response)
+}
+
+// ============================================================================
+// Configuration Commands
+// ============================================================================
+
+/// Get the full merged configuration.
+#[tauri::command]
+pub async fn get_config(state: State<'_, AppState>) -> Result<ConfigResponse, String> {
+    info!("Getting full configuration");
+
+    let config = state.config_service.get_config();
+    let config_json = serde_json::to_value(&config).map_err(|e| e.to_string())?;
+
+    Ok(ConfigResponse {
+        config: config_json,
+        has_overrides: state.config_service.has_overrides(),
+    })
+}
+
+/// Get a specific configuration section.
+#[tauri::command]
+pub async fn get_config_section(
+    section: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    info!("Getting config section: {}", section);
+
+    state
+        .config_service
+        .get_section(&section)
+        .map_err(|e| e.to_string())
+}
+
+/// Update a configuration section.
+#[tauri::command]
+pub async fn update_config_section(
+    section: String,
+    value: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    info!("Updating config section: {}", section);
+
+    state
+        .config_service
+        .update_section(&section, value)
+        .map_err(|e| e.to_string())?;
+
+    // Auto-save after update
+    if let Err(e) = state.config_service.save() {
+        warn!("Failed to auto-save config: {}", e);
+        // Don't fail the update, just log warning
+    }
+
+    Ok(())
+}
+
+/// Add an item to an array section.
+#[tauri::command]
+pub async fn add_config_item(
+    section: String,
+    item: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    info!("Adding item to config section: {}", section);
+
+    state
+        .config_service
+        .add_item(&section, item)
+        .map_err(|e| e.to_string())?;
+
+    // Auto-save after update
+    if let Err(e) = state.config_service.save() {
+        warn!("Failed to auto-save config: {}", e);
+    }
+
+    Ok(())
+}
+
+/// Update an item in an array section.
+#[tauri::command]
+pub async fn update_config_item(
+    section: String,
+    index: usize,
+    item: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    info!("Updating item {} in config section: {}", index, section);
+
+    state
+        .config_service
+        .update_item(&section, index, item)
+        .map_err(|e| e.to_string())?;
+
+    // Auto-save after update
+    if let Err(e) = state.config_service.save() {
+        warn!("Failed to auto-save config: {}", e);
+    }
+
+    Ok(())
+}
+
+/// Remove an item from an array section.
+#[tauri::command]
+pub async fn remove_config_item(
+    section: String,
+    index: usize,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    info!("Removing item {} from config section: {}", index, section);
+
+    state
+        .config_service
+        .remove_item(&section, index)
+        .map_err(|e| e.to_string())?;
+
+    // Auto-save after update
+    if let Err(e) = state.config_service.save() {
+        warn!("Failed to auto-save config: {}", e);
+    }
+
+    Ok(())
+}
+
+/// Reset a configuration section to its default value.
+#[tauri::command]
+pub async fn reset_config_section(
+    section: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    info!("Resetting config section: {}", section);
+
+    state
+        .config_service
+        .reset_section(&section)
+        .map_err(|e| e.to_string())?;
+
+    // Auto-save after reset
+    if let Err(e) = state.config_service.save() {
+        warn!("Failed to auto-save config: {}", e);
+    }
+
+    Ok(())
+}
+
+/// Validate the current configuration.
+#[tauri::command]
+pub async fn validate_config(state: State<'_, AppState>) -> Result<ValidationResultResponse, String> {
+    info!("Validating configuration");
+
+    let result = state.config_service.validate();
+    Ok(convert_validation_result(result))
+}
+
+/// Validate a specific section value.
+#[tauri::command]
+pub async fn validate_config_section(
+    section: String,
+    value: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<ValidationResultResponse, String> {
+    info!("Validating config section: {}", section);
+
+    let result = state.config_service.validate_section(&section, &value);
+    Ok(convert_validation_result(result))
+}
+
+/// Get the configuration audit log.
+#[tauri::command]
+pub async fn get_config_audit_log(
+    state: State<'_, AppState>,
+) -> Result<Vec<ConfigAuditEntryResponse>, String> {
+    info!("Getting config audit log");
+
+    let log = state.config_service.get_audit_log();
+    let response: Vec<ConfigAuditEntryResponse> = log
+        .into_iter()
+        .map(|entry| ConfigAuditEntryResponse {
+            timestamp: entry.timestamp.to_rfc3339(),
+            section: entry.section,
+            action: match entry.action {
+                ConfigAction::Update => "update".to_string(),
+                ConfigAction::Add => "add".to_string(),
+                ConfigAction::Remove => "remove".to_string(),
+                ConfigAction::Reset => "reset".to_string(),
+            },
+            old_value: entry.old_value,
+            new_value: entry.new_value,
+        })
+        .collect();
+
+    Ok(response)
+}
+
+/// Save configuration to disk (usually auto-saved, but can force save).
+#[tauri::command]
+pub async fn save_config(state: State<'_, AppState>) -> Result<(), String> {
+    info!("Saving configuration to disk");
+
+    state.config_service.save().map_err(|e| e.to_string())
+}
+
+/// Reload configuration from disk.
+#[tauri::command]
+pub async fn reload_config(state: State<'_, AppState>) -> Result<(), String> {
+    info!("Reloading configuration from disk");
+
+    state.config_service.reload().map_err(|e| e.to_string())
+}
+
+/// Get user overrides (for debugging).
+#[tauri::command]
+pub async fn get_config_overrides(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    info!("Getting config overrides");
+
+    Ok(state.config_service.get_overrides())
+}
+
+// Helper function to convert ValidationResult to response type
+fn convert_validation_result(result: ValidationResult) -> ValidationResultResponse {
+    ValidationResultResponse {
+        valid: result.valid,
+        errors: result
+            .errors
+            .into_iter()
+            .map(|e| ValidationErrorResponse {
+                field: e.field,
+                message: e.message,
+                code: format!("{:?}", e.code),
+            })
+            .collect(),
+        warnings: result
+            .warnings
+            .into_iter()
+            .map(|w| ValidationWarningResponse {
+                field: w.field,
+                message: w.message,
+            })
+            .collect(),
+    }
 }

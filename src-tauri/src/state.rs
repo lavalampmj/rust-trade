@@ -1,6 +1,7 @@
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
+use trading_common::config::ConfigService;
 use trading_common::data::{
     cache::{TickDataCache, TieredCache},
     repository::TickDataRepository,
@@ -8,6 +9,7 @@ use trading_common::data::{
 
 pub struct AppState {
     pub repository: Arc<TickDataRepository>,
+    pub config_service: Arc<ConfigService>,
 }
 
 #[derive(Debug, Clone)]
@@ -38,8 +40,19 @@ impl AppState {
         let cache: Arc<dyn TickDataCache> = Arc::new(cache);
         let repository = TickDataRepository::new(pool, cache);
 
+        // Initialize ConfigService
+        let config_path = std::env::var("CONFIG_PATH")
+            .unwrap_or_else(|_| "config/development.toml".to_string());
+        let config_service = ConfigService::new(&config_path).map_err(|e| {
+            tracing::warn!("Failed to load config from {}: {}", config_path, e);
+            tracing::info!("Using default configuration");
+            e
+        }).unwrap_or_else(|_| ConfigService::with_defaults(Default::default()));
+        tracing::info!("Config service initialized");
+
         Ok(Self {
             repository: Arc::new(repository),
+            config_service: Arc::new(config_service),
         })
     }
 }

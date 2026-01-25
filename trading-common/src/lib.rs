@@ -3,6 +3,7 @@
 
 pub mod accounts;
 pub mod backtest;
+pub mod config;
 pub mod data;
 pub mod error;
 pub mod execution;

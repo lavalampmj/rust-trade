@@ -111,3 +111,100 @@ pub struct OHLCRequest {
     pub timeframe: String,
     pub count: u32,
 }
+
+// ============================================================================
+// Configuration Types
+// ============================================================================
+
+/// Response containing the full application configuration.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConfigResponse {
+    /// The merged configuration (defaults + user overrides)
+    pub config: serde_json::Value,
+    /// Whether there are user overrides
+    pub has_overrides: bool,
+}
+
+/// Request to update a configuration section.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateConfigSectionRequest {
+    /// Section path (e.g., "symbols", "accounts.default")
+    pub section: String,
+    /// New value for the section
+    pub value: serde_json::Value,
+}
+
+/// Request to add an item to an array section.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AddConfigItemRequest {
+    /// Section path (e.g., "symbols", "accounts.simulation")
+    pub section: String,
+    /// Item to add
+    pub item: serde_json::Value,
+}
+
+/// Request to update an item in an array section.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateConfigItemRequest {
+    /// Section path
+    pub section: String,
+    /// Index of the item to update
+    pub index: usize,
+    /// New value for the item
+    pub item: serde_json::Value,
+}
+
+/// Request to remove an item from an array section.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RemoveConfigItemRequest {
+    /// Section path
+    pub section: String,
+    /// Index of the item to remove
+    pub index: usize,
+}
+
+/// Validation result response.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ValidationResultResponse {
+    /// Whether the configuration is valid
+    pub valid: bool,
+    /// List of validation errors
+    pub errors: Vec<ValidationErrorResponse>,
+    /// List of validation warnings
+    pub warnings: Vec<ValidationWarningResponse>,
+}
+
+/// Validation error.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ValidationErrorResponse {
+    /// Field path
+    pub field: String,
+    /// Error message
+    pub message: String,
+    /// Error code
+    pub code: String,
+}
+
+/// Validation warning.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ValidationWarningResponse {
+    /// Field path
+    pub field: String,
+    /// Warning message
+    pub message: String,
+}
+
+/// Audit log entry.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConfigAuditEntryResponse {
+    /// Timestamp
+    pub timestamp: String,
+    /// Section that was changed
+    pub section: String,
+    /// Action performed
+    pub action: String,
+    /// Previous value
+    pub old_value: Option<serde_json::Value>,
+    /// New value
+    pub new_value: Option<serde_json::Value>,
+}

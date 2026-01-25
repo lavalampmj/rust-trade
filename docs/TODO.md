@@ -116,6 +116,12 @@
 - [ ] Portfolio performance charts
 - [ ] Real-time P&L display
 - [ ] Expose User Settings, subscription to symbols, tick monitoring, session management by market
+- [x] Configuration management backend (CRUD for settings) - **COMPLETE** (Phase 1 implemented)
+  - Hybrid TOML+JSON approach (TOML defaults, JSON user overrides)
+  - ConfigService backend with 60+ tests
+  - 12 Tauri commands for CRUD operations
+  - TypeScript API client with convenience functions
+  - **📋 See implementation plan for UI phases**: [ui-configuration-plan.md](./ui-configuration-plan.md)
 
 ### Broker and Data Vendor Integration
 - [ ] Multiple exchange support (Coinbase, Kraken, Databento etc.)
@@ -424,6 +430,7 @@
 - [x] WebSocket rate limiting review - see [WEBSOCKET-RATE-LIMITING-REVIEW.md](./WEBSOCKET-RATE-LIMITING-REVIEW.md)
 - [x] Alerting system documentation - see [ALERTING-SYSTEM.md](./ALERTING-SYSTEM.md)
 - [x] Transform framework documentation - see [STRATEGY_DEVELOPER_GUIDE.md](./STRATEGY_DEVELOPER_GUIDE.md) Section 4
+- [x] UI configuration management plan - see [ui-configuration-plan.md](./ui-configuration-plan.md)
 
 ---
 

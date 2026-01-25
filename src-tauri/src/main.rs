@@ -76,7 +76,21 @@ fn main() {
             get_historical_data,
             validate_backtest_config,
             get_strategy_capabilities,
-            get_ohlc_preview
+            get_ohlc_preview,
+            // Configuration commands
+            get_config,
+            get_config_section,
+            update_config_section,
+            add_config_item,
+            update_config_item,
+            remove_config_item,
+            reset_config_section,
+            validate_config,
+            validate_config_section,
+            get_config_audit_log,
+            save_config,
+            reload_config,
+            get_config_overrides
         ])
         .setup(|app| {
             tracing::info!("Tauri setup started");
