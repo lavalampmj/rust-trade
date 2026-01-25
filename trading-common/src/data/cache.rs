@@ -251,7 +251,7 @@ impl TickDataCache for RedisTickCache {
 
         // Set TTL
         let _: () = conn
-            .expire(&key, self.ttl_seconds as usize)
+            .expire(&key, self.ttl_seconds as i64)
             .map_err(|e| DataError::Cache(format!("Redis EXPIRE failed: {}", e)))?;
 
         debug!(

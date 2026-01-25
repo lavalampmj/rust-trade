@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 tokio = { version = "1.0", features = ["full"] }
-sqlx = { version = "0.7", features = ["runtime-tokio", "tls-rustls", "postgres", "chrono", "rust_decimal"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "chrono", "rust_decimal"] }
 rust_decimal = { version = "1.32", features = ["serde"] }
 dbn.workspace = true
 bytemuck = { version = "1.14", features = ["derive"] }
@@ -19,7 +19,7 @@ chrono-tz = { version = "0.9", features = ["serde"] }
 thiserror = "1.0"
 dashmap = "6.0"
 async-trait = "0.1"
-redis = "0.23.0"
+redis = "0.27"
 pyo3 = { version = "0.22", features = ["auto-initialize"] }
 notify = "6.1"
 parking_lot = "0.12"
