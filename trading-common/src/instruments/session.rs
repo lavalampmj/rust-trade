@@ -13,7 +13,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
 //! use trading_common::instruments::session::{SessionSchedule, TradingSession, SessionType};
 //! use chrono::{NaiveTime, Weekday};
 //! use chrono_tz::America::New_York;

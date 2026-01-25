@@ -18,7 +18,7 @@ use super::Transform;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use trading_common::transforms::{Transform, TransformExt, Rsi};
 ///
 /// // Smoothed RSI: 3-period SMA of RSI(14)
@@ -105,7 +105,7 @@ impl<T: Transform<Output = Decimal>> Transform for SmaOf<T> {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use trading_common::transforms::{Transform, TransformExt, Rsi};
 ///
 /// // Smoothed RSI with EMA: 3-period EMA of RSI(14)
@@ -215,7 +215,7 @@ impl<T: Transform<Output = Decimal>> Transform for EmaOf<T> {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use trading_common::transforms::{Transform, TransformExt, Rsi};
 ///
 /// // Highest RSI over 10 bars
@@ -301,7 +301,7 @@ impl<T: Transform<Output = Decimal>> Transform for HighestOf<T> {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use trading_common::transforms::{Transform, TransformExt, Rsi};
 ///
 /// // Lowest RSI over 10 bars

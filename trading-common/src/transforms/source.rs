@@ -13,7 +13,7 @@ use rust_decimal::Decimal;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use trading_common::transforms::{Sma, PriceSource};
 ///
 /// // SMA of close prices (default)

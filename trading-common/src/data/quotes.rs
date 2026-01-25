@@ -17,7 +17,7 @@ use std::fmt;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use trading_common::data::QuoteTick;
 /// use rust_decimal_macros::dec;
 /// use chrono::Utc;

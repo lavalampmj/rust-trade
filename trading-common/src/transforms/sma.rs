@@ -19,7 +19,7 @@ use super::Transform;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use trading_common::transforms::{Transform, Sma, PriceSource};
 ///
 /// // SMA of close prices (default)

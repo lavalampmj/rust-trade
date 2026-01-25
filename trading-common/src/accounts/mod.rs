@@ -14,7 +14,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
 //! use trading_common::accounts::{Account, AccountType, MarginMode};
 //! use rust_decimal_macros::dec;
 //!

@@ -13,7 +13,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
 //! use trading_common::data::{OrderBook, BookLevel, BookAction};
 //! use rust_decimal_macros::dec;
 //! use chrono::Utc;

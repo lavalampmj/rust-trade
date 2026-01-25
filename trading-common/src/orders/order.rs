@@ -22,7 +22,7 @@ use super::types::{
 /// with state changes tracked through events.
 ///
 /// # Example
-/// ```ignore
+/// ```no_run
 /// use rust_decimal_macros::dec;
 /// use trading_common::orders::{Order, OrderSide, OrderType, TimeInForce};
 ///
