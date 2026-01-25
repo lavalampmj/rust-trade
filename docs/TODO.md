@@ -432,7 +432,7 @@
 - [x] Remove duplicate code in exchange modules - **COMPLETE** (Phase 1: SequenceGenerator, SubscriptionStatus::default(); Phase 2: SymbolValidator)
 - [x] Consolidate error handling patterns - **COMPLETE** (shared error module, ErrorClassification trait, thiserror standardization)
 - [x] Standardize logging format - **COMPLETE** (shared logging module with JSON/pretty/compact formats, HTML client support)
-- [ ] Update dependencies to latest versions
+- [x] Update dependencies to latest versions - **COMPLETE** (sqlx 0.7→0.8, redis 0.23→0.27, config 0.13→0.14, resolved future-incompat warnings)
 - [x] Remove deprecated code paths - **COMPLETE** (removed deprecated `broadcast_tick()`, remaining `#[allow(dead_code)]` are intentional for future features)
 - [x] Improve code comments in complex sections - **COMPLETE** (order matching logic, bar generator modes, inflight queue ordering, ring buffer atomics)
 
