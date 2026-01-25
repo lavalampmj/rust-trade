@@ -239,9 +239,11 @@ async fn main() -> Result<(), String> {
                         bar.volume,
                         bar.trade_count
                     );
-                    if let Err(e) =
-                        portfolio.execute_sell(order.symbol().to_string(), order.quantity, bar.close)
-                    {
+                    if let Err(e) = portfolio.execute_sell(
+                        order.symbol().to_string(),
+                        order.quantity,
+                        bar.close,
+                    ) {
                         println!("   ⚠️  Sell failed: {}", e);
                     } else {
                         trade_count += 1;

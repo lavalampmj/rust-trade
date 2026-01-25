@@ -14,8 +14,11 @@ use crate::schema::NormalizedOHLC;
 use crate::symbol::SymbolSpec;
 use trading_common::data::types::TickData;
 
+use trading_common::error::{ErrorCategory, ErrorClassification};
+
 /// Provider error types
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum ProviderError {
     #[error("Connection error: {0}")]
     Connection(String),
@@ -49,6 +52,35 @@ pub enum ProviderError {
 
     #[error("Configuration error: {0}")]
     Configuration(String),
+}
+
+impl ErrorClassification for ProviderError {
+    fn category(&self) -> ErrorCategory {
+        match self {
+            ProviderError::Connection(_) => ErrorCategory::Transient,
+            ProviderError::Authentication(_) => ErrorCategory::Configuration,
+            ProviderError::Request(_) => ErrorCategory::Transient,
+            ProviderError::Parse(_) => ErrorCategory::Permanent,
+            ProviderError::RateLimit(_) => ErrorCategory::ResourceExhausted,
+            ProviderError::SymbolNotFound(_) => ErrorCategory::Permanent,
+            ProviderError::DataNotAvailable(_) => ErrorCategory::Permanent,
+            ProviderError::NotConnected => ErrorCategory::Transient,
+            ProviderError::Subscription(_) => ErrorCategory::Transient,
+            ProviderError::Internal(_) => ErrorCategory::Internal,
+            ProviderError::Configuration(_) => ErrorCategory::Configuration,
+        }
+    }
+
+    fn suggested_retry_delay(&self) -> Option<std::time::Duration> {
+        match self {
+            ProviderError::Connection(_) => Some(std::time::Duration::from_secs(2)),
+            ProviderError::Request(_) => Some(std::time::Duration::from_millis(500)),
+            ProviderError::RateLimit(_) => Some(std::time::Duration::from_secs(60)),
+            ProviderError::NotConnected => Some(std::time::Duration::from_secs(1)),
+            ProviderError::Subscription(_) => Some(std::time::Duration::from_millis(500)),
+            _ => None,
+        }
+    }
 }
 
 pub type ProviderResult<T> = Result<T, ProviderError>;

@@ -381,7 +381,10 @@ impl TickQuery {
 // Error type definition
 // =================================================================
 
+use crate::error::{ErrorCategory, ErrorClassification};
+
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum DataError {
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
@@ -405,7 +408,30 @@ pub enum DataError {
     Cache(String),
 
     #[error("Configuration error: {0}")]
-    Config(String),
+    Configuration(String),
+}
+
+impl ErrorClassification for DataError {
+    fn category(&self) -> ErrorCategory {
+        match self {
+            DataError::Database(_) => ErrorCategory::Transient, // May be connection issue
+            DataError::InvalidFormat(_) => ErrorCategory::Permanent,
+            DataError::NotFound(_) => ErrorCategory::Permanent,
+            DataError::Validation(_) => ErrorCategory::Permanent,
+            DataError::Serialization(_) => ErrorCategory::Permanent,
+            DataError::DecimalConversion(_) => ErrorCategory::Permanent,
+            DataError::Cache(_) => ErrorCategory::Transient,
+            DataError::Configuration(_) => ErrorCategory::Configuration,
+        }
+    }
+
+    fn suggested_retry_delay(&self) -> Option<std::time::Duration> {
+        match self {
+            DataError::Database(_) => Some(std::time::Duration::from_millis(500)),
+            DataError::Cache(_) => Some(std::time::Duration::from_millis(100)),
+            _ => None,
+        }
+    }
 }
 
 pub type DataResult<T> = Result<T, DataError>;

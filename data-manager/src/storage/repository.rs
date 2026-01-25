@@ -13,9 +13,11 @@ use uuid::Uuid;
 
 use crate::config::DatabaseSettings;
 use trading_common::data::types::{TickData, TradeSide};
+use trading_common::error::{ErrorCategory, ErrorClassification};
 
 /// Repository errors
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum RepositoryError {
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
@@ -28,6 +30,24 @@ pub enum RepositoryError {
 
     #[error("Invalid data: {0}")]
     InvalidData(String),
+}
+
+impl ErrorClassification for RepositoryError {
+    fn category(&self) -> ErrorCategory {
+        match self {
+            RepositoryError::Database(_) => ErrorCategory::Transient,
+            RepositoryError::Configuration(_) => ErrorCategory::Configuration,
+            RepositoryError::NotFound(_) => ErrorCategory::Permanent,
+            RepositoryError::InvalidData(_) => ErrorCategory::Permanent,
+        }
+    }
+
+    fn suggested_retry_delay(&self) -> Option<Duration> {
+        match self {
+            RepositoryError::Database(_) => Some(Duration::from_millis(500)),
+            _ => None,
+        }
+    }
 }
 
 pub type RepositoryResult<T> = Result<T, RepositoryError>;

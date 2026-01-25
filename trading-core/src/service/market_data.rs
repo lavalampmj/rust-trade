@@ -67,7 +67,9 @@ impl MarketDataService {
     /// Start the market data service
     pub async fn start(&self) -> Result<(), ServiceError> {
         if self.symbols.is_empty() {
-            return Err(ServiceError::Config("No symbols configured".to_string()));
+            return Err(ServiceError::Configuration(
+                "No symbols configured".to_string(),
+            ));
         }
 
         info!(

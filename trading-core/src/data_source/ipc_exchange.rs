@@ -75,7 +75,7 @@ impl Exchange for IpcExchange {
         if subscribed.is_empty() {
             error!("No symbols could be subscribed. Is data-manager running?");
             IPC_CONNECTION_STATUS.set(0);
-            return Err(ExchangeError::ConnectionError(
+            return Err(ExchangeError::Connection(
                 "No IPC channels available. Ensure data-manager is running.".to_string(),
             ));
         }

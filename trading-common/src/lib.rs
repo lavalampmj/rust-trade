@@ -4,6 +4,7 @@
 pub mod accounts;
 pub mod backtest;
 pub mod data;
+pub mod error;
 pub mod execution;
 pub mod instruments;
 pub mod orders;

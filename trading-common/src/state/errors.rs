@@ -1,16 +1,20 @@
 //! Error types for the component state management system.
 
-use std::fmt;
+use thiserror::Error;
 
 use super::{ComponentId, ComponentState};
+use crate::error::{ErrorCategory, ErrorClassification};
 
 /// Errors that can occur during state management operations.
-#[derive(Debug, Clone)]
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
 pub enum StateError {
     /// Component is not registered in the registry
+    #[error("Component not registered: {0}")]
     ComponentNotRegistered(ComponentId),
 
     /// Invalid state transition attempted
+    #[error("Invalid state transition for {component_id}: {from} -> {to} ({reason})")]
     InvalidTransition {
         component_id: ComponentId,
         from: ComponentState,
@@ -19,9 +23,11 @@ pub enum StateError {
     },
 
     /// Component is already registered
+    #[error("Component already registered: {0}")]
     AlreadyRegistered(ComponentId),
 
     /// Timeout waiting for state change
+    #[error("Timeout waiting for {component_id} to reach state {expected_state} (currently {current_state})")]
     Timeout {
         component_id: ComponentId,
         expected_state: ComponentState,
@@ -29,9 +35,11 @@ pub enum StateError {
     },
 
     /// Registry operation failed
+    #[error("Registry error: {0}")]
     RegistryError(String),
 
     /// State transition was rejected by the component
+    #[error("State transition to {target} rejected for {component_id}: {reason}")]
     TransitionRejected {
         component_id: ComponentId,
         target: ComponentState,
@@ -39,69 +47,36 @@ pub enum StateError {
     },
 
     /// Channel communication error
+    #[error("Channel error: {0}")]
     ChannelError(String),
 
     /// Internal error
+    #[error("Internal error: {0}")]
     Internal(String),
 }
 
-impl fmt::Display for StateError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl ErrorClassification for StateError {
+    fn category(&self) -> ErrorCategory {
         match self {
-            StateError::ComponentNotRegistered(id) => {
-                write!(f, "Component not registered: {}", id)
-            }
-            StateError::InvalidTransition {
-                component_id,
-                from,
-                to,
-                reason,
-            } => {
-                write!(
-                    f,
-                    "Invalid state transition for {}: {} -> {} ({})",
-                    component_id, from, to, reason
-                )
-            }
-            StateError::AlreadyRegistered(id) => {
-                write!(f, "Component already registered: {}", id)
-            }
-            StateError::Timeout {
-                component_id,
-                expected_state,
-                current_state,
-            } => {
-                write!(
-                    f,
-                    "Timeout waiting for {} to reach state {} (currently {})",
-                    component_id, expected_state, current_state
-                )
-            }
-            StateError::RegistryError(msg) => {
-                write!(f, "Registry error: {}", msg)
-            }
-            StateError::TransitionRejected {
-                component_id,
-                target,
-                reason,
-            } => {
-                write!(
-                    f,
-                    "State transition to {} rejected for {}: {}",
-                    target, component_id, reason
-                )
-            }
-            StateError::ChannelError(msg) => {
-                write!(f, "Channel error: {}", msg)
-            }
-            StateError::Internal(msg) => {
-                write!(f, "Internal error: {}", msg)
-            }
+            StateError::ComponentNotRegistered(_) => ErrorCategory::Permanent,
+            StateError::InvalidTransition { .. } => ErrorCategory::Permanent,
+            StateError::AlreadyRegistered(_) => ErrorCategory::Permanent,
+            StateError::Timeout { .. } => ErrorCategory::Transient,
+            StateError::RegistryError(_) => ErrorCategory::Internal,
+            StateError::TransitionRejected { .. } => ErrorCategory::Permanent,
+            StateError::ChannelError(_) => ErrorCategory::Transient,
+            StateError::Internal(_) => ErrorCategory::Internal,
+        }
+    }
+
+    fn suggested_retry_delay(&self) -> Option<std::time::Duration> {
+        match self {
+            StateError::Timeout { .. } => Some(std::time::Duration::from_millis(100)),
+            StateError::ChannelError(_) => Some(std::time::Duration::from_millis(50)),
+            _ => None,
         }
     }
 }
-
-impl std::error::Error for StateError {}
 
 /// Result type for state operations
 pub type StateResult<T> = Result<T, StateError>;
@@ -135,5 +110,25 @@ mod tests {
             current_state: ComponentState::Historical,
         };
         assert!(err.to_string().contains("Timeout"));
+    }
+
+    #[test]
+    fn test_state_error_classification() {
+        let id = ComponentId::new(ComponentType::Strategy, "test");
+
+        let err = StateError::Timeout {
+            component_id: id.clone(),
+            expected_state: ComponentState::Realtime,
+            current_state: ComponentState::Configure,
+        };
+        assert!(err.is_transient());
+
+        let err = StateError::InvalidTransition {
+            component_id: id,
+            from: ComponentState::Configure,
+            to: ComponentState::Realtime,
+            reason: "invalid".to_string(),
+        };
+        assert!(err.is_permanent());
     }
 }

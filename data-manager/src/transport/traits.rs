@@ -4,9 +4,11 @@
 
 use dbn::TradeMsg;
 use thiserror::Error;
+use trading_common::error::{ErrorCategory, ErrorClassification};
 
 /// Transport errors
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum TransportError {
     #[error("Connection error: {0}")]
     Connection(String),
@@ -34,6 +36,33 @@ pub enum TransportError {
 
     #[error("Consumer not found: {0}")]
     ConsumerNotFound(String),
+}
+
+impl ErrorClassification for TransportError {
+    fn category(&self) -> ErrorCategory {
+        match self {
+            TransportError::Connection(_) => ErrorCategory::Transient,
+            TransportError::Send(_) => ErrorCategory::Transient,
+            TransportError::Receive(_) => ErrorCategory::Transient,
+            TransportError::BufferFull => ErrorCategory::ResourceExhausted,
+            TransportError::BufferEmpty => ErrorCategory::Transient,
+            TransportError::SharedMemory(_) => ErrorCategory::Internal,
+            TransportError::Serialization(_) => ErrorCategory::Permanent,
+            TransportError::NotInitialized => ErrorCategory::Configuration,
+            TransportError::ConsumerNotFound(_) => ErrorCategory::Permanent,
+        }
+    }
+
+    fn suggested_retry_delay(&self) -> Option<std::time::Duration> {
+        match self {
+            TransportError::Connection(_) => Some(std::time::Duration::from_secs(1)),
+            TransportError::Send(_) => Some(std::time::Duration::from_millis(100)),
+            TransportError::Receive(_) => Some(std::time::Duration::from_millis(50)),
+            TransportError::BufferFull => Some(std::time::Duration::from_millis(10)),
+            TransportError::BufferEmpty => Some(std::time::Duration::from_millis(10)),
+            _ => None,
+        }
+    }
 }
 
 pub type TransportResult<T> = Result<T, TransportError>;
