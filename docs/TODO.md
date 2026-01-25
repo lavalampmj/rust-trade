@@ -434,7 +434,7 @@
 - [x] Standardize logging format - **COMPLETE** (shared logging module with JSON/pretty/compact formats, HTML client support)
 - [ ] Update dependencies to latest versions
 - [x] Remove deprecated code paths - **COMPLETE** (removed deprecated `broadcast_tick()`, remaining `#[allow(dead_code)]` are intentional for future features)
-- [ ] Improve code comments in complex sections
+- [x] Improve code comments in complex sections - **COMPLETE** (order matching logic, bar generator modes, inflight queue ordering, ring buffer atomics)
 
 ---
 
