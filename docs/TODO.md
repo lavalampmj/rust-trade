@@ -1,6 +1,6 @@
 # TODO - Trading System Features & Improvements
 
-**Last Updated**: 2026-01-24
+**Last Updated**: 2026-01-25
 **Status**: 98% Production Ready
 
 ---
@@ -48,7 +48,7 @@
   - Session-aware queries handled in application code
 - [ ] OHLC cache strategy (if using on-the-fly)
 - [ ] Historical OHLC backfill process
-- [ ] Create N Tick OHLC, N Volume OHLC
+- [ ] Create N Volume OHLC
 - [ ] A PriceChange Tick series, sum Volume of all ticks occuring at the same Price.
 
 ---
@@ -56,8 +56,6 @@
 ## 📊 Medium Priority Features
 
 ### Performance Optimization
-- [ ] Read replicas for backtest queries
-- [ ] Separate read/write database connections
 - [ ] Event sourcing architecture evaluation
 - [ ] Circuit breaker for exchange connections
 - [ ] Connection pool auto-tuning based on metrics
@@ -81,15 +79,14 @@
 - [ ] Walk-forward analysis
 - [ ] Have strategy execution limits, such as Time Limits, Thread Limits, Memory Limits
 - [ ] Gracefully kill strategies in an infinite loop
+- [ ] Support many backtesting many strategies simulatanously and synchronised by OHLC or Tick
 
 ## 🔧 Infrastructure & Operations
 
 ### Deployment
 - [x] Docker containerization - **COMPLETE** (docker-compose.yml for data-manager + TimescaleDB + Redis, trading-core runs on host for lowest latency)
-- [ ] Kubernetes deployment manifests
 - [ ] CI/CD pipeline (GitHub Actions)
 - [ ] Staging environment setup
-- [ ] Blue-green deployment strategy
 
 ### Database
 - [ ] Automated database backups
@@ -99,11 +96,8 @@
 - [ ] Index maintenance automation
 
 ### Monitoring & Observability
-- [ ] Distributed tracing (OpenTelemetry)
-- [ ] Log aggregation (ELK stack or similar)
 - [ ] Error tracking (Sentry or similar)
 - [ ] Performance profiling in production
-- [ ] SLA monitoring and reporting
 
 ---
 
@@ -116,12 +110,13 @@
 - [ ] Portfolio performance charts
 - [ ] Real-time P&L display
 - [ ] Expose User Settings, subscription to symbols, tick monitoring, session management by market
-- [x] Configuration management backend (CRUD for settings) - **COMPLETE** (Phase 1 implemented)
+- [x] Configuration management backend (CRUD for settings) - **COMPLETE** (Phase 1: 2026-01-25)
   - Hybrid TOML+JSON approach (TOML defaults, JSON user overrides)
   - ConfigService backend with 60+ tests
   - 12 Tauri commands for CRUD operations
   - TypeScript API client with convenience functions
   - **📋 See implementation plan for UI phases**: [ui-configuration-plan.md](./ui-configuration-plan.md)
+- [ ] Configuration management UI components (Phase 2 - next)
 
 ### Broker and Data Vendor Integration
 - [ ] Multiple exchange support (Coinbase, Kraken, Databento etc.)
@@ -138,6 +133,7 @@
 - [ ] Anomaly detection
 - [x] Indicator on Indicator, series output of one as series input of another, all series bound to input series ordering - **COMPLETE** (Transform framework with composition)
 - [x] Implement Indicators - **COMPLETE** (SMA, EMA, RSI, ATR, Highest, Lowest, Change, ROC, CrossAbove, CrossBelow) 
+- [ ] Build TA-LIB equivilant indicators 
 
 ### Python Strategy Enhancements
 - [x] Python strategy sandboxing (security) - **COMPLETE** (3 phases: hash verification, import blocking, resource monitoring)
@@ -146,22 +142,41 @@
 - [x] Hot-reload improvements - **COMPLETE** (debouncing, atomic reload, metrics, configurable hash verification)
 - [ ] Audit logging for strategy execution
 
-### Multi-Tenancy & User Management
-- [ ] User authentication and authorization system
-- [ ] Session management and token-based auth
-- [ ] User-scoped data isolation (portfolios, strategies, backtest results)
-- [ ] Role-based access control (Admin/User/ReadOnly)
-- [ ] Rate limiting per user
-- [ ] Audit logging for user actions
-- [ ] User-namespaced caching
-- **📋 See detailed implementation plan**: [MULTI-TENANT-PLAN.md](./MULTI-TENANT-PLAN.md)
-  - 7-phase roadmap with backward compatibility
-  - ~14 weeks estimated implementation
-  - Database schema, authentication, API layer updates
-
 ---
 
 ## ✅ Recently Completed
+
+### Configuration Management System (2026-01-25)
+- [x] **Backend Architecture** (Phase 1 complete):
+  - `ConfigService` with hybrid TOML+JSON approach (TOML defaults, JSON user overrides)
+  - Deep merge algorithm with user overrides taking precedence
+  - Thread-safe with `Arc<RwLock<>>` for concurrent access
+  - Rate limiting (1 save per second) to prevent disk thrashing
+  - Audit logging for all configuration changes
+- [x] **CRUD Operations**:
+  - `get_section(path)`: Dot-notation path access (e.g., "accounts.default")
+  - `update_section(path, value)`: Update any section with validation
+  - `add_item(path, item)`: Add items to array sections
+  - `remove_item(path, index)`: Remove items by index
+  - `update_item(path, index, value)`: Update items by index
+  - `reset_section(path)`: Reset to default values
+- [x] **Validation System**:
+  - Field-level validation with error codes
+  - Warnings for suboptimal configurations
+  - Sensitive field blocking (database.url, server.host, etc.)
+  - Symbol format validation (uppercase, 3-20 chars)
+  - Numeric range validation (RSI thresholds, periods, etc.)
+- [x] **Tauri Integration**:
+  - 12 commands exposed to frontend
+  - ConfigResponse type with merged config + override status
+  - ValidationResult with errors and warnings
+  - ConfigAuditEntry for change history
+- [x] **TypeScript API Client**:
+  - Type-safe interfaces mirroring Rust schema
+  - Convenience functions for common operations
+  - Full CRUD support via Tauri invoke
+- [x] **Test Coverage**: 60+ config-specific tests (schema, validation, service)
+- [x] **Documentation**: [ui-configuration-plan.md](./ui-configuration-plan.md)
 
 ### Docker Containerization (2026-01-24)
 - [x] **docker-compose.yml**: Orchestrates TimescaleDB, Redis, and data-manager containers
@@ -212,7 +227,7 @@
   - Session state tracking: `is_first_bar_of_session`, `current_session_open`, `current_session_close`
 - [x] **New Constructors & Methods**:
   - `with_session_config()`: Create generator with session configuration
-  - `set_session_config()`: Runtime session config updates
+  - `set_session_config()`: Runtime session config updates1
   - `on_session_start()`: Notify new session start for proper alignment
   - Helper methods: `get_session_open_for_tick()`, `get_current_session_close()`, `align_to_session_open_time()`
 - [x] **Session Open Alignment**:
@@ -402,7 +417,7 @@
 - [x] Fix failing repository tests
 - [x] Add comprehensive OMS test coverage (61 new tests) - **2026-01-22**
 - [x] Add Python bridge error recovery tests (9 tests) - **2026-01-22**
-- [x] Total workspace tests: 776 passing
+- [x] Total workspace tests: 1,300+ passing
 
 ### Performance (2026-01-16)
 - [x] Implement backpressure mechanism
@@ -424,7 +439,7 @@
 - [ ] Performance tuning guide
 - [ ] Troubleshooting guide
 - [ ] Architecture decision records (ADRs)
-- [x] Multi-tenancy architectural plan - see [MULTI-TENANT-PLAN.md](./MULTI-TENANT-PLAN.md)
+- [x] Multi-tenancy architectural plan - moved to [TODO-2.0.md](./TODO-2.0.md)
 - [x] Python strategy security documentation - see [SECURITY_TEST_RESULTS.md](./SECURITY_TEST_RESULTS.md)
 - [x] Hot-reload improvements documentation - see [HOT-RELOAD-IMPROVEMENTS.md](./HOT-RELOAD-IMPROVEMENTS.md)
 - [x] WebSocket rate limiting review - see [WEBSOCKET-RATE-LIMITING-REVIEW.md](./WEBSOCKET-RATE-LIMITING-REVIEW.md)
@@ -461,17 +476,17 @@
 
 1. **This Week**:
    - Set up Grafana dashboard for metrics visualization
-   - Configure alerting for monitoring stack
+   - Build Configuration UI components (Phase 2 of ui-configuration-plan.md)
 
 2. **Next Week**:
-   - Design symbol sessions feature
-   - Decide on OHLC storage strategy
-   - Set up Grafana dashboard
+   - Implement TimescaleDB OHLC aggregation (see timescale-ohlc-aggregates.md)
+   - Add session-aligned aggregation queries
+   - Complete monitoring stack (Grafana dashboards)
 
 3. **This Month**:
-   - Implement chosen OHLC solution
-   - Add symbol session support
-   - Complete monitoring stack
+   - N-session API for strategy backtesting
+   - CI/CD pipeline setup (GitHub Actions)
+   - Strategy parameter optimization framework
 
 ---
 
