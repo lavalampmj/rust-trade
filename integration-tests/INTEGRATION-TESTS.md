@@ -272,7 +272,7 @@ Creates runner instances based on config (N Rust + M Python strategies).
 
 **`StrategyRunnerManager`**:
 - Coordinates multiple runners
-- `broadcast_tick()` - Sends tick to all runners
+- `route_tick()` - Routes tick to runners subscribed to its symbol
 - `all_metrics()` - Collects metrics from all runners
 - `shutdown_all()` - Graceful shutdown
 
@@ -459,7 +459,7 @@ EmulatorConfig {
    ├─ Embed send_time in ts_in_delta                  │
    └─ callback(StreamEvent::Tick(NormalizedTick))     │
                          │                            │
-4. StrategyRunnerManager.broadcast_tick()             │
+4. StrategyRunnerManager.route_tick()                 │
    ├─ RustStrategyRunner.process_tick()               │
    │   ├─ Extract latency from ts_recv                │
    │   └─ StrategyMetrics.record_tick(latency_us)     │

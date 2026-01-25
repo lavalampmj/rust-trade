@@ -161,16 +161,6 @@ impl StrategyRunnerManager {
         }
     }
 
-    /// Broadcast a tick to all runners (regardless of symbol subscription)
-    ///
-    /// Use `route_tick` for symbol-based routing instead.
-    #[deprecated(note = "Use route_tick for symbol-based routing")]
-    pub async fn broadcast_tick(&self, tick: &NormalizedTick) {
-        for runner in &self.runners {
-            runner.process_tick(tick).await;
-        }
-    }
-
     /// Get all metrics
     pub fn all_metrics(&self) -> Vec<Arc<StrategyMetrics>> {
         self.runners.iter().map(|r| r.metrics()).collect()

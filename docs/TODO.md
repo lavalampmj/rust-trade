@@ -404,7 +404,7 @@
 - [x] Consolidate error handling patterns - **COMPLETE** (shared error module, ErrorClassification trait, thiserror standardization)
 - [ ] Standardize logging format
 - [ ] Update dependencies to latest versions
-- [ ] Remove deprecated code paths
+- [x] Remove deprecated code paths - **COMPLETE** (removed deprecated `broadcast_tick()`, remaining `#[allow(dead_code)]` are intentional for future features)
 - [ ] Improve code comments in complex sections
 
 ---
