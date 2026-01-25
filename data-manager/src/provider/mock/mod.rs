@@ -44,12 +44,7 @@ impl MockProvider {
                 supports_live: true,
             },
             connected: false,
-            subscription_status: SubscriptionStatus {
-                symbols: vec![],
-                connection: ConnectionStatus::Disconnected,
-                messages_received: 0,
-                last_message: None,
-            },
+            subscription_status: SubscriptionStatus::default(),
             ticks_per_symbol: 1000,
             base_price: Decimal::from(100),
             price_volatility: Decimal::from(1),

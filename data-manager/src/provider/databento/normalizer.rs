@@ -8,26 +8,21 @@ use rust_decimal::Decimal;
 use crate::provider::ProviderError;
 use crate::schema::NormalizedOHLC;
 use trading_common::data::types::{TickData, TradeSide};
+use trading_common::data::SequenceGenerator;
 
 /// Normalizer for Databento messages
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DatabentoNormalizer {
     /// Counter for generating sequence numbers
-    sequence_counter: i64,
+    sequence: SequenceGenerator,
 }
 
 impl DatabentoNormalizer {
     /// Create a new normalizer
     pub fn new() -> Self {
         Self {
-            sequence_counter: 0,
+            sequence: SequenceGenerator::new(),
         }
-    }
-
-    /// Generate next sequence number
-    fn next_sequence(&mut self) -> i64 {
-        self.sequence_counter += 1;
-        self.sequence_counter
     }
 
     /// Convert nanosecond timestamp to DateTime
@@ -67,7 +62,7 @@ impl DatabentoNormalizer {
         let side = TradeSide::from_db_char(side)
             .ok_or_else(|| ProviderError::Parse(format!("Invalid trade side: {}", side)))?;
 
-        let sequence = self.next_sequence();
+        let sequence = self.sequence.next();
 
         Ok(TickData::with_details(
             ts_event_dt,

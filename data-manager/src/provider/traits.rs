@@ -312,3 +312,14 @@ pub struct SubscriptionStatus {
     /// Last message timestamp
     pub last_message: Option<DateTime<Utc>>,
 }
+
+impl Default for SubscriptionStatus {
+    fn default() -> Self {
+        Self {
+            symbols: vec![],
+            connection: ConnectionStatus::Disconnected,
+            messages_received: 0,
+            last_message: None,
+        }
+    }
+}

@@ -7,6 +7,7 @@ pub mod gap_detection;
 pub mod orderbook;
 pub mod quotes;
 pub mod repository;
+pub mod sequence;
 pub mod symbol_repository;
 pub mod types;
 
@@ -27,3 +28,6 @@ pub use symbol_repository::SymbolRepository;
 
 // Re-export market data events
 pub use events::{MarketDataEvent, MarketDataType};
+
+// Re-export sequence generator
+pub use sequence::SequenceGenerator;

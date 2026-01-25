@@ -5,24 +5,24 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicI64, Ordering};
 
 use crate::provider::ProviderError;
 use trading_common::data::types::{TickData, TradeSide};
+use trading_common::data::SequenceGenerator;
 
 use super::types::BinanceTradeMessage;
 
 /// Normalizer for Binance trade data
 pub struct BinanceNormalizer {
     /// Sequence counter for ordering
-    sequence: AtomicI64,
+    sequence: SequenceGenerator,
 }
 
 impl BinanceNormalizer {
     /// Create a new normalizer
     pub fn new() -> Self {
         Self {
-            sequence: AtomicI64::new(0),
+            sequence: SequenceGenerator::new(),
         }
     }
 
@@ -61,7 +61,7 @@ impl BinanceNormalizer {
         };
 
         // Get next sequence number
-        let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
+        let sequence = self.sequence.next();
 
         Ok(TickData::with_details(
             ts_event,
@@ -81,7 +81,7 @@ impl BinanceNormalizer {
     /// Reset the sequence counter (for testing)
     #[cfg(test)]
     pub fn reset_sequence(&self) {
-        self.sequence.store(0, Ordering::Relaxed);
+        self.sequence.reset();
     }
 }
 

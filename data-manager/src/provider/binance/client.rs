@@ -110,12 +110,7 @@ impl BinanceProvider {
             ws_url: settings.ws_url,
             connected: Arc::new(AtomicBool::new(false)),
             messages_received: Arc::new(AtomicU64::new(0)),
-            subscription_status: SubscriptionStatus {
-                symbols: vec![],
-                connection: ConnectionStatus::Disconnected,
-                messages_received: 0,
-                last_message: None,
-            },
+            subscription_status: SubscriptionStatus::default(),
             normalizer: Arc::new(BinanceNormalizer::new()),
             rate_limiter: Arc::new(RateLimiter::direct(quota)),
             rate_limit_max_attempts: settings.rate_limit_attempts,

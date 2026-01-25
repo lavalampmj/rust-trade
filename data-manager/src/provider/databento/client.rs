@@ -66,12 +66,7 @@ impl DatabentoClient {
             api_key: settings.api_key.clone(),
             default_dataset: settings.default_dataset.clone(),
             connected: false,
-            subscription_status: SubscriptionStatus {
-                symbols: vec![],
-                connection: ConnectionStatus::Disconnected,
-                messages_received: 0,
-                last_message: None,
-            },
+            subscription_status: SubscriptionStatus::default(),
             normalizer: DatabentoNormalizer::new(),
         }
     }
