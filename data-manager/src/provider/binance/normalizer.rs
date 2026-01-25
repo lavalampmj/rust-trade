@@ -9,8 +9,13 @@ use std::str::FromStr;
 use crate::provider::ProviderError;
 use trading_common::data::types::{TickData, TradeSide};
 use trading_common::data::SequenceGenerator;
+use trading_common::validation::SymbolValidator;
 
 use super::types::BinanceTradeMessage;
+
+/// Shared symbol validator for Binance (3-20 chars, alphanumeric)
+static BINANCE_SYMBOL_VALIDATOR: std::sync::LazyLock<SymbolValidator> =
+    std::sync::LazyLock::new(SymbolValidator::binance);
 
 /// Normalizer for Binance trade data
 pub struct BinanceNormalizer {
@@ -91,32 +96,13 @@ impl Default for BinanceNormalizer {
     }
 }
 
-/// Validate symbol format for Binance
+/// Validate and normalize symbol format for Binance.
+///
+/// Converts to uppercase and validates (3-20 chars, alphanumeric).
 pub fn validate_symbol(symbol: &str) -> Result<String, ProviderError> {
-    if symbol.is_empty() {
-        return Err(ProviderError::Configuration(
-            "Symbol cannot be empty".to_string(),
-        ));
-    }
-
-    let symbol = symbol.to_uppercase();
-
-    // Basic validation: should be alphanumeric and reasonable length
-    if !symbol.chars().all(char::is_alphanumeric) {
-        return Err(ProviderError::Configuration(format!(
-            "Symbol '{}' contains invalid characters",
-            symbol
-        )));
-    }
-
-    if symbol.len() < 3 || symbol.len() > 20 {
-        return Err(ProviderError::Configuration(format!(
-            "Symbol '{}' has invalid length",
-            symbol
-        )));
-    }
-
-    Ok(symbol)
+    BINANCE_SYMBOL_VALIDATOR
+        .normalize(symbol)
+        .map_err(|e| ProviderError::Configuration(e.to_string()))
 }
 
 /// Build WebSocket subscription streams for Binance
