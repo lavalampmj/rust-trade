@@ -157,6 +157,20 @@
 
 ## ✅ Recently Completed
 
+### Standardized Logging Format (2026-01-24)
+- [x] **Shared Logging Module** (`trading-common/src/logging/`):
+  - `config.rs`: LogConfig, LogFormat (Pretty/Compact/Json), TimestampFormat
+  - `json_layer.rs`: JsonLogEvent struct for HTML client consumption
+  - Environment variable configuration: LOG_FORMAT, LOG_TIMESTAMPS, LOG_LEVEL
+- [x] **JSON Format for HTML Clients**:
+  - Structured fields: timestamp, level, level_num, target, message, file, line
+  - Thread info, app name, custom fields support
+  - Sequence numbers for ordering
+- [x] **Unified Initialization**:
+  - trading-core, data-manager, src-tauri all use `init_logging(LogConfig::from_env())`
+  - Consistent default levels and formatting
+- [x] **Test Coverage**: 12 tests for logging module
+
 ### Error Handling Consolidation (2026-01-24)
 - [x] **Shared Error Module** (`trading-common/src/error/`):
   - `common.rs`: Reusable error types (DatabaseError, NetworkError, ConfigurationError, EntityError, SerializationError, CacheError, ChannelError, ValidationError)
@@ -402,7 +416,7 @@
 
 - [ ] Remove duplicate code in exchange modules
 - [x] Consolidate error handling patterns - **COMPLETE** (shared error module, ErrorClassification trait, thiserror standardization)
-- [ ] Standardize logging format
+- [x] Standardize logging format - **COMPLETE** (shared logging module with JSON/pretty/compact formats, HTML client support)
 - [ ] Update dependencies to latest versions
 - [x] Remove deprecated code paths - **COMPLETE** (removed deprecated `broadcast_tick()`, remaining `#[allow(dead_code)]` are intentional for future features)
 - [ ] Improve code comments in complex sections

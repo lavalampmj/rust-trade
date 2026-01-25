@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
 use tracing::{error, info, warn};
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 // CLI-specific modules
 mod alerting;
@@ -623,24 +622,21 @@ async fn init_alerting_system() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Initialize tracing subscriber for logging
+///
+/// Uses standardized logging from trading_common::logging.
+/// Configure via environment variables:
+/// - RUST_LOG: Log filter (e.g., "trading_core=debug,sqlx=info")
+/// - LOG_FORMAT: Output format ("pretty", "compact", "json")
+/// - LOG_TIMESTAMPS: Timestamp format ("local", "utc", "none")
 fn init_tracing() -> Result<(), Box<dyn std::error::Error>> {
-    // Create env filter from RUST_LOG environment variable
-    // Default to info level if not set
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("trading_core=info,sqlx=info,tokio=info,hyper=info"));
+    use trading_common::logging::{init_logging, LogConfig};
 
-    // Setup tracing subscriber with structured logging
-    tracing_subscriber::registry()
-        .with(env_filter)
-        .with(
-            fmt::layer()
-                .with_target(true)
-                .with_thread_ids(true)
-                .with_file(true)
-                .with_line_number(true)
-                .compact(),
-        )
-        .init();
+    // Use standardized logging configuration from environment
+    let config = LogConfig::from_env()
+        .with_app_name("trading-core")
+        .with_default_level("trading_core=info,sqlx=info,tokio=info,hyper=info");
+
+    init_logging(config).map_err(|e| -> Box<dyn std::error::Error> { e })?;
 
     Ok(())
 }

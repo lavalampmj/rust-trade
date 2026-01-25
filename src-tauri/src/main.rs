@@ -9,17 +9,22 @@ mod types;
 
 use commands::*;
 use state::AppState;
+use trading_common::logging::{init_logging, LogConfig};
 
 fn main() {
     if let Err(_) = dotenvy::dotenv() {
         println!("Warning: .env file not found, using environment variables");
     }
 
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_file(true)
-        .with_line_number(true)
-        .init();
+    // Initialize logging with standardized configuration
+    // For desktop app, use pretty format by default
+    let log_config = LogConfig::from_env()
+        .with_app_name("trading-desktop")
+        .with_default_level("info");
+
+    if let Err(e) = init_logging(log_config) {
+        eprintln!("Warning: Failed to initialize logging: {}", e);
+    }
 
     tracing::info!("Trading Core Tauri Application starting...");
 

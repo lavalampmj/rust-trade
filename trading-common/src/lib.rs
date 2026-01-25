@@ -7,6 +7,7 @@ pub mod data;
 pub mod error;
 pub mod execution;
 pub mod instruments;
+pub mod logging;
 pub mod orders;
 pub mod risk;
 pub mod series;
