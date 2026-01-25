@@ -2,6 +2,46 @@
 //!
 //! This module provides the fundamental matching algorithms for different
 //! order types against market prices.
+//!
+//! # Matching Overview
+//!
+//! Orders are categorized into two groups:
+//! - **Trigger orders**: Stops that become active when price reaches trigger level
+//! - **Resting orders**: Limits and markets waiting to fill at favorable prices
+//!
+//! # Price Hierarchy for Fills
+//!
+//! When matching orders, we use OHLC data to determine if fills occur.
+//! The price hierarchy depends on order type and side:
+//!
+//! ## Buy Limit Orders
+//! Fill if price drops to or below limit price. Check order:
+//! 1. `low` - If bar's low touched limit price, fill occurred
+//! 2. `ask` - Current ask price (point-in-time)
+//! 3. `last` - Last traded price (fallback)
+//!
+//! ## Sell Limit Orders
+//! Fill if price rises to or above limit price. Check order:
+//! 1. `high` - If bar's high touched limit price, fill occurred
+//! 2. `bid` - Current bid price (point-in-time)
+//! 3. `last` - Last traded price (fallback)
+//!
+//! ## Buy Stop Orders
+//! Trigger when price rises above trigger level. Check order:
+//! 1. `high` - If bar's high exceeded trigger, stop was hit
+//! 2. Configured trigger price (last/bid/ask/mid)
+//!
+//! ## Sell Stop Orders
+//! Trigger when price falls below trigger level. Check order:
+//! 1. `low` - If bar's low fell below trigger, stop was hit
+//! 2. Configured trigger price (last/bid/ask/mid)
+//!
+//! # Liquidity Side Assignment
+//!
+//! - **Maker**: Limit orders that rest in the book and provide liquidity
+//! - **Taker**: Market orders and triggered stops that remove liquidity
+//!
+//! Maker orders typically receive better fee treatment on exchanges.
 
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
@@ -146,7 +186,28 @@ impl OrderMatchingCore {
 
     /// Check and trigger stop orders based on price levels.
     ///
-    /// Returns orders that were triggered (converted to market orders).
+    /// Stop orders become active (trigger) when price reaches their trigger level:
+    /// - **Buy stops**: Trigger when price rises ABOVE trigger (used for breakout entries
+    ///   or stop-loss on short positions)
+    /// - **Sell stops**: Trigger when price falls BELOW trigger (used for stop-loss
+    ///   on long positions or breakdown entries)
+    ///
+    /// # Trigger Price Selection
+    ///
+    /// For OHLC bars, we use high/low to detect if trigger was hit during the bar:
+    /// - Buy stop: Check if `high >= trigger_price`
+    /// - Sell stop: Check if `low <= trigger_price`
+    ///
+    /// This is more accurate than point-in-time prices since the trigger could have
+    /// been hit mid-bar even if the close price didn't reach it.
+    ///
+    /// # Order Conversion
+    ///
+    /// When triggered:
+    /// - `Stop` → becomes `Market` order (fills at next available price)
+    /// - `StopLimit` → becomes `Limit` order (may not fill if price moves away)
+    ///
+    /// Returns orders that were triggered (converted to market/limit orders).
     pub fn check_triggers(
         &mut self,
         bid: Option<Decimal>,

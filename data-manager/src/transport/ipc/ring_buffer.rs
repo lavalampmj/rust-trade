@@ -1,11 +1,75 @@
-//! Lock-free SPSC ring buffer for IPC
+//! Lock-free SPSC ring buffer for IPC.
 //!
 //! Implements a single-producer single-consumer ring buffer using
-//! atomic operations for lock-free access.
+//! atomic operations for lock-free access across process boundaries.
 //!
 //! Uses `dbn::TradeMsg` (48 bytes) as the canonical entry format.
 //! This is more compact than the previous TradeMsg (128 bytes)
 //! and uses the industry-standard DBN format.
+//!
+//! # Memory Layout
+//!
+//! ```text
+//! ┌────────────────────────────────────────────────────────────┐
+//! │                    Shared Memory Region                     │
+//! ├────────────────────────────────────────────────────────────┤
+//! │ Header (64 bytes, cache-line aligned)                      │
+//! │  ├─ write_pos: AtomicU64  (producer writes, consumer reads)│
+//! │  ├─ read_pos:  AtomicU64  (consumer writes, producer reads)│
+//! │  ├─ capacity:  u64        (immutable after init)           │
+//! │  ├─ entry_size: u64       (48 bytes for TradeMsg)          │
+//! │  ├─ flags:     AtomicU64  (active bit, overflow bit)       │
+//! │  └─ padding:   [u8; 24]   (fills to 64 bytes)              │
+//! ├────────────────────────────────────────────────────────────┤
+//! │ Data Area (capacity * entry_size bytes)                    │
+//! │  ├─ Entry[0]: TradeMsg (48 bytes)                          │
+//! │  ├─ Entry[1]: TradeMsg (48 bytes)                          │
+//! │  ├─ ...                                                    │
+//! │  └─ Entry[capacity-1]: TradeMsg (48 bytes)                 │
+//! └────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! # Memory Ordering
+//!
+//! The ring buffer uses carefully chosen memory orderings for correctness:
+//!
+//! ## Producer (push)
+//! 1. Load `write_pos` with `Relaxed` - only producer modifies this
+//! 2. Load `read_pos` with `Acquire` - synchronize with consumer's Release store
+//! 3. Write data to buffer (non-atomic, safe due to SPSC guarantee)
+//! 4. `Release` fence - ensure data write completes before position update
+//! 5. Store `write_pos` with `Release` - make data visible to consumer
+//!
+//! ## Consumer (pop)
+//! 1. Load `read_pos` with `Relaxed` - only consumer modifies this
+//! 2. Load `write_pos` with `Acquire` - synchronize with producer's Release store
+//! 3. Read data from buffer (non-atomic, safe due to SPSC guarantee)
+//! 4. Store `read_pos` with `Release` - allow producer to reclaim slot
+//!
+//! ## Why these orderings work:
+//! - `Acquire` on loads ensures we see all writes that happened before the
+//!   corresponding `Release` store
+//! - The fence before `write_pos` update ensures the data is fully written
+//!   before the consumer sees the new position
+//! - `wrapping_sub` handles position wraparound correctly (positions are
+//!   monotonically increasing, wrap at u64::MAX)
+//!
+//! # Overflow Handling
+//!
+//! When the buffer is full and a new entry arrives:
+//! 1. Mark overflow flag (for monitoring)
+//! 2. Advance `read_pos` to drop oldest entry
+//! 3. Write new entry at the freed slot
+//!
+//! This prioritizes real-time data freshness over completeness - newer
+//! market data is more valuable than historical data in live trading.
+//!
+//! # Performance
+//!
+//! - Typical latency: ~10µs per entry
+//! - Cache-line aligned header reduces false sharing
+//! - No locks, no syscalls in hot path
+//! - Batch operations amortize overhead
 
 use std::sync::atomic::{AtomicU64, Ordering};
 

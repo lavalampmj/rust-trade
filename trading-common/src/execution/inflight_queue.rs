@@ -98,7 +98,31 @@ impl InflightCommand {
     }
 }
 
-// Implement ordering for the priority queue (min-heap by arrival time)
+// ============================================================================
+// Priority Queue Ordering
+// ============================================================================
+//
+// Rust's BinaryHeap is a MAX-heap, but we need a MIN-heap (earliest arrival first).
+// We achieve this by REVERSING the comparison: `other.cmp(&self)` instead of
+// `self.cmp(&other)`.
+//
+// Why reversed ordering works:
+// - Normal max-heap: largest element at top → pop returns largest
+// - Reversed comparison: "largest" becomes smallest → pop returns smallest (earliest)
+//
+// FIFO tie-breaking with sequence numbers:
+// - When two commands arrive at the same nanosecond, we need deterministic ordering
+// - Lower sequence number = submitted earlier = should process first
+// - So we also reverse the sequence comparison
+//
+// Example timeline:
+//   t=100ns: SubmitOrder(A) → sequence=0
+//   t=100ns: SubmitOrder(B) → sequence=1
+//   t=150ns: CancelOrder(A) → sequence=2
+//
+// Pop order at t=200ns: SubmitOrder(A), SubmitOrder(B), CancelOrder(A)
+// ============================================================================
+
 impl PartialEq for InflightCommand {
     fn eq(&self, other: &Self) -> bool {
         self.arrival_time_ns == other.arrival_time_ns && self.sequence == other.sequence
@@ -115,8 +139,11 @@ impl PartialOrd for InflightCommand {
 
 impl Ord for InflightCommand {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Reverse ordering for min-heap (earliest arrival first)
-        // If same arrival time, use sequence number for FIFO
+        // REVERSED comparison for min-heap behavior:
+        // - `other.arrival_time_ns.cmp(&self.arrival_time_ns)` means smaller times are "greater"
+        // - BinaryHeap pops "greatest" first, so we get earliest times first
+        //
+        // If same arrival time, use sequence number for FIFO (also reversed)
         match other.arrival_time_ns.cmp(&self.arrival_time_ns) {
             Ordering::Equal => other.sequence.cmp(&self.sequence),
             ordering => ordering,

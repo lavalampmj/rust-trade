@@ -1,3 +1,91 @@
+//! Bar data generation from ticks for backtesting.
+//!
+//! This module converts raw tick data into OHLC bars and [`BarData`] events
+//! that strategies consume. It supports both time-based and tick-based bars
+//! with session-aware generation for markets with trading hours.
+//!
+//! # Operational Modes
+//!
+//! The generator supports three modes that determine when [`BarData`] events are emitted:
+//!
+//! ## `OnEachTick` Mode
+//! - **Event frequency**: One event per incoming tick
+//! - **Use case**: High-frequency strategies that need to react to every price update
+//! - **BarData contents**:
+//!   - `current_tick`: The tick that triggered this event
+//!   - `ohlc_bar`: Accumulated OHLC state (open from first tick, high/low updated, close = current)
+//!   - `metadata.is_bar_closed`: `false` until the bar period ends
+//! - **Example**: Scalping, market-making, tick-by-tick analysis
+//!
+//! ## `OnPriceMove` Mode
+//! - **Event frequency**: One event per unique price (filters duplicate prices)
+//! - **Use case**: Strategies that care about price changes, not volume/time
+//! - **BarData contents**: Same as OnEachTick, but only when price differs from previous
+//! - **Example**: Price action strategies, support/resistance detection
+//!
+//! ## `OnCloseBar` Mode
+//! - **Event frequency**: One event per completed bar (e.g., every 1 minute)
+//! - **Use case**: Traditional candle-based strategies
+//! - **BarData contents**:
+//!   - `current_tick`: `None` (bar close is timer-based, not tick-based)
+//!   - `ohlc_bar`: Final OHLC values for the completed bar
+//!   - `metadata.is_bar_closed`: Always `true`
+//! - **Example**: Moving average crossover, RSI, most technical indicators
+//!
+//! # Bar Types
+//!
+//! ## Time-Based Bars (`BarType::TimeBased(Timeframe)`)
+//! - Bars are closed when wall-clock time reaches the next interval boundary
+//! - Supported timeframes: 1m, 5m, 15m, 1h, 4h, 1d, 1w
+//! - Timestamps are aligned to interval boundaries (e.g., 9:30:00, 9:31:00, not 9:30:15)
+//!
+//! ## Tick-Based Bars (`BarType::TickBased(u32)`)
+//! - Bars are closed after N ticks are received
+//! - More consistent bar sizes in high-frequency scenarios
+//! - Not affected by time gaps (e.g., overnight)
+//!
+//! # Session-Aware Generation
+//!
+//! For markets with trading hours (stocks, futures), the generator supports:
+//!
+//! - **Session open alignment**: First bar of each day aligned to session open time
+//! - **Session close truncation**: Partial bars closed at session end
+//! - **Gap handling**: Synthetic bars generated for gaps (OHLC = last price)
+//!
+//! # State Machine
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │                    Bar State Machine                         │
+//! │                                                              │
+//! │  [No Bar] ──tick──► [Building] ──close──► [Completed]       │
+//! │     ▲                   │  │                   │            │
+//! │     │                   │  │                   │            │
+//! │     └───session_close───┘  └──tick (same bar)─┘            │
+//! │                                                              │
+//! │  Close triggers:                                             │
+//! │   - Time-based: timestamp >= bar_end                         │
+//! │   - Tick-based: tick_count >= N                              │
+//! │   - Session: timestamp >= session_close (if truncation on)   │
+//! └─────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! # Example
+//!
+//! ```ignore
+//! use trading_common::backtest::bar_generator::HistoricalOHLCGenerator;
+//! use trading_common::data::types::{BarType, BarDataMode, Timeframe};
+//!
+//! // Create generator for 1-minute bars, emitting on bar close
+//! let generator = HistoricalOHLCGenerator::new(
+//!     BarType::TimeBased(Timeframe::OneMinute),
+//!     BarDataMode::OnCloseBar,
+//! );
+//!
+//! // Generate bar events from tick data
+//! let bar_events = generator.generate_from_ticks(&ticks);
+//! ```
+
 use crate::data::types::{BarData, BarDataMode, BarType, OHLCData, TickData, Timeframe};
 use crate::instruments::SessionSchedule;
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
