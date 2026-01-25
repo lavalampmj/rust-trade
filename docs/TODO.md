@@ -1,6 +1,6 @@
 # TODO - Trading System Features & Improvements
 
-**Last Updated**: 2026-01-23
+**Last Updated**: 2026-01-24
 **Status**: 98% Production Ready
 
 ---
@@ -13,6 +13,7 @@
 
 ### Monitoring
 - [x] Add Prometheus metrics endpoint - **COMPLETE** (HTTP server on port 9090, 20+ metrics)
+  -  Marked as complete but no data shows on port 9000 - build integration tests
 - [ ] Set up Grafana dashboard
 - [x] Configure alerting (connection pool saturation, batch failures, disconnections) - **COMPLETE** (6 alert rules, 25/25 tests passing, production-ready)
 
@@ -27,6 +28,8 @@
 - [x] OHLC window alignment to session opening (not first tick) - **COMPLETE** (`SessionAwareConfig` with `align_to_session_open`, `truncate_at_session_close`, Strategy `session_config()` method)
 - [x] Market calendar support (holidays, early closes) - **COMPLETE** (`MarketCalendar` with holidays, early_closes, late_opens)
 - [x] Multiple timezone support for global markets - **COMPLETE** (full `chrono_tz` support, DST handling, 6 timezone tests)
+- [ ] Align timesclaedDB aggregation by Normal, not shortened Sessions rather than UTC date.  
+- [ ] Enable API to request N sessions for use by framework
 
 ### Symbol Metadata
 - [x] Add datamodel and metadata, structure to be planned - **COMPLETE** (`SymbolDefinition` with 70+ Databento-aligned fields, `SymbolInfo`, `VenueConfig`, `TradingSpecs`, 8 tests)
@@ -40,15 +43,13 @@
 ### OHLC Data Management
 - [x] Open of Session for first bar, have OHLC realtime-timer loop set from open session time - **COMPLETE** (`RealtimeOHLCGenerator` with `SessionAwareConfig`, session open alignment)
 - [x] Close of Session for cutting last bar short - **COMPLETE** (`RealtimeOHLCGenerator` with session close truncation, `is_session_truncated` flag)
-- [ ] Design decision: Database storage vs on-the-fly generation
-  - Option A: Pre-computed OHLC table (fast queries, storage overhead)
-  - Option B: On-demand aggregation (no storage, slower queries)
-  - Option C: Hybrid (store 1m candles, aggregate for higher timeframes)
-- [ ] Database-side OHLC aggregation using TimeScaledDB
-- [ ] OHLC materialized views or tables
+- [ ] Database-side OHLC aggregation using TimescaleDB - **📋 See implementation plan**: [timescale-ohlc-aggregates.md](./timescale-ohlc-aggregates.md)
+  - UTC-aligned 1-minute continuous aggregates
+  - Session-aware queries handled in application code
 - [ ] OHLC cache strategy (if using on-the-fly)
 - [ ] Historical OHLC backfill process
 - [ ] Create N Tick OHLC, N Volume OHLC
+- [ ] A PriceChange Tick series, sum Volume of all ticks occuring at the same Price.
 
 ---
 
@@ -67,10 +68,11 @@
 - [ ] Database partitioning by date/symbol
 - [ ] Incremental OHLC updates (append-only optimization)
 
-### Strategy Features
+### Strategy Features / Design
 - [ ] Multi-timeframe strategy support
 - [ ] Risk management rules (max drawdown, position sizing)
 - [ ] Strategy capital allocation
+- [ ] Review of whether to keep order methods as is, or reimplement Signal as return BUY SELL HOLD and Entry / Exit methods be in modules / pluggable
 
 ### Strategy Hosting / BackTesting / Optimization Features
 - [ ] Strategy parameter optimization framework
@@ -154,6 +156,19 @@
 ---
 
 ## ✅ Recently Completed
+
+### Error Handling Consolidation (2026-01-24)
+- [x] **Shared Error Module** (`trading-common/src/error/`):
+  - `common.rs`: Reusable error types (DatabaseError, NetworkError, ConfigurationError, EntityError, SerializationError, CacheError, ChannelError, ValidationError)
+  - `traits.rs`: ErrorClassification trait for retry logic (category, is_transient, suggested_retry_delay, max_retries)
+  - `retry_with_backoff()` helper function for automatic retry
+- [x] **Standardized Patterns**:
+  - Converted StateError from manual Display impl to thiserror derive
+  - Added ErrorClassification to DataError, StateError, ExchangeError, ServiceError, TransportError, ProviderError, RepositoryError
+  - Renamed Config → Configuration, NetworkError → Network for consistency
+  - Added `#[non_exhaustive]` to all public error enums
+- [x] **Error Categories**: Transient, Permanent, ResourceExhausted, Configuration, Internal
+- [x] **Test Coverage**: All existing tests pass (835 trading-common, 73 trading-core, 129 data-manager)
 
 ### RealtimeOHLCGenerator Session-Aware Support (2026-01-23)
 - [x] **Session-Aware Bar Generation** (parity with `HistoricalOHLCGenerator`):
@@ -386,7 +401,7 @@
 ## 🔍 Technical Debt
 
 - [ ] Remove duplicate code in exchange modules
-- [ ] Consolidate error handling patterns
+- [x] Consolidate error handling patterns - **COMPLETE** (shared error module, ErrorClassification trait, thiserror standardization)
 - [ ] Standardize logging format
 - [ ] Update dependencies to latest versions
 - [ ] Remove deprecated code paths
