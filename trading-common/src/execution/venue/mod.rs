@@ -21,6 +21,7 @@
 //!
 //! - [`binance::BinanceSpotVenue`]: Binance.com/US Spot trading
 //! - [`binance::BinanceFuturesVenue`]: Binance USDT-M Futures
+//! - [`kraken::KrakenSpotVenue`]: Kraken Spot trading (US-accessible, true order modification)
 //!
 //! # Example
 //!
@@ -28,6 +29,7 @@
 //! use trading_common::execution::venue::{
 //!     ExecutionVenue, OrderSubmissionVenue,
 //!     binance::create_binance_spot_us,
+//!     kraken::create_kraken_spot,
 //! };
 //! use trading_common::orders::Order;
 //!
@@ -57,6 +59,7 @@ mod types;
 
 pub mod binance;
 pub mod http;
+pub mod kraken;
 pub mod websocket;
 
 // Re-export core types
