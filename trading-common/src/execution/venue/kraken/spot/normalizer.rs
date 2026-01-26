@@ -1,13 +1,22 @@
 //! Execution normalizer for Kraken Spot.
 //!
 //! Converts Kraken-specific API responses to normalized execution reports.
+//!
+//! # Symbol Conversion (DBT Symbology)
+//!
+//! The normalizer converts Kraken raw symbols (e.g., "BTC/USD") to canonical
+//! DBT parent format (e.g., "BTC.SPOT") when a SymbolRegistry is configured.
+//! This enables strategies to use venue-agnostic symbols.
 
+use parking_lot::RwLock;
 use rust_decimal::Decimal;
+use std::sync::Arc;
 use tracing::debug;
 
 use crate::execution::venue::kraken::common::{
     parse_kraken_decimal, timestamp_to_datetime, KrakenExecutionType, KrakenLiquiditySide,
 };
+use crate::execution::venue::router::SymbolRegistry;
 use crate::execution::venue::types::{ExecutionReport, OrderQueryResponse};
 use crate::orders::{
     AccountId, ClientOrderId, InstrumentId, LiquiditySide, OrderAccepted, OrderCanceled,
@@ -18,17 +27,51 @@ use crate::orders::{
 use super::types::{from_kraken_symbol, SpotAddOrderResponse, SpotOrderInfo, WsExecutionData};
 
 /// Execution normalizer for Kraken Spot.
+///
+/// Converts Kraken-specific execution reports to venue-agnostic types.
+/// When a SymbolRegistry is configured, raw Kraken symbols are converted
+/// to canonical DBT parent format.
 pub struct SpotExecutionNormalizer {
-    /// Venue name for reports
-    _venue_name: String,
+    /// Venue identifier for symbol lookups
+    venue_id: String,
+    /// Symbol registry for raw → canonical conversion (optional)
+    symbol_registry: Option<Arc<RwLock<SymbolRegistry>>>,
 }
 
 impl SpotExecutionNormalizer {
     /// Create a new normalizer.
-    pub fn new(venue_name: &str) -> Self {
+    pub fn new(venue_id: &str) -> Self {
         Self {
-            _venue_name: venue_name.to_string(),
+            venue_id: venue_id.to_string(),
+            symbol_registry: None,
         }
+    }
+
+    /// Create a new normalizer with symbol registry for raw → canonical conversion.
+    pub fn with_symbol_registry(venue_id: &str, registry: Arc<RwLock<SymbolRegistry>>) -> Self {
+        Self {
+            venue_id: venue_id.to_string(),
+            symbol_registry: Some(registry),
+        }
+    }
+
+    /// Set the symbol registry for raw → canonical conversion.
+    pub fn set_symbol_registry(&mut self, registry: Arc<RwLock<SymbolRegistry>>) {
+        self.symbol_registry = Some(registry);
+    }
+
+    /// Convert a raw Kraken symbol to canonical format.
+    ///
+    /// If a registry is configured and has a mapping, uses the canonical symbol.
+    /// Otherwise falls back to the legacy `from_kraken_symbol` conversion.
+    fn to_canonical(&self, raw_symbol: &str) -> String {
+        if let Some(ref registry) = self.symbol_registry {
+            if let Some(canonical) = registry.read().to_canonical(raw_symbol, &self.venue_id) {
+                return canonical.to_string();
+            }
+        }
+        // Fallback to legacy conversion
+        from_kraken_symbol(raw_symbol)
     }
 
     /// Normalize a new order response.
@@ -64,10 +107,15 @@ impl SpotExecutionNormalizer {
     }
 
     /// Normalize an order query response.
+    ///
+    /// The symbol is converted to canonical format if a SymbolRegistry is configured.
     pub fn normalize_order_query(&self, txid: &str, info: &SpotOrderInfo) -> OrderQueryResponse {
         let status = info.parsed_status().to_order_status();
         let filled_qty = parse_kraken_decimal(&info.vol_exec);
         let total_qty = parse_kraken_decimal(&info.vol);
+
+        // Convert raw symbol to canonical format
+        let symbol = self.to_canonical(&info.descr.pair);
 
         OrderQueryResponse {
             venue_order_id: VenueOrderId::new(txid),
@@ -76,7 +124,7 @@ impl SpotExecutionNormalizer {
                 .as_ref()
                 .map(ClientOrderId::new)
                 .unwrap_or_else(|| ClientOrderId::new("unknown")),
-            symbol: from_kraken_symbol(&info.descr.pair),
+            symbol,
             side: info.side().to_order_side(),
             order_type: info.order_type().to_order_type(),
             status,
@@ -124,6 +172,8 @@ impl SpotExecutionNormalizer {
     }
 
     /// Normalize a WebSocket execution data entry.
+    ///
+    /// The symbol is converted to canonical format if a SymbolRegistry is configured.
     pub fn normalize_ws_execution(&self, data: &WsExecutionData) -> ExecutionReport {
         let exec_type = match data.exec_type.as_str() {
             "pending_new" => KrakenExecutionType::PendingNew,
@@ -219,6 +269,9 @@ impl SpotExecutionNormalizer {
 
         let price = data.limit_price.as_ref().map(|s| parse_kraken_decimal(s));
 
+        // Convert raw symbol to canonical format
+        let symbol = self.to_canonical(&data.symbol);
+
         ExecutionReport {
             client_order_id: data
                 .cl_ord_id
@@ -226,7 +279,7 @@ impl SpotExecutionNormalizer {
                 .map(ClientOrderId::new)
                 .unwrap_or_else(|| ClientOrderId::new("unknown")),
             venue_order_id: VenueOrderId::new(&data.order_id),
-            symbol: from_kraken_symbol(&data.symbol),
+            symbol,
             side,
             order_type,
             status,

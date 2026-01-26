@@ -2,12 +2,21 @@
 //!
 //! This module handles normalization of Kraken Futures execution reports
 //! from both REST API and WebSocket streams to a unified format.
+//!
+//! # Symbol Conversion (DBT Symbology)
+//!
+//! The normalizer converts Kraken Futures raw symbols (e.g., "PI_XBTUSD") to canonical
+//! DBT parent format (e.g., "BTC.PERP") when a SymbolRegistry is configured.
+//! This enables strategies to use venue-agnostic symbols.
 
+use parking_lot::RwLock;
 use rust_decimal::Decimal;
+use std::sync::Arc;
 use tracing::debug;
 
 use crate::execution::venue::error::VenueResult;
 use crate::execution::venue::kraken::common::KrakenOrderStatus;
+use crate::execution::venue::router::SymbolRegistry;
 use crate::execution::venue::types::{ExecutionReport, OrderQueryResponse};
 use crate::orders::{
     AccountId, ClientOrderId, InstrumentId, LiquiditySide, OrderAccepted, OrderCanceled,
@@ -23,17 +32,51 @@ use super::types::{
 };
 
 /// Normalizer for Kraken Futures execution reports.
+///
+/// Converts Kraken-specific execution reports to venue-agnostic types.
+/// When a SymbolRegistry is configured, raw Kraken Futures symbols are converted
+/// to canonical DBT parent format.
 pub struct FuturesExecutionNormalizer {
-    /// Venue name for identification
-    venue_name: String,
+    /// Venue identifier for symbol lookups
+    venue_id: String,
+    /// Symbol registry for raw → canonical conversion (optional)
+    symbol_registry: Option<Arc<RwLock<SymbolRegistry>>>,
 }
 
 impl FuturesExecutionNormalizer {
     /// Create a new normalizer.
-    pub fn new(venue_name: &str) -> Self {
+    pub fn new(venue_id: &str) -> Self {
         Self {
-            venue_name: venue_name.to_string(),
+            venue_id: venue_id.to_string(),
+            symbol_registry: None,
         }
+    }
+
+    /// Create a new normalizer with symbol registry for raw → canonical conversion.
+    pub fn with_symbol_registry(venue_id: &str, registry: Arc<RwLock<SymbolRegistry>>) -> Self {
+        Self {
+            venue_id: venue_id.to_string(),
+            symbol_registry: Some(registry),
+        }
+    }
+
+    /// Set the symbol registry for raw → canonical conversion.
+    pub fn set_symbol_registry(&mut self, registry: Arc<RwLock<SymbolRegistry>>) {
+        self.symbol_registry = Some(registry);
+    }
+
+    /// Convert a raw Kraken Futures symbol to canonical format.
+    ///
+    /// If a registry is configured and has a mapping, uses the canonical symbol.
+    /// Otherwise falls back to the legacy `from_futures_symbol` conversion.
+    fn to_canonical(&self, raw_symbol: &str) -> String {
+        if let Some(ref registry) = self.symbol_registry {
+            if let Some(canonical) = registry.read().to_canonical(raw_symbol, &self.venue_id) {
+                return canonical.to_string();
+            }
+        }
+        // Fallback to legacy conversion
+        from_futures_symbol(raw_symbol)
     }
 
     // =========================================================================
@@ -41,6 +84,8 @@ impl FuturesExecutionNormalizer {
     // =========================================================================
 
     /// Normalize an order info response from REST API.
+    ///
+    /// The symbol is converted to canonical format if a SymbolRegistry is configured.
     pub fn normalize_order_query(&self, info: &FuturesOrderInfo) -> OrderQueryResponse {
         let status = match info.computed_status() {
             KrakenOrderStatus::Pending => OrderStatus::Submitted,
@@ -77,10 +122,11 @@ impl FuturesExecutionNormalizer {
             crate::execution::venue::kraken::common::KrakenOrderSide::Sell => OrderSide::Sell,
         };
 
+        // Convert raw symbol to canonical format
         let symbol = info
             .symbol
             .as_ref()
-            .map(|s| from_futures_symbol(s))
+            .map(|s| self.to_canonical(s))
             .unwrap_or_default();
 
         let timestamp = info
@@ -147,8 +193,11 @@ impl FuturesExecutionNormalizer {
     }
 
     /// Normalize a WebSocket fill message.
+    ///
+    /// The symbol is converted to canonical format if a SymbolRegistry is configured.
     fn normalize_ws_fill(&self, fill: &WsFuturesFill) -> ExecutionReport {
-        let symbol = from_futures_symbol(&fill.instrument);
+        // Convert raw symbol to canonical format
+        let symbol = self.to_canonical(&fill.instrument);
         let side = if fill.buy {
             OrderSide::Buy
         } else {
@@ -200,8 +249,11 @@ impl FuturesExecutionNormalizer {
     }
 
     /// Normalize a WebSocket order update message.
+    ///
+    /// The symbol is converted to canonical format if a SymbolRegistry is configured.
     fn normalize_ws_order(&self, order: &WsFuturesOrder) -> ExecutionReport {
-        let symbol = from_futures_symbol(&order.instrument);
+        // Convert raw symbol to canonical format
+        let symbol = self.to_canonical(&order.instrument);
         let side = match order.direction {
             Some(1) => OrderSide::Buy,
             Some(-1) => OrderSide::Sell,
@@ -291,7 +343,7 @@ impl FuturesExecutionNormalizer {
                     report.client_order_id.clone(),
                     report.venue_order_id.clone(),
                     AccountId::default(),
-                    InstrumentId::new(&report.symbol, &self.venue_name),
+                    InstrumentId::new(&report.symbol, &self.venue_id),
                     TradeId::new(report.trade_id.clone().unwrap_or_else(|| "unknown".to_string())),
                     StrategyId::default(),
                     report.side,

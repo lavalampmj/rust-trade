@@ -1,21 +1,32 @@
 //! Venue Router for multi-venue order management.
 //!
 //! The `VenueRouter` provides a unified interface for routing orders to multiple
-//! execution venues based on the `instrument_id.venue` field. This enables:
+//! execution venues. This enables:
 //!
 //! - **Cross-exchange arbitrage**: Trade the same underlying across venues
 //! - **Best execution**: Route to venue with best price/liquidity
 //! - **Redundancy**: Failover to backup venue if primary unavailable
 //! - **Unified reporting**: Aggregate execution reports from all venues
 //!
-//! # Architecture
+//! # Databento Symbology Alignment
+//!
+//! The router uses [Databento's symbology conventions](https://databento.com/docs/standards-and-conventions/symbology):
+//!
+//! | DBT Type | Our Usage | Example |
+//! |----------|-----------|---------|
+//! | `parent` | Canonical ID | `BTC.SPOT`, `ES.FUT` |
+//! | `raw_symbol` | Venue symbol | `BTCUSDT`, `XBT/USD`, `ESH6` |
+//! | `continuous` | Roll contracts | `ES.c.0`, `CL.v.0` |
+//!
+//! # Symbol Conversion Flow
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────────────┐
 //! │                         Strategy Layer                              │
 //! │                                                                     │
-//! │   Order { instrument_id: "BTCUSDT.BINANCE", ... }                  │
-//! │   Order { instrument_id: "BTCUSDT.KRAKEN_FUTURES", ... }           │
+//! │   Uses canonical symbols (DBT parent format):                       │
+//! │   Order { instrument_id: "BTC.SPOT.BINANCE", ... }                 │
+//! │   Order { instrument_id: "BTC.PERP.KRAKEN_FUTURES", ... }          │
 //! └────────────────────────────┬────────────────────────────────────────┘
 //!                              │
 //!                              ▼
@@ -23,33 +34,33 @@
 //! │                        VenueRouter                                  │
 //! │                                                                     │
 //! │   ┌─────────────────────────────────────────────────────────────┐  │
-//! │   │  Order ID Mapping                                            │  │
-//! │   │  ClientOrderId → (VenueId, VenueOrderId)                    │  │
+//! │   │  SymbolRegistry                                              │  │
+//! │   │  Canonical → raw_symbol conversion                          │  │
+//! │   │  "BTC.SPOT" + "BINANCE" → "BTCUSDT"                         │  │
+//! │   │  "BTC.PERP" + "KRAKEN_FUTURES" → "PI_XBTUSD"                │  │
 //! │   └─────────────────────────────────────────────────────────────┘  │
 //! │                                                                     │
 //! │   ┌─────────────────────────────────────────────────────────────┐  │
 //! │   │  Venue Registry                                              │  │
 //! │   │  HashMap<VenueId, Box<dyn FullExecutionVenue>>              │  │
 //! │   └─────────────────────────────────────────────────────────────┘  │
-//! │                                                                     │
-//! │   ┌─────────────────────────────────────────────────────────────┐  │
-//! │   │  Execution Stream Aggregator                                 │  │
-//! │   │  Combines WebSocket feeds from all venues                   │  │
-//! │   └─────────────────────────────────────────────────────────────┘  │
 //! └────────────────────────────┬────────────────────────────────────────┘
 //!                              │
 //!          ┌───────────────────┼───────────────────┐
 //!          ▼                   ▼                   ▼
 //! ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-//! │ Binance Spot    │ │ Kraken Futures  │ │ Other Venues    │
-//! │ (BINANCE)       │ │ (KRAKEN_FUTURES)│ │ (...)           │
+//! │ Binance Spot    │ │ Kraken Futures  │ │ CME Globex      │
+//! │ raw: BTCUSDT    │ │ raw: PI_XBTUSD  │ │ raw: ESH6       │
 //! └─────────────────┘ └─────────────────┘ └─────────────────┘
 //! ```
 //!
 //! # Example
 //!
 //! ```ignore
-//! use trading_common::execution::venue::router::{VenueRouter, VenueRouterConfig};
+//! use trading_common::execution::venue::router::{
+//!     VenueRouter, VenueRouterConfig, SymbolRegistry,
+//!     CanonicalSymbol, InstrumentClass,
+//! };
 //! use trading_common::execution::venue::binance::create_binance_spot_us;
 //! use trading_common::execution::venue::kraken::create_kraken_futures_demo;
 //! use trading_common::orders::{Order, OrderSide};
@@ -57,54 +68,58 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Create router
+//!     // Create router with symbol registry
 //!     let mut router = VenueRouter::new(VenueRouterConfig::default());
 //!
+//!     // Symbol registry uses DBT parent format for canonical IDs
+//!     let registry = SymbolRegistry::with_crypto_defaults();
+//!     router.set_symbol_registry(registry);
+//!
 //!     // Register venues
-//!     router.register_venue("BINANCE", create_binance_spot_us()?);
-//!     router.register_venue("KRAKEN_FUTURES", create_kraken_futures_demo()?);
+//!     router.register_venue("BINANCE", create_binance_spot_us()?).await;
+//!     router.register_venue("KRAKEN_FUTURES", create_kraken_futures_demo()?).await;
 //!
 //!     // Connect all venues
 //!     router.connect().await?;
 //!
-//!     // Submit orders - router routes based on venue in instrument_id
-//!     let binance_order = Order::limit("BTCUSDT", OrderSide::Buy, dec!(0.01), dec!(50000))
+//!     // Submit orders using canonical symbols
+//!     // Router converts "BTC.SPOT" → "BTCUSDT" for Binance
+//!     let spot_order = Order::limit("BTC.SPOT", OrderSide::Buy, dec!(0.01), dec!(50000))
 //!         .with_venue("BINANCE")
 //!         .build()?;
 //!
-//!     let kraken_order = Order::limit("BTCUSDT", OrderSide::Sell, dec!(0.01), dec!(50100))
+//!     // Router converts "BTC.PERP" → "PI_XBTUSD" for Kraken Futures
+//!     let perp_order = Order::limit("BTC.PERP", OrderSide::Sell, dec!(0.01), dec!(50100))
 //!         .with_venue("KRAKEN_FUTURES")
 //!         .build()?;
 //!
-//!     // Both orders go to their respective venues
-//!     let binance_id = router.submit_order(&binance_order).await?;
-//!     let kraken_id = router.submit_order(&kraken_order).await?;
-//!
-//!     // Query across all venues
-//!     let all_open = router.query_open_orders(None).await?;
-//!     println!("Total open orders: {}", all_open.len());
+//!     // Both orders go to their respective venues with correct raw_symbols
+//!     let binance_id = router.submit_order(&spot_order).await?;
+//!     let kraken_id = router.submit_order(&perp_order).await?;
 //!
 //!     Ok(())
 //! }
 //! ```
 //!
-//! # Cross-Exchange Arbitrage
+//! # Cross-Exchange Arbitrage with Canonical Symbols
 //!
 //! ```ignore
-//! // Arbitrage strategy using router
 //! impl ArbitrageStrategy {
 //!     async fn execute_spread(&self, router: &VenueRouter, spread: &Spread) {
-//!         // Buy on cheaper exchange
-//!         let buy_order = Order::limit("BTCUSDT", OrderSide::Buy, spread.qty, spread.bid)
-//!             .with_venue(&spread.bid_venue)  // e.g., "BINANCE"
+//!         // Both orders use same canonical symbol "BTC.SPOT"
+//!         // Router converts to venue-specific raw_symbols
+//!
+//!         // "BTC.SPOT" + "BINANCE" → raw_symbol "BTCUSDT"
+//!         let buy_order = Order::limit("BTC.SPOT", OrderSide::Buy, spread.qty, spread.bid)
+//!             .with_venue("BINANCE")
 //!             .build()?;
 //!
-//!         // Sell on more expensive exchange
-//!         let sell_order = Order::limit("BTCUSDT", OrderSide::Sell, spread.qty, spread.ask)
-//!             .with_venue(&spread.ask_venue)  // e.g., "KRAKEN_FUTURES"
+//!         // "BTC.SPOT" + "KRAKEN" → raw_symbol "XBT/USD"
+//!         let sell_order = Order::limit("BTC.SPOT", OrderSide::Sell, spread.qty, spread.ask)
+//!             .with_venue("KRAKEN")
 //!             .build()?;
 //!
-//!         // Submit both legs through unified router
+//!         // Submit both legs
 //!         let (buy_result, sell_result) = tokio::join!(
 //!             router.submit_order(&buy_order),
 //!             router.submit_order(&sell_order),
@@ -117,6 +132,9 @@ mod config;
 mod router;
 mod symbol_registry;
 
-pub use config::{RouteRule, VenueRouterConfig};
+pub use config::{RouteRule, RouteStrategy, VenueRouterConfig};
 pub use router::VenueRouter;
-pub use symbol_registry::{CanonicalSymbol, SymbolRegistry, VenueSymbolMapping};
+pub use symbol_registry::{
+    CanonicalSymbol, ContinuousRollMethod, ContinuousSymbol, InstrumentClass, SymbolRegistry,
+    VenueSymbolMapping,
+};

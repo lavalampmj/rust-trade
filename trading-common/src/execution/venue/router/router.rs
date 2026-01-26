@@ -33,8 +33,10 @@ struct OrderRouting {
     venue_id: VenueId,
     /// The venue-assigned order ID
     venue_order_id: VenueOrderId,
-    /// The symbol as sent to the venue
-    venue_symbol: String,
+    /// The canonical symbol (DBT parent format, e.g., "BTC.SPOT")
+    canonical_symbol: String,
+    /// The raw symbol as sent to the venue (e.g., "BTCUSDT")
+    raw_symbol: String,
 }
 
 /// VenueRouter manages multiple execution venues and routes orders based on
@@ -309,6 +311,49 @@ impl VenueRouter {
     pub fn aggregated_info(&self) -> VenueInfo {
         self.aggregated_info.read().clone()
     }
+
+    // === Symbol Conversion Helpers ===
+
+    /// Convert canonical symbol to venue raw_symbol.
+    ///
+    /// Returns the raw_symbol for the venue, or the original symbol if no mapping exists.
+    fn to_raw_symbol(&self, canonical_symbol: &str, venue_id: &str) -> String {
+        self.symbol_registry
+            .read()
+            .to_raw_symbol(canonical_symbol, venue_id)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| canonical_symbol.to_string())
+    }
+
+    /// Convert venue raw_symbol to canonical symbol.
+    ///
+    /// Returns the canonical symbol, or the original symbol if no mapping exists.
+    fn to_canonical(&self, raw_symbol: &str, venue_id: &str) -> String {
+        self.symbol_registry
+            .read()
+            .to_canonical(raw_symbol, venue_id)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| raw_symbol.to_string())
+    }
+
+    /// Prepare an order for submission to a venue by converting the symbol.
+    ///
+    /// Converts the canonical symbol in the order to the venue's raw_symbol.
+    fn prepare_order_for_venue(&self, order: &Order, venue_id: &str) -> Order {
+        let raw_symbol = self.to_raw_symbol(&order.instrument_id.symbol, venue_id);
+
+        if raw_symbol != order.instrument_id.symbol {
+            debug!(
+                "Converting symbol: {} -> {} for venue {}",
+                order.instrument_id.symbol, raw_symbol, venue_id
+            );
+            let mut venue_order = order.clone();
+            venue_order.instrument_id.symbol = raw_symbol;
+            venue_order
+        } else {
+            order.clone()
+        }
+    }
 }
 
 #[async_trait]
@@ -443,12 +488,17 @@ impl OrderSubmissionVenue for VenueRouter {
     async fn submit_order(&self, order: &Order) -> VenueResult<VenueOrderId> {
         let venue_id = self.resolve_venue(order).await?;
 
+        // Convert canonical symbol to venue raw_symbol
+        let venue_order = self.prepare_order_for_venue(order, &venue_id);
+        let canonical_symbol = order.instrument_id.symbol.clone();
+        let raw_symbol = venue_order.instrument_id.symbol.clone();
+
         debug!(
-            "Routing order {} to venue {}",
-            order.client_order_id, venue_id
+            "Routing order {} to venue {} (symbol: {} -> {})",
+            order.client_order_id, venue_id, canonical_symbol, raw_symbol
         );
 
-        // Get venue, check connected, and submit
+        // Get venue, check connected, and submit with converted symbol
         let venue_order_id = {
             let venues = self.venues.read().await;
             let venue = venues
@@ -459,16 +509,17 @@ impl OrderSubmissionVenue for VenueRouter {
                 return Err(VenueError::NotConnected);
             }
 
-            venue.submit_order(order).await?
+            venue.submit_order(&venue_order).await?
         };
 
-        // Store routing information
+        // Store routing information with both canonical and raw symbols
         self.order_routing.write().insert(
             order.client_order_id.clone(),
             OrderRouting {
                 venue_id: venue_id.clone(),
                 venue_order_id: venue_order_id.clone(),
-                venue_symbol: order.instrument_id.symbol.clone(),
+                canonical_symbol,
+                raw_symbol,
             },
         );
 
@@ -489,12 +540,13 @@ impl OrderSubmissionVenue for VenueRouter {
         // Look up routing info
         let routing = self.order_routing.read().get(client_order_id).cloned();
 
-        let (venue_id, actual_venue_order_id) = if let Some(routing) = routing {
+        let (venue_id, actual_venue_order_id, raw_symbol) = if let Some(routing) = routing {
             (
                 routing.venue_id,
                 venue_order_id
                     .cloned()
                     .unwrap_or(routing.venue_order_id),
+                routing.raw_symbol, // Use stored raw_symbol
             )
         } else {
             // No routing info - need venue_order_id
@@ -510,18 +562,22 @@ impl OrderSubmissionVenue for VenueRouter {
             // Try to find which venue has this order by searching
             let venue_ids: Vec<_> = self.venues.read().await.keys().cloned().collect();
             let mut found_venue = None;
+            let mut found_raw_symbol = symbol.to_string();
 
             for vid_check in venue_ids {
+                // Convert symbol for this venue before querying
+                let raw_sym = self.to_raw_symbol(symbol, &vid_check);
                 let venues = self.venues.read().await;
                 if let Some(venue) = venues.get(&vid_check) {
                     if venue.is_connected() {
                         // Try query - if it succeeds, this venue has the order
                         if venue
-                            .query_order(client_order_id, Some(&vid), symbol)
+                            .query_order(client_order_id, Some(&vid), &raw_sym)
                             .await
                             .is_ok()
                         {
                             found_venue = Some(vid_check);
+                            found_raw_symbol = raw_sym;
                             break;
                         }
                     }
@@ -535,10 +591,13 @@ impl OrderSubmissionVenue for VenueRouter {
                 ))
             })?;
 
-            (venue_id, vid)
+            (venue_id, vid, found_raw_symbol)
         };
 
-        debug!("Canceling order {} on venue {}", client_order_id, venue_id);
+        debug!(
+            "Canceling order {} on venue {} (symbol: {})",
+            client_order_id, venue_id, raw_symbol
+        );
 
         let result = {
             let venues = self.venues.read().await;
@@ -546,8 +605,9 @@ impl OrderSubmissionVenue for VenueRouter {
                 .get(&venue_id)
                 .ok_or_else(|| VenueError::Internal(format!("Venue {} not found", venue_id)))?;
 
+            // Use raw_symbol when calling the venue
             venue
-                .cancel_order(client_order_id, Some(&actual_venue_order_id), symbol)
+                .cancel_order(client_order_id, Some(&actual_venue_order_id), &raw_symbol)
                 .await
         };
 
@@ -563,7 +623,7 @@ impl OrderSubmissionVenue for VenueRouter {
         &self,
         client_order_id: &ClientOrderId,
         venue_order_id: Option<&VenueOrderId>,
-        symbol: &str,
+        _symbol: &str, // Symbol conversion handled via stored routing info
         new_price: Option<Decimal>,
         new_quantity: Option<Decimal>,
     ) -> VenueResult<VenueOrderId> {
@@ -580,9 +640,12 @@ impl OrderSubmissionVenue for VenueRouter {
             .cloned()
             .unwrap_or(routing.venue_order_id.clone());
 
+        // Use stored raw_symbol for venue call
+        let raw_symbol = &routing.raw_symbol;
+
         debug!(
-            "Modifying order {} on venue {}",
-            client_order_id, routing.venue_id
+            "Modifying order {} on venue {} (symbol: {})",
+            client_order_id, routing.venue_id, raw_symbol
         );
 
         let new_venue_order_id = {
@@ -591,24 +654,26 @@ impl OrderSubmissionVenue for VenueRouter {
                 VenueError::Internal(format!("Venue {} not found", routing.venue_id))
             })?;
 
+            // Use raw_symbol when calling the venue
             venue
                 .modify_order(
                     client_order_id,
                     Some(&actual_venue_order_id),
-                    symbol,
+                    raw_symbol,
                     new_price,
                     new_quantity,
                 )
                 .await?
         };
 
-        // Update routing with new venue order ID
+        // Update routing with new venue order ID, preserving symbols
         self.order_routing.write().insert(
             client_order_id.clone(),
             OrderRouting {
                 venue_id: routing.venue_id.clone(),
                 venue_order_id: new_venue_order_id.clone(),
-                venue_symbol: routing.venue_symbol,
+                canonical_symbol: routing.canonical_symbol,
+                raw_symbol: routing.raw_symbol,
             },
         );
 
@@ -638,20 +703,23 @@ impl OrderSubmissionVenue for VenueRouter {
                 VenueError::Internal(format!("Venue {} not found", routing.venue_id))
             })?;
 
+            // Use stored raw_symbol when querying the venue
             return venue
-                .query_order(client_order_id, Some(&actual_venue_order_id), symbol)
+                .query_order(client_order_id, Some(&actual_venue_order_id), &routing.raw_symbol)
                 .await;
         }
 
-        // No routing info - search all venues
+        // No routing info - search all venues with symbol conversion
         let venue_ids: Vec<_> = self.venues.read().await.keys().cloned().collect();
 
         for vid in venue_ids {
+            // Convert symbol to raw format for this venue
+            let raw_symbol = self.to_raw_symbol(symbol, &vid);
             let venues = self.venues.read().await;
             if let Some(venue) = venues.get(&vid) {
                 if venue.is_connected() {
                     if let Ok(response) = venue
-                        .query_order(client_order_id, venue_order_id, symbol)
+                        .query_order(client_order_id, venue_order_id, &raw_symbol)
                         .await
                     {
                         return Ok(response);
@@ -672,10 +740,12 @@ impl OrderSubmissionVenue for VenueRouter {
         let venue_ids: Vec<_> = self.venues.read().await.keys().cloned().collect();
 
         for venue_id in venue_ids {
+            // Convert symbol to raw format for this venue
+            let raw_symbol = symbol.map(|s| self.to_raw_symbol(s, &venue_id));
             let venues = self.venues.read().await;
             if let Some(venue) = venues.get(&venue_id) {
                 if venue.is_connected() {
-                    match venue.query_open_orders(symbol).await {
+                    match venue.query_open_orders(raw_symbol.as_deref()).await {
                         Ok(orders) => {
                             debug!("Got {} orders from venue {}", orders.len(), venue_id);
                             all_orders.extend(orders);
@@ -697,10 +767,12 @@ impl OrderSubmissionVenue for VenueRouter {
         let venue_ids: Vec<_> = self.venues.read().await.keys().cloned().collect();
 
         for venue_id in venue_ids {
+            // Convert symbol to raw format for this venue
+            let raw_symbol = symbol.map(|s| self.to_raw_symbol(s, &venue_id));
             let venues = self.venues.read().await;
             if let Some(venue) = venues.get(&venue_id) {
                 if venue.is_connected() {
-                    match venue.cancel_all_orders(symbol).await {
+                    match venue.cancel_all_orders(raw_symbol.as_deref()).await {
                         Ok(ids) => {
                             debug!("Cancelled {} orders on venue {}", ids.len(), venue_id);
                             cancelled.extend(ids);

@@ -1,12 +1,21 @@
 //! Execution report normalizer for Binance Futures.
 //!
 //! Converts Binance Futures-specific types to venue-agnostic types.
+//!
+//! # Symbol Conversion (DBT Symbology)
+//!
+//! The normalizer converts Binance raw symbols (e.g., "BTCUSDT") to canonical
+//! DBT parent format (e.g., "BTC.PERP") when a SymbolRegistry is configured.
+//! This enables strategies to use venue-agnostic symbols.
 
+use parking_lot::RwLock;
 use rust_decimal::Decimal;
+use std::sync::Arc;
 use tracing::{debug, warn};
 
 use crate::execution::venue::binance::common::timestamp_to_datetime;
 use crate::execution::venue::error::{VenueError, VenueResult};
+use crate::execution::venue::router::SymbolRegistry;
 use crate::execution::venue::types::ExecutionReport;
 use crate::orders::{
     ClientOrderId, LiquiditySide, OrderAccepted, OrderCanceled, OrderEventAny, OrderExpired,
@@ -18,27 +27,71 @@ use super::types::{
 };
 
 /// Normalizer for Binance Futures execution reports.
+///
+/// Converts Binance-specific execution reports to venue-agnostic types.
+/// When a SymbolRegistry is configured, raw Binance symbols are converted
+/// to canonical DBT parent format.
 pub struct FuturesExecutionNormalizer {
-    /// Venue name for events
-    venue_name: String,
+    /// Venue identifier for symbol lookups
+    venue_id: String,
+    /// Symbol registry for raw → canonical conversion (optional)
+    symbol_registry: Option<Arc<RwLock<SymbolRegistry>>>,
 }
 
 impl FuturesExecutionNormalizer {
     /// Create a new normalizer.
-    pub fn new(venue_name: impl Into<String>) -> Self {
+    pub fn new(venue_id: impl Into<String>) -> Self {
         Self {
-            venue_name: venue_name.into(),
+            venue_id: venue_id.into(),
+            symbol_registry: None,
+        }
+    }
+
+    /// Create a new normalizer with symbol registry for raw → canonical conversion.
+    pub fn with_symbol_registry(
+        venue_id: impl Into<String>,
+        registry: Arc<RwLock<SymbolRegistry>>,
+    ) -> Self {
+        Self {
+            venue_id: venue_id.into(),
+            symbol_registry: Some(registry),
+        }
+    }
+
+    /// Set the symbol registry for raw → canonical conversion.
+    pub fn set_symbol_registry(&mut self, registry: Arc<RwLock<SymbolRegistry>>) {
+        self.symbol_registry = Some(registry);
+    }
+
+    /// Convert a raw Binance symbol to canonical format.
+    ///
+    /// Returns the canonical symbol if a registry is configured and has a mapping,
+    /// otherwise returns the raw symbol unchanged.
+    fn to_canonical(&self, raw_symbol: &str) -> String {
+        if let Some(ref registry) = self.symbol_registry {
+            registry
+                .read()
+                .to_canonical(raw_symbol, &self.venue_id)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| raw_symbol.to_string())
+        } else {
+            raw_symbol.to_string()
         }
     }
 
     /// Convert a new order response to an execution report.
+    ///
+    /// The symbol is converted to canonical format if a SymbolRegistry is configured.
     pub fn normalize_new_order(&self, response: &FuturesNewOrderResponse) -> ExecutionReport {
         let leaves_qty = response.orig_qty - response.executed_qty;
+
+        // Convert raw symbol to canonical format
+        let symbol = self.to_canonical(&response.symbol);
 
         ExecutionReport {
             client_order_id: ClientOrderId::new(&response.client_order_id),
             venue_order_id: VenueOrderId::new(response.order_id.to_string()),
-            symbol: response.symbol.clone(),
+            symbol,
             side: response.side.to_order_side(),
             order_type: response.order_type.to_order_type(),
             status: response.status.to_order_status(),
@@ -68,13 +121,18 @@ impl FuturesExecutionNormalizer {
     }
 
     /// Convert a WebSocket order trade update to our normalized format.
+    ///
+    /// The symbol is converted to canonical format if a SymbolRegistry is configured.
     pub fn normalize_ws_report(&self, order: &FuturesOrderInfo) -> ExecutionReport {
         let leaves_qty = order.quantity - order.cum_qty;
+
+        // Convert raw symbol to canonical format
+        let symbol = self.to_canonical(&order.symbol);
 
         ExecutionReport {
             client_order_id: ClientOrderId::new(&order.client_order_id),
             venue_order_id: VenueOrderId::new(order.order_id.to_string()),
-            symbol: order.symbol.clone(),
+            symbol,
             side: order.side.to_order_side(),
             order_type: order.order_type.to_order_type(),
             status: order.order_status.to_order_status(),
@@ -192,14 +250,19 @@ impl FuturesExecutionNormalizer {
     }
 
     /// Convert an order query response to our normalized format.
+    ///
+    /// The symbol is converted to canonical format if a SymbolRegistry is configured.
     pub fn normalize_order_query(
         &self,
         response: &FuturesOrderQueryResponse,
     ) -> crate::execution::venue::types::OrderQueryResponse {
+        // Convert raw symbol to canonical format
+        let symbol = self.to_canonical(&response.symbol);
+
         crate::execution::venue::types::OrderQueryResponse {
             client_order_id: ClientOrderId::new(&response.client_order_id),
             venue_order_id: VenueOrderId::new(response.order_id.to_string()),
-            symbol: response.symbol.clone(),
+            symbol,
             side: response.side.to_order_side(),
             order_type: response.order_type.to_order_type(),
             status: response.status.to_order_status(),
