@@ -28,8 +28,6 @@
 - [x] OHLC window alignment to session opening (not first tick) - **COMPLETE** (`SessionAwareConfig` with `align_to_session_open`, `truncate_at_session_close`, Strategy `session_config()` method)
 - [x] Market calendar support (holidays, early closes) - **COMPLETE** (`MarketCalendar` with holidays, early_closes, late_opens)
 - [x] Multiple timezone support for global markets - **COMPLETE** (full `chrono_tz` support, DST handling, 6 timezone tests)
-- [ ] Align timesclaedDB aggregation by Normal, not shortened Sessions rather than UTC date.  
-- [ ] Enable API to request N sessions for use by framework
 
 ### Symbol Metadata
 - [x] Add datamodel and metadata, structure to be planned - **COMPLETE** (`SymbolDefinition` with 70+ Databento-aligned fields, `SymbolInfo`, `VenueConfig`, `TradingSpecs`, 8 tests)
@@ -40,7 +38,7 @@
 - [x] Create back adjusted Continuous Contract - **COMPLETE** (`AdjustmentFactor` with ratio/difference methods, cumulative adjustment, price adjustment helpers)
 - [x] Create automatic rollover method for front underlying symbol - **COMPLETE** (`RollManager` with calendar/volume/OI roll detection, event broadcasting, 35+ tests)
 
-### OHLC Data Management
+### Data Management
 - [x] Open of Session for first bar, have OHLC realtime-timer loop set from open session time - **COMPLETE** (`RealtimeOHLCGenerator` with `SessionAwareConfig`, session open alignment)
 - [x] Close of Session for cutting last bar short - **COMPLETE** (`RealtimeOHLCGenerator` with session close truncation, `is_session_truncated` flag)
 - [ ] Database-side OHLC aggregation using TimescaleDB - **📋 See implementation plan**: [timescale-ohlc-aggregates.md](./timescale-ohlc-aggregates.md)
@@ -49,7 +47,7 @@
 - [ ] OHLC cache strategy (if using on-the-fly)
 - [ ] Historical OHLC backfill process
 - [ ] Create N Volume OHLC
-- [ ] A PriceChange Tick series, sum Volume of all ticks occuring at the same Price.
+- [ ] PriceChangeLastTick series from Last Tick, sum Volume of all ticks occuring at the same Price.
 
 ---
 
@@ -67,19 +65,39 @@
 - [ ] Incremental OHLC updates (append-only optimization)
 
 ### Strategy Features / Design
-- [ ] Multi-timeframe strategy support
-- [ ] Risk management rules (max drawdown, position sizing)
-- [ ] Strategy capital allocation
+- [ ] Component Abstraction and Events
+- [x] Component Life Cycle - **COMPLETE** (StateCoordinator, ComponentState transitions, strategy lifecycle wiring)
+- [ ] Component factory pattern (Strategy, Strategy Anaylser, Transform, Chart..., L2)
+
+### Strategy Features / Design
+- [ ] Multi-timeframe strategy support based on Multi-Bar Support
+- [ ] Risk management rules (max drawdown, position sizing, margin usage)
+- [ ] Strategy capital allocation and rebalancing
 - [ ] Review of whether to keep order methods as is, or reimplement Signal as return BUY SELL HOLD and Entry / Exit methods be in modules / pluggable
+- [x] Review Strategy component state life cycle is correctly designed, implemented and exposed within a strategy - **COMPLETE** (2026-01-25)
+- [ ] Property to set whether a strategy must be flat over sesssions, i.e. isDayTRadingSysTem
+- [ ] Property that set time in Seconds before today close of session to ensure the only work of isDayTradingSystem, cancels orders and negate placement from this time until next Session Open
+
 
 ### Strategy Hosting / BackTesting / Optimization Features
-- [ ] Strategy parameter optimization framework
--     Brute Force parameter optimization
--     Parameter optima search, e.g. genetic, PSO, gradient
+- [ ] Strategy parameter optimization framework,  Optimzation Component with life cycle and CRUD
+- [ ] Opotimization types
+  -  Brute Force parameter optimization
+  -  Parameter optima search, e.g. genetic, PSO, gradient
+  -  Training LSTM model support
+  -  Monticarlo with repalcement tests
+    - training bar variations
+    - trade reordering, with and with "trade run" preservation
 - [ ] Walk-forward analysis
-- [ ] Have strategy execution limits, such as Time Limits, Thread Limits, Memory Limits
-- [ ] Gracefully kill strategies in an infinite loop
-- [ ] Support many backtesting many strategies simulatanously and synchronised by OHLC or Tick
+- [ ] Strategy execution limits, such as Time Limits, Thread Limits, Memory Limits
+- [ ] Gracefully kill strategies in an infinite loop or by user halt
+- [x] Many backtesting many strategies simultaneously and synchronised by OHLC or Tick - **COMPLETE** (MultiStrategyBacktestEngine with time-ordered processing)
+- [ ] Multi-Node backtest support
+- [ ] Computer Resources management and constraints settings
+- [ ] Configurable rules for open Positions that cross test, validation and unseen boundaries
+- [ ] UI for Backtesting, Optimzation, Model Training
+- [ ] review Trade statistics
+- [ ] flexible Objective Function
 
 ## 🔧 Infrastructure & Operations
 
@@ -133,7 +151,7 @@
 - [ ] Anomaly detection
 - [x] Indicator on Indicator, series output of one as series input of another, all series bound to input series ordering - **COMPLETE** (Transform framework with composition)
 - [x] Implement Indicators - **COMPLETE** (SMA, EMA, RSI, ATR, Highest, Lowest, Change, ROC, CrossAbove, CrossBelow) 
-- [ ] Build TA-LIB equivilant indicators 
+- [ ] Build TA-LIB equivilant indicators library 
 
 ### Python Strategy Enhancements
 - [x] Python strategy sandboxing (security) - **COMPLETE** (3 phases: hash verification, import blocking, resource monitoring)
@@ -145,6 +163,35 @@
 ---
 
 ## ✅ Recently Completed
+
+### Component State Lifecycle & Multi-Strategy Backtesting (2026-01-25)
+- [x] **StateCoordinator for Multi-Strategy Management**:
+  - Per-strategy tracking with unique ComponentIds (UUID-based)
+  - Independent warmup and state transitions per strategy
+  - Broadcast channel for state change event subscriptions
+  - State flow: Undefined → SetDefaults → Configure → DataLoaded → Historical → Transition → Realtime → Terminated
+- [x] **is_historical Flag in BarMetadata**:
+  - Distinguishes historical/warmup data from realtime
+  - `HistoricalOHLCGenerator` marks all bars as historical
+  - New constructors: `new_historical()`, `with_historical()`
+- [x] **BacktestEngine State Tracking**:
+  - `with_state_tracking()` and `with_coordinator()` methods
+  - Transitions through proper lifecycle states during backtest
+  - Terminates strategy on backtest completion
+- [x] **PaperTradingProcessor State Tracking**:
+  - `with_state_tracking()` and `with_coordinator()` methods
+  - Enters Realtime state when warmup completes (unlike backtest)
+  - `shutdown()` method for graceful termination
+- [x] **State Monitoring in main.rs**:
+  - Background task logs all state transitions
+  - Proper shutdown handling calls `processor.shutdown()`
+- [x] **MultiStrategyBacktestEngine**:
+  - Time-synchronized bar processing across all strategies
+  - Each bar is fired to ALL strategies before advancing to next bar
+  - Independent portfolios and BarsContext per strategy
+  - Returns `Vec<BacktestResult>` with one result per strategy
+  - Integration with StateCoordinator for lifecycle management
+- [x] **Test Coverage**: 17 new tests (13 coordinator + 4 multi-engine)
 
 ### Configuration Management System (2026-01-25)
 - [x] **Backend Architecture** (Phase 1 complete):
