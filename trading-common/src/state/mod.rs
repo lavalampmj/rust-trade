@@ -67,11 +67,13 @@
 //! }
 //! ```
 
+pub mod coordinator;
 pub mod errors;
 pub mod events;
 pub mod managed;
 pub mod registry;
 
+pub use coordinator::{StateCoordinator, StrategyStateTracker};
 pub use errors::{StateError, StateResult};
 pub use events::ComponentStateEvent;
 pub use managed::StateManaged;

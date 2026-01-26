@@ -3,7 +3,10 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
+
+// State management for lifecycle tracking
+use trading_common::state::StateCoordinator;
 
 // CLI-specific modules
 mod alerting;
@@ -198,14 +201,39 @@ async fn run_live_with_paper_trading() -> Result<(), Box<dyn std::error::Error>>
     let strategy = backtest::strategy::create_strategy(&settings.paper_trading.strategy)?;
     info!("✅ Strategy initialized: {}", strategy.name());
 
-    // Create paper trading processor
+    // Create paper trading processor with state tracking
     let initial_capital = Decimal::try_from(settings.paper_trading.initial_capital)
         .map_err(|e| format!("Invalid initial capital: {}", e))?;
-    let paper_trading = Arc::new(tokio::sync::Mutex::new(PaperTradingProcessor::new(
-        strategy,
-        Arc::clone(&repository),
-        initial_capital,
-    )));
+
+    // Create shared state coordinator for lifecycle management
+    let coordinator = Arc::new(StateCoordinator::default());
+
+    // Subscribe to state changes for monitoring/logging
+    let mut state_rx = coordinator.subscribe();
+    tokio::spawn(async move {
+        while let Ok(event) = state_rx.recv().await {
+            info!(
+                "STATE CHANGE: {} | {:?} → {:?} | reason: {:?}",
+                event.component_id, event.old_state, event.new_state, event.reason
+            );
+        }
+        debug!("State change subscriber task ended");
+    });
+
+    // Get the first symbol for state tracking
+    let primary_symbol = settings
+        .symbols
+        .first()
+        .map(|s| s.as_str())
+        .unwrap_or("BTCUSDT");
+
+    // Create processor with state tracking enabled
+    let processor = PaperTradingProcessor::new(strategy, Arc::clone(&repository), initial_capital)
+        .with_coordinator(Arc::clone(&coordinator), primary_symbol)
+        .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
+
+    let paper_trading = Arc::new(tokio::sync::Mutex::new(processor));
+    let paper_trading_handle = Arc::clone(&paper_trading); // Keep handle for shutdown
 
     // Create market data service (cache only - no tick persistence, handled by data-manager)
     // Note: Tick validation happens at data-manager ingestion point, not here
@@ -223,37 +251,38 @@ async fn run_live_with_paper_trading() -> Result<(), Box<dyn std::error::Error>>
     );
     println!("{}", "=".repeat(80));
 
-    // Start service
-    run_live_application_with_service(service).await?;
-
-    info!("✅ Application stopped gracefully");
-    Ok(())
-}
-
-async fn run_live_application_with_service(
-    service: MarketDataService,
-) -> Result<(), Box<dyn std::error::Error>> {
+    // Start service with shutdown handling that terminates state lifecycle
     let service_shutdown_tx = service.get_shutdown_tx();
 
-    // Start signal forwarding task
+    // Signal forwarding task with state termination
     tokio::spawn(async move {
         signal::ctrl_c().await.expect("Failed to listen for ctrl-c");
-        println!("\nReceived Ctrl+C signal, forwarding to service...");
-        info!("Received Ctrl+C signal, forwarding to service");
+        println!("\nReceived Ctrl+C signal, shutting down...");
+        info!("Received Ctrl+C signal, initiating shutdown");
+
+        // Terminate strategy state lifecycle
+        {
+            let mut processor = paper_trading_handle.lock().await;
+            processor.shutdown();
+        }
+
+        // Forward shutdown to service
         let _ = service_shutdown_tx.send(());
     });
 
-    // Just wait for service to complete
+    // Wait for service to complete
     match service.start().await {
         Ok(()) => {
             info!("Service stopped successfully");
-            Ok(())
         }
         Err(e) => {
             error!("Service stopped with error: {}", e);
-            Err(Box::new(e))
+            return Err(Box::new(e));
         }
     }
+
+    info!("✅ Application stopped gracefully");
+    Ok(())
 }
 
 /// Real-time mode entry
@@ -510,9 +539,31 @@ async fn run_backtest_interactive(
 
     let strategy = create_strategy(&selected_strategy.id)?;
 
+    // Create shared state coordinator for lifecycle monitoring
+    let coordinator = Arc::new(trading_common::state::StateCoordinator::default());
+
+    // Subscribe to state changes for backtest monitoring
+    let mut state_rx = coordinator.subscribe();
+    let state_monitor = tokio::spawn(async move {
+        while let Ok(event) = state_rx.recv().await {
+            println!(
+                "📊 STATE: {} | {:?} → {:?}{}",
+                event.component_id,
+                event.old_state,
+                event.new_state,
+                event.reason.map(|r| format!(" | {}", r)).unwrap_or_default()
+            );
+        }
+    });
+
     println!("\n{}", "=".repeat(60));
-    let mut engine = BacktestEngine::new(strategy, config)?;
+    let mut engine = BacktestEngine::new(strategy, config)?
+        .with_coordinator(Arc::clone(&coordinator), &symbol)
+        .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
     let result = engine.run_unified(BacktestData::Ticks(data));
+
+    // Stop state monitor task
+    state_monitor.abort();
 
     // Show results
     println!("\n");

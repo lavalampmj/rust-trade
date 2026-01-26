@@ -828,6 +828,11 @@ pub struct BarMetadata {
     /// (rather than first tick arrival time)
     #[serde(default)]
     pub is_session_aligned: bool,
+    /// True if this bar is from historical data (backtest warmup),
+    /// false if this bar is realtime data (live trading).
+    /// Used to track strategy lifecycle state transitions.
+    #[serde(default)]
+    pub is_historical: bool,
 }
 
 /// Unified bar data structure for strategy processing
@@ -876,6 +881,7 @@ impl BarData {
                 generation_timestamp: Utc::now(),
                 is_session_truncated: false,
                 is_session_aligned: false,
+                is_historical: false,
             },
         }
     }
@@ -896,6 +902,7 @@ impl BarData {
                 generation_timestamp: Utc::now(),
                 is_session_truncated: false,
                 is_session_aligned: false,
+                is_historical: false,
             },
         }
     }
@@ -938,10 +945,12 @@ impl BarData {
                 generation_timestamp: Utc::now(),
                 is_session_truncated: false,
                 is_session_aligned: false,
+                is_historical: false,
             },
         }
     }
 
+    /// Create BarData with tick and OHLC state (primary constructor for realtime)
     /// Create BarData with tick and OHLC state (primary constructor for realtime)
     pub fn new(
         current_tick: Option<TickData>,
@@ -963,6 +972,34 @@ impl BarData {
                 generation_timestamp: Utc::now(),
                 is_session_truncated: false,
                 is_session_aligned: false,
+                is_historical: false,
+            },
+        }
+    }
+
+    /// Create BarData with historical flag (for backtest data)
+    pub fn new_historical(
+        current_tick: Option<TickData>,
+        ohlc_bar: OHLCData,
+        bar_type: BarType,
+        is_first_tick: bool,
+        is_closed: bool,
+        tick_count: u64,
+        is_historical: bool,
+    ) -> Self {
+        BarData {
+            current_tick,
+            ohlc_bar,
+            metadata: BarMetadata {
+                bar_type,
+                is_first_tick_of_bar: is_first_tick,
+                is_bar_closed: is_closed,
+                tick_count_in_bar: tick_count,
+                is_synthetic: false,
+                generation_timestamp: Utc::now(),
+                is_session_truncated: false,
+                is_session_aligned: false,
+                is_historical,
             },
         }
     }
@@ -992,8 +1029,44 @@ impl BarData {
                 generation_timestamp: Utc::now(),
                 is_session_truncated,
                 is_session_aligned,
+                is_historical: false,
             },
         }
+    }
+
+    /// Create BarData with full session-aware and historical metadata
+    pub fn new_session_aware_historical(
+        current_tick: Option<TickData>,
+        ohlc_bar: OHLCData,
+        bar_type: BarType,
+        is_first_tick: bool,
+        is_closed: bool,
+        tick_count: u64,
+        is_session_truncated: bool,
+        is_session_aligned: bool,
+        is_historical: bool,
+    ) -> Self {
+        BarData {
+            current_tick,
+            ohlc_bar,
+            metadata: BarMetadata {
+                bar_type,
+                is_first_tick_of_bar: is_first_tick,
+                is_bar_closed: is_closed,
+                tick_count_in_bar: tick_count,
+                is_synthetic: false,
+                generation_timestamp: Utc::now(),
+                is_session_truncated,
+                is_session_aligned,
+                is_historical,
+            },
+        }
+    }
+
+    /// Mark this bar data as historical
+    pub fn with_historical(mut self, is_historical: bool) -> Self {
+        self.metadata.is_historical = is_historical;
+        self
     }
 }
 

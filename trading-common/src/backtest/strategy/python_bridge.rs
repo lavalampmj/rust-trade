@@ -1734,6 +1734,7 @@ mod tests {
             generation_timestamp: Utc::now(),
             is_session_truncated: false,
             is_session_aligned: false,
+            is_historical: true,
         };
 
         BarData {

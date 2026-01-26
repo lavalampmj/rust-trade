@@ -11,11 +11,13 @@ use crate::orders::{
 };
 use crate::risk::FeeModel;
 use crate::series::bars_context::BarsContext;
+use crate::state::{ComponentId, ComponentState, StateCoordinator, StrategyStateTracker};
 // Note: OHLCData and TickData are still used via BacktestData enum
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::Arc;
 
 /// Input data for backtesting
 #[derive(Debug, Clone)]
@@ -65,6 +67,12 @@ pub struct BacktestEngine {
     contingent_manager: ContingentOrderManager,
     /// Track locked funds per order for proper balance management
     locked_amounts: HashMap<ClientOrderId, Decimal>,
+    /// State coordinator for lifecycle management
+    coordinator: Option<Arc<StateCoordinator>>,
+    /// Component ID for this strategy instance
+    strategy_component_id: Option<ComponentId>,
+    /// Track if warmup transition has occurred
+    warmup_transitioned: bool,
 }
 
 impl BacktestEngine {
@@ -88,7 +96,130 @@ impl BacktestEngine {
             exchange: None,
             contingent_manager: ContingentOrderManager::new(),
             locked_amounts: HashMap::new(),
+            coordinator: None,
+            strategy_component_id: None,
+            warmup_transitioned: false,
         })
+    }
+
+    /// Enable state lifecycle tracking for this backtest.
+    ///
+    /// When enabled, the engine will:
+    /// - Register the strategy with the state coordinator
+    /// - Transition through proper lifecycle states during backtest
+    /// - Notify the strategy via `on_state_change()` at each transition
+    ///
+    /// # Arguments
+    /// - `symbol`: The trading symbol for this backtest (e.g., "BTCUSDT")
+    ///
+    /// # Example
+    /// ```ignore
+    /// let engine = BacktestEngine::new(strategy, config)?
+    ///     .with_state_tracking("BTCUSDT")?;
+    /// ```
+    pub fn with_state_tracking(mut self, symbol: &str) -> Result<Self, String> {
+        let coordinator = Arc::new(StateCoordinator::default());
+
+        // Register strategy
+        let component_id = coordinator
+            .register_strategy(self.strategy.name(), symbol)
+            .map_err(|e| format!("Failed to register strategy: {}", e))?;
+
+        // Perform initial transitions: Undefined → SetDefaults → Configure
+        coordinator
+            .initialize_strategy(&component_id, self.strategy.as_mut())
+            .map_err(|e| format!("Failed to initialize strategy state: {}", e))?;
+
+        self.coordinator = Some(coordinator);
+        self.strategy_component_id = Some(component_id);
+        self.warmup_transitioned = false;
+
+        Ok(self)
+    }
+
+    /// Enable state lifecycle tracking with an existing coordinator.
+    ///
+    /// Use this when you want to share a coordinator across multiple engines
+    /// or when you need to track state externally.
+    pub fn with_coordinator(
+        mut self,
+        coordinator: Arc<StateCoordinator>,
+        symbol: &str,
+    ) -> Result<Self, String> {
+        // Register strategy
+        let component_id = coordinator
+            .register_strategy(self.strategy.name(), symbol)
+            .map_err(|e| format!("Failed to register strategy: {}", e))?;
+
+        // Perform initial transitions: Undefined → SetDefaults → Configure
+        coordinator
+            .initialize_strategy(&component_id, self.strategy.as_mut())
+            .map_err(|e| format!("Failed to initialize strategy state: {}", e))?;
+
+        self.coordinator = Some(coordinator);
+        self.strategy_component_id = Some(component_id);
+        self.warmup_transitioned = false;
+
+        Ok(self)
+    }
+
+    /// Get the state tracker for the strategy (if state tracking is enabled).
+    pub fn state_tracker(&self) -> Option<StrategyStateTracker> {
+        match (&self.coordinator, &self.strategy_component_id) {
+            (Some(coord), Some(id)) => coord.get_tracker(id),
+            _ => None,
+        }
+    }
+
+    /// Get the current state of the strategy (if state tracking is enabled).
+    pub fn strategy_state(&self) -> Option<ComponentState> {
+        match (&self.coordinator, &self.strategy_component_id) {
+            (Some(coord), Some(id)) => coord.get_state(id),
+            _ => None,
+        }
+    }
+
+    /// Helper to transition state and notify strategy.
+    fn transition_state(&mut self, target: ComponentState, reason: Option<String>) {
+        if let (Some(coord), Some(id)) = (&self.coordinator, &self.strategy_component_id) {
+            if let Err(e) = coord.transition_and_notify(id, self.strategy.as_mut(), target, reason)
+            {
+                // Log but don't fail - state tracking is best-effort
+                eprintln!("State transition warning: {}", e);
+            }
+        }
+    }
+
+    /// Helper to enter data processing state (Configure → DataLoaded → Historical).
+    fn enter_data_processing_state(&mut self) {
+        if let (Some(coord), Some(id)) = (&self.coordinator, &self.strategy_component_id) {
+            if let Err(e) = coord.enter_data_processing(id, self.strategy.as_mut()) {
+                eprintln!("State transition warning: {}", e);
+            }
+        }
+    }
+
+    /// Helper to handle warmup completion (Historical → Transition).
+    fn check_warmup_transition(&mut self) {
+        if self.warmup_transitioned {
+            return;
+        }
+
+        if self.strategy.is_ready(&self.bars_context) {
+            self.warmup_transitioned = true;
+            self.transition_state(
+                ComponentState::Transition,
+                Some("Warmup complete".to_string()),
+            );
+            // For backtest, we stay in Transition (not Realtime) since it's historical data
+        }
+    }
+
+    /// Helper to terminate the strategy.
+    fn terminate_state(&mut self, reason: Option<String>) {
+        if let (Some(coord), Some(id)) = (&self.coordinator, &self.strategy_component_id) {
+            let _ = coord.terminate_strategy(id, self.strategy.as_mut(), reason);
+        }
     }
 
     /// Add a simulated exchange for realistic order execution.
@@ -215,10 +346,19 @@ impl BacktestEngine {
         };
 
         println!("Generated {} bar events", bar_events.len());
+        if self.coordinator.is_some() {
+            println!("State tracking: enabled");
+        }
         println!("{}", "=".repeat(60));
 
         // Reset BarsContext for new run
         self.bars_context.reset();
+        self.warmup_transitioned = false;
+
+        // Transition to data processing state
+        if !bar_events.is_empty() {
+            self.enter_data_processing_state();
+        }
 
         // Process bar events
         let mut processed = 0;
@@ -241,6 +381,9 @@ impl BacktestEngine {
                 processed += 1;
                 continue;
             }
+
+            // Check for warmup completion transition
+            self.check_warmup_transition();
 
             // Get orders from strategy
             let orders = self.strategy.get_orders(&bar_data, &mut self.bars_context);
@@ -297,6 +440,9 @@ impl BacktestEngine {
         }
 
         println!("\n{}", "=".repeat(60));
+
+        // Terminate strategy state
+        self.terminate_state(Some("Backtest complete".to_string()));
 
         // Calculate and return results
         self.calculate_results()
@@ -374,15 +520,24 @@ impl BacktestEngine {
         };
 
         println!("Generated {} bar events", bar_events.len());
+        if self.coordinator.is_some() {
+            println!("State tracking: enabled");
+        }
         println!("{}", "=".repeat(60));
 
         // Reset state
         self.bars_context.reset();
+        self.warmup_transitioned = false;
         if let Some(exchange) = self.exchange.as_mut() {
             exchange.reset();
         }
         self.contingent_manager.clear();
         self.locked_amounts.clear();
+
+        // Transition to data processing state
+        if !bar_events.is_empty() {
+            self.enter_data_processing_state();
+        }
 
         // Process bar events
         let mut processed = 0;
@@ -428,6 +583,9 @@ impl BacktestEngine {
                 processed += 1;
                 continue;
             }
+
+            // Check for warmup completion transition
+            self.check_warmup_transition();
 
             // === Step 5: Submit new orders (with latency) ===
             let orders = self.strategy.get_orders(&bar_data, &mut self.bars_context);
@@ -523,6 +681,9 @@ impl BacktestEngine {
         }
 
         println!("\n{}", "=".repeat(60));
+
+        // Terminate strategy state
+        self.terminate_state(Some("Backtest complete".to_string()));
 
         self.calculate_results()
     }

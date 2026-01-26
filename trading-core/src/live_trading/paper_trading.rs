@@ -3,7 +3,7 @@ use chrono::Utc;
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::live_trading::RealtimeOHLCGenerator;
 use crate::metrics;
@@ -12,6 +12,7 @@ use trading_common::data::repository::TickDataRepository;
 use trading_common::data::types::{BarData, LiveStrategyLog, TickData};
 use trading_common::orders::{Order, OrderSide};
 use trading_common::series::bars_context::BarsContext;
+use trading_common::state::{ComponentId, ComponentState, StateCoordinator, StrategyStateTracker};
 
 pub struct PaperTradingProcessor {
     strategy: Box<dyn Strategy + Send>,
@@ -24,11 +25,17 @@ pub struct PaperTradingProcessor {
     // BarsContext for strategy access to historical series
     bars_context: BarsContext,
 
-    //Simple status tracking
+    // Simple status tracking
     pub(crate) cash: Decimal,
     pub(crate) position: Decimal,
     pub(crate) avg_cost: Decimal,
     pub(crate) total_trades: u64,
+
+    // State lifecycle management
+    coordinator: Option<Arc<StateCoordinator>>,
+    strategy_component_id: Option<ComponentId>,
+    first_tick_received: bool,
+    warmup_transitioned: bool,
 }
 
 impl PaperTradingProcessor {
@@ -76,6 +83,162 @@ impl PaperTradingProcessor {
             position: Decimal::ZERO,
             avg_cost: Decimal::ZERO,
             total_trades: 0,
+            coordinator: None,
+            strategy_component_id: None,
+            first_tick_received: false,
+            warmup_transitioned: false,
+        }
+    }
+
+    /// Enable state lifecycle tracking for this paper trading session.
+    ///
+    /// When enabled, the processor will:
+    /// - Register the strategy with the state coordinator
+    /// - Transition through proper lifecycle states during trading
+    /// - Notify the strategy via `on_state_change()` at each transition
+    /// - Transition to Realtime when warmup completes (unlike backtest)
+    ///
+    /// # Arguments
+    /// - `symbol`: The trading symbol for this session (e.g., "BTCUSDT")
+    ///
+    /// # Example
+    /// ```ignore
+    /// let processor = PaperTradingProcessor::new(strategy, repo, capital)
+    ///     .with_state_tracking("BTCUSDT")?;
+    /// ```
+    pub fn with_state_tracking(mut self, symbol: &str) -> Result<Self, String> {
+        let coordinator = Arc::new(StateCoordinator::default());
+
+        // Register strategy
+        let component_id = coordinator
+            .register_strategy(self.strategy.name(), symbol)
+            .map_err(|e| format!("Failed to register strategy: {}", e))?;
+
+        // Perform initial transitions: Undefined → SetDefaults → Configure
+        coordinator
+            .initialize_strategy(&component_id, self.strategy.as_mut())
+            .map_err(|e| format!("Failed to initialize strategy state: {}", e))?;
+
+        info!(
+            "Paper trading state tracking enabled for strategy {} ({})",
+            self.strategy.name(),
+            component_id
+        );
+
+        self.coordinator = Some(coordinator);
+        self.strategy_component_id = Some(component_id);
+        self.first_tick_received = false;
+        self.warmup_transitioned = false;
+
+        Ok(self)
+    }
+
+    /// Enable state lifecycle tracking with an existing coordinator.
+    ///
+    /// Use this when you want to share a coordinator across multiple processors
+    /// or when you need to track state externally.
+    pub fn with_coordinator(
+        mut self,
+        coordinator: Arc<StateCoordinator>,
+        symbol: &str,
+    ) -> Result<Self, String> {
+        // Register strategy
+        let component_id = coordinator
+            .register_strategy(self.strategy.name(), symbol)
+            .map_err(|e| format!("Failed to register strategy: {}", e))?;
+
+        // Perform initial transitions: Undefined → SetDefaults → Configure
+        coordinator
+            .initialize_strategy(&component_id, self.strategy.as_mut())
+            .map_err(|e| format!("Failed to initialize strategy state: {}", e))?;
+
+        self.coordinator = Some(coordinator);
+        self.strategy_component_id = Some(component_id);
+        self.first_tick_received = false;
+        self.warmup_transitioned = false;
+
+        Ok(self)
+    }
+
+    /// Get the state tracker for the strategy (if state tracking is enabled).
+    pub fn state_tracker(&self) -> Option<StrategyStateTracker> {
+        match (&self.coordinator, &self.strategy_component_id) {
+            (Some(coord), Some(id)) => coord.get_tracker(id),
+            _ => None,
+        }
+    }
+
+    /// Get the current state of the strategy (if state tracking is enabled).
+    pub fn strategy_state(&self) -> Option<ComponentState> {
+        match (&self.coordinator, &self.strategy_component_id) {
+            (Some(coord), Some(id)) => coord.get_state(id),
+            _ => None,
+        }
+    }
+
+    /// Check if strategy has entered realtime mode.
+    pub fn is_realtime(&self) -> bool {
+        self.strategy_state() == Some(ComponentState::Realtime)
+    }
+
+    /// Helper to transition state and notify strategy.
+    fn transition_state(&mut self, target: ComponentState, reason: Option<String>) {
+        if let (Some(coord), Some(id)) = (&self.coordinator, &self.strategy_component_id) {
+            if let Err(e) = coord.transition_and_notify(id, self.strategy.as_mut(), target, reason)
+            {
+                // Log but don't fail - state tracking is best-effort
+                eprintln!("State transition warning: {}", e);
+            }
+        }
+    }
+
+    /// Helper to handle first tick: Configure → DataLoaded → Historical
+    fn handle_first_tick(&mut self) {
+        if self.first_tick_received {
+            return;
+        }
+
+        self.first_tick_received = true;
+
+        if let (Some(coord), Some(id)) = (&self.coordinator, &self.strategy_component_id) {
+            if let Err(e) = coord.enter_data_processing(id, self.strategy.as_mut()) {
+                eprintln!("State transition warning: {}", e);
+            }
+        }
+    }
+
+    /// Helper to handle warmup completion: Historical → Transition → Realtime
+    fn check_warmup_transition(&mut self) {
+        if self.warmup_transitioned {
+            return;
+        }
+
+        if self.strategy.is_ready(&self.bars_context) {
+            self.warmup_transitioned = true;
+
+            if let (Some(coord), Some(id)) = (&self.coordinator, &self.strategy_component_id) {
+                // For live trading, we go all the way to Realtime
+                if let Err(e) = coord.enter_realtime(id, self.strategy.as_mut()) {
+                    eprintln!("State transition warning: {}", e);
+                } else {
+                    info!(
+                        "Strategy {} entering REALTIME mode",
+                        self.strategy.name()
+                    );
+                }
+            }
+        }
+    }
+
+    /// Terminate the strategy (call during shutdown).
+    pub fn shutdown(&mut self) {
+        if let (Some(coord), Some(id)) = (&self.coordinator, &self.strategy_component_id) {
+            let _ = coord.terminate_strategy(
+                id,
+                self.strategy.as_mut(),
+                Some("Paper trading shutdown".to_string()),
+            );
+            info!("Strategy {} terminated", self.strategy.name());
         }
     }
 
@@ -83,6 +246,9 @@ impl PaperTradingProcessor {
         // Start timer for paper trading tick processing
         let timer = metrics::PAPER_TICK_DURATION.start_timer();
         let start_time = Instant::now();
+
+        // Handle first tick state transition: Configure → DataLoaded → Historical
+        self.handle_first_tick();
 
         // 1. Get data from cache
         let cache_start = Instant::now();
@@ -123,6 +289,9 @@ impl PaperTradingProcessor {
             if !self.strategy.is_ready(&self.bars_context) {
                 continue;
             }
+
+            // Check for warmup completion transition to Realtime
+            self.check_warmup_transition();
 
             // Get orders from strategy
             let orders = self.strategy.get_orders(&bar_data, &mut self.bars_context);
@@ -219,6 +388,9 @@ impl PaperTradingProcessor {
             if !self.strategy.is_ready(&self.bars_context) {
                 continue;
             }
+
+            // Check for warmup completion transition to Realtime
+            self.check_warmup_transition();
 
             // Get orders from strategy
             let orders = self.strategy.get_orders(&bar_data, &mut self.bars_context);

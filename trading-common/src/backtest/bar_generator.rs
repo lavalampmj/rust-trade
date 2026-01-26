@@ -271,10 +271,15 @@ impl HistoricalOHLCGenerator {
             return Vec::new();
         }
 
-        match self.bar_type {
+        let bars = match self.bar_type {
             BarType::TimeBased(timeframe) => self.generate_time_based_bars(ticks, timeframe),
             BarType::TickBased(tick_count) => self.generate_tick_based_bars(ticks, tick_count),
-        }
+        };
+
+        // Mark all bars as historical since this is the HistoricalOHLCGenerator
+        bars.into_iter()
+            .map(|bar| bar.with_historical(true))
+            .collect()
     }
 
     /// Generate time-based bars from ticks
