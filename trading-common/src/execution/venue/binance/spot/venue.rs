@@ -460,4 +460,73 @@ mod tests {
         assert!(!venue.is_stream_active());
         assert_eq!(venue.connection_status(), VenueConnectionStatus::Disconnected);
     }
+
+    #[test]
+    fn test_venue_info_capabilities() {
+        let config = BinanceVenueConfig::spot_us();
+        let venue = BinanceSpotVenue::new(config).unwrap();
+        let info = venue.info();
+
+        // Check supported order types
+        assert!(info.supported_order_types.contains(&OrderType::Market));
+        assert!(info.supported_order_types.contains(&OrderType::Limit));
+        assert!(info.supported_order_types.contains(&OrderType::StopLimit));
+
+        // Check supported time-in-force
+        assert!(info.supported_tif.contains(&TimeInForce::GTC));
+        assert!(info.supported_tif.contains(&TimeInForce::IOC));
+        assert!(info.supported_tif.contains(&TimeInForce::FOK));
+
+        // Check capabilities
+        assert!(info.supports_stop_orders);
+        assert!(info.max_orders_per_batch > 0);
+    }
+
+    #[test]
+    fn test_venue_info_name() {
+        let config = BinanceVenueConfig::spot_com();
+        let venue = BinanceSpotVenue::new(config).unwrap();
+
+        assert_eq!(venue.info().name, "BINANCE");
+        assert!(venue.info().venue_id.contains("binance"));
+    }
+
+    #[test]
+    fn test_different_platforms() {
+        // Test Binance.com
+        let com_config = BinanceVenueConfig::spot_com();
+        let com_venue = BinanceSpotVenue::new(com_config).unwrap();
+        assert!(com_venue.endpoints.rest_url.contains("api.binance.com"));
+
+        // Test Binance.US
+        let us_config = BinanceVenueConfig::spot_us();
+        let us_venue = BinanceSpotVenue::new(us_config).unwrap();
+        assert!(us_venue.endpoints.rest_url.contains("api.binance.us"));
+    }
+
+    #[test]
+    fn test_config_with_custom_env_vars() {
+        let mut config = BinanceVenueConfig::spot_us();
+        config.base.auth.api_key_env = "CUSTOM_API_KEY".to_string();
+        config.base.auth.api_secret_env = "CUSTOM_API_SECRET".to_string();
+
+        let venue = BinanceSpotVenue::new(config).unwrap();
+        // Venue should be created even if env vars don't exist
+        // (credentials are read at connect time)
+        assert!(!venue.is_connected());
+    }
+
+    #[test]
+    fn test_connection_status_transitions() {
+        let config = BinanceVenueConfig::spot_us();
+        let venue = BinanceSpotVenue::new(config).unwrap();
+
+        // Initial state
+        assert_eq!(venue.connection_status(), VenueConnectionStatus::Disconnected);
+
+        // Note: Can't test actual connection without mocking HTTP
+        // But we can verify the state machine is properly initialized
+        assert!(!venue.connected.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(!venue.stream_active.load(std::sync::atomic::Ordering::SeqCst));
+    }
 }

@@ -585,4 +585,62 @@ mod tests {
         assert!(!venue.is_connected());
         assert!(!venue.is_stream_active());
     }
+
+    #[test]
+    fn test_venue_info_capabilities() {
+        let config = BinanceVenueConfig::usdt_futures();
+        let venue = BinanceFuturesVenue::new(config).unwrap();
+        let info = venue.info();
+
+        // Check supported order types
+        assert!(info.supported_order_types.contains(&OrderType::Market));
+        assert!(info.supported_order_types.contains(&OrderType::Limit));
+        assert!(info.supported_order_types.contains(&OrderType::StopLimit));
+        assert!(info.supported_order_types.contains(&OrderType::TrailingStop));
+
+        // Check supported time-in-force
+        assert!(info.supported_tif.contains(&TimeInForce::GTC));
+        assert!(info.supported_tif.contains(&TimeInForce::IOC));
+        assert!(info.supported_tif.contains(&TimeInForce::FOK));
+
+        // Check futures-specific capabilities
+        assert!(info.supports_stop_orders);
+        assert!(info.supports_trailing_stop);
+        assert!(info.max_orders_per_batch > 0);
+    }
+
+    #[test]
+    fn test_venue_name() {
+        let config = BinanceVenueConfig::usdt_futures();
+        let venue = BinanceFuturesVenue::new(config).unwrap();
+
+        assert_eq!(venue.info().name, "BINANCE_FUTURES");
+        assert!(venue.info().display_name.contains("Futures"));
+    }
+
+    #[test]
+    fn test_futures_endpoints() {
+        let config = BinanceVenueConfig::usdt_futures();
+        let venue = BinanceFuturesVenue::new(config).unwrap();
+
+        assert!(venue.endpoints.rest_url.contains("fapi.binance.com"));
+        assert!(venue.endpoints.ws_url.contains("fstream.binance.com"));
+    }
+
+    #[test]
+    fn test_futures_testnet_endpoints() {
+        let config = BinanceVenueConfig::usdt_futures().with_testnet(true);
+        let venue = BinanceFuturesVenue::new(config).unwrap();
+
+        assert!(venue.endpoints.rest_url.contains("testnet.binancefuture.com"));
+    }
+
+    #[test]
+    fn test_connection_status() {
+        let config = BinanceVenueConfig::usdt_futures();
+        let venue = BinanceFuturesVenue::new(config).unwrap();
+
+        assert_eq!(venue.connection_status(), VenueConnectionStatus::Disconnected);
+        assert!(!venue.connected.load(std::sync::atomic::Ordering::SeqCst));
+    }
 }

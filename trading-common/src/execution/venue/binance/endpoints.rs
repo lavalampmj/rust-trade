@@ -73,9 +73,18 @@ impl BinanceEndpoints {
         }
     }
 
-    /// Binance.US Spot testnet endpoints (uses same as .com testnet).
+    /// Binance.US Spot testnet endpoints.
+    ///
+    /// **IMPORTANT**: Binance.US does NOT offer its own testnet/sandbox environment.
+    /// For testing Binance.US integrations, use the Binance.com Spot testnet instead:
+    /// - URL: <https://testnet.binance.vision>
+    /// - Documentation: <https://testnet.binance.vision/>
+    ///
+    /// Note that Binance.US has slightly different available symbols and rate limits
+    /// compared to Binance.com, so production behavior may differ from testnet.
+    /// Consider testing with small real orders on Binance.US for final validation.
     pub fn spot_us_testnet() -> Self {
-        // Binance.US doesn't have its own testnet, use .com testnet
+        // Binance.US doesn't have its own testnet - use .com testnet for testing
         Self::spot_com_testnet()
     }
 
