@@ -60,6 +60,7 @@ mod types;
 pub mod binance;
 pub mod http;
 pub mod kraken;
+pub mod router;
 pub mod websocket;
 
 // Re-export core types
