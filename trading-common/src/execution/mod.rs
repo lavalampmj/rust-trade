@@ -113,6 +113,7 @@ mod inflight_queue;
 mod latency_model;
 pub mod matching;
 mod simulated_exchange;
+pub mod venue;
 
 pub use config::{
     ContingentTomlConfig, ExchangeTomlConfig, FeeTomlConfig, FillModelTomlConfig,
