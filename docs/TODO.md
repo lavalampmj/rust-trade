@@ -41,9 +41,10 @@
 ### Data Management
 - [x] Open of Session for first bar, have OHLC realtime-timer loop set from open session time - **COMPLETE** (`RealtimeOHLCGenerator` with `SessionAwareConfig`, session open alignment)
 - [x] Close of Session for cutting last bar short - **COMPLETE** (`RealtimeOHLCGenerator` with session close truncation, `is_session_truncated` flag)
-- [ ] Database-side OHLC aggregation using TimescaleDB - **📋 See implementation plan**: [timescale-ohlc-aggregates.md](./timescale-ohlc-aggregates.md)
-  - UTC-aligned 1-minute continuous aggregates
-  - Session-aware queries handled in application code
+- [x] Database-side OHLC aggregation using TimescaleDB - **COMPLETE** (2026-01-25) - [timescale-ohlc-aggregates.md](./timescale-ohlc-aggregates.md)
+  - UTC-aligned 1-minute continuous aggregates (TimescaleDB `CREATE MATERIALIZED VIEW`)
+  - Session-aware queries handled in application code (`OhlcQueryHelper::get_session_ohlc_bars()`)
+  - CLI commands: `db aggregate create/refresh/stats/drop`
 - [ ] OHLC cache strategy (if using on-the-fly)
 - [ ] Historical OHLC backfill process
 - [ ] Create N Volume OHLC
@@ -163,6 +164,29 @@
 ---
 
 ## ✅ Recently Completed
+
+### TimescaleDB OHLC Continuous Aggregates (2026-01-25)
+- [x] **Database Infrastructure** (`data-manager/src/storage/timescale.rs`):
+  - `create_ohlc_aggregate(timeframe)`: Creates TimescaleDB continuous aggregate for 1m, 5m, 15m, 1h, 4h, 1d
+  - `add_aggregate_refresh_policy()`: Automatic refresh scheduling with configurable offsets
+  - `remove_aggregate_refresh_policy()`: Remove refresh policy from aggregate
+  - `get_aggregate_info()`: Query aggregate metadata (chunks, refresh settings)
+  - `drop_aggregate()`: Safely drop continuous aggregate
+  - `AggregateInfo` struct for aggregate metadata
+- [x] **Session-Aware Query Helpers** (`data-manager/src/storage/ohlc.rs`):
+  - `OhlcBar` struct: bucket, symbol, exchange, OHLC, volume, trade_count
+  - `OhlcQueryHelper::get_ohlc_bars()`: UTC time-range queries
+  - `OhlcQueryHelper::get_session_ohlc_bars()`: Session-aware queries with timezone conversion
+  - `OhlcQueryHelper::get_latest_bar()`: Latest bar for symbol
+  - `OhlcQueryHelper::get_aggregate_stats()`: Statistics per symbol
+  - `calculate_session_bounds()`: Converts local session times to UTC
+  - `is_overnight_session()`: Detects CME-style overnight sessions
+- [x] **CLI Commands** (`data-manager/src/cli/db.rs`):
+  - `db aggregate create --timeframe 1m --with-refresh`: Create continuous aggregate
+  - `db aggregate refresh --view ohlc_1m --start 2024-01-01 --end 2024-01-31`: Manual refresh
+  - `db aggregate stats --view ohlc_1m --symbol BTCUSDT`: Show aggregate statistics
+  - `db aggregate drop --view ohlc_1m --force`: Drop aggregate
+- [x] **Test Coverage**: 2 new tests (is_overnight_session, calculate_session_bounds_cme)
 
 ### Component State Lifecycle & Multi-Strategy Backtesting (2026-01-25)
 - [x] **StateCoordinator for Multi-Strategy Management**:
@@ -526,8 +550,8 @@
    - Build Configuration UI components (Phase 2 of ui-configuration-plan.md)
 
 2. **Next Week**:
-   - Implement TimescaleDB OHLC aggregation (see timescale-ohlc-aggregates.md)
-   - Add session-aligned aggregation queries
+   - OHLC cache strategy (if using on-the-fly OHLC generation)
+   - Historical OHLC backfill process
    - Complete monitoring stack (Grafana dashboards)
 
 3. **This Month**:

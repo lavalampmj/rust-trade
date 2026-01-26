@@ -300,6 +300,114 @@ impl TimescaleOperations {
         sqlx::query(&query).execute(&self.pool).await?;
         Ok(())
     }
+
+    /// Add a refresh policy to a continuous aggregate
+    ///
+    /// This schedules automatic refreshes of the aggregate:
+    /// - `start_offset`: How far back from real-time to start refreshing (e.g., "1 hour")
+    /// - `end_offset`: How far back from real-time to stop refreshing (e.g., "1 minute")
+    /// - `schedule_interval`: How often to run the refresh (e.g., "1 minute")
+    pub async fn add_aggregate_refresh_policy(
+        &self,
+        view_name: &str,
+        start_offset: &str,
+        end_offset: &str,
+        schedule_interval: &str,
+    ) -> RepositoryResult<()> {
+        info!(
+            "Adding refresh policy to {}: start_offset={}, end_offset={}, schedule={}",
+            view_name, start_offset, end_offset, schedule_interval
+        );
+
+        let query = format!(
+            r#"
+            SELECT add_continuous_aggregate_policy(
+                '{}',
+                start_offset => INTERVAL '{}',
+                end_offset => INTERVAL '{}',
+                schedule_interval => INTERVAL '{}',
+                if_not_exists => TRUE
+            )
+            "#,
+            view_name, start_offset, end_offset, schedule_interval
+        );
+
+        sqlx::query(&query).execute(&self.pool).await?;
+        info!("Added refresh policy for {}", view_name);
+        Ok(())
+    }
+
+    /// Remove a refresh policy from a continuous aggregate
+    pub async fn remove_aggregate_refresh_policy(&self, view_name: &str) -> RepositoryResult<()> {
+        info!("Removing refresh policy from {}...", view_name);
+
+        let query = format!(
+            r#"SELECT remove_continuous_aggregate_policy('{}', if_exists => TRUE)"#,
+            view_name
+        );
+
+        sqlx::query(&query).execute(&self.pool).await?;
+        info!("Removed refresh policy from {}", view_name);
+        Ok(())
+    }
+
+    /// Get information about continuous aggregates
+    pub async fn get_aggregate_info(&self) -> RepositoryResult<Vec<AggregateInfo>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                cav.view_name::TEXT as view_name,
+                cav.view_owner::TEXT as view_owner,
+                cap.refresh_interval::TEXT as refresh_interval,
+                cap.refresh_start_offset::TEXT as start_offset,
+                cap.refresh_end_offset::TEXT as end_offset,
+                (SELECT COUNT(*) FROM timescaledb_information.chunks
+                 WHERE hypertable_name = cav.materialization_hypertable_name)::BIGINT as chunk_count
+            FROM timescaledb_information.continuous_aggregates cav
+            LEFT JOIN timescaledb_information.jobs j
+                ON j.hypertable_name = cav.materialization_hypertable_name
+            LEFT JOIN timescaledb_information.job_stats js ON js.job_id = j.job_id
+            LEFT JOIN LATERAL (
+                SELECT
+                    j2.schedule_interval as refresh_interval,
+                    j2.config->>'start_offset' as refresh_start_offset,
+                    j2.config->>'end_offset' as refresh_end_offset
+                FROM timescaledb_information.jobs j2
+                WHERE j2.proc_name = 'policy_refresh_continuous_aggregate'
+                  AND j2.hypertable_name = cav.materialization_hypertable_name
+                LIMIT 1
+            ) cap ON TRUE
+            WHERE cav.view_schema = 'public'
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut aggregates = Vec::new();
+        for row in rows {
+            aggregates.push(AggregateInfo {
+                view_name: row.get("view_name"),
+                view_owner: row.get("view_owner"),
+                refresh_interval: row.get("refresh_interval"),
+                start_offset: row.get("start_offset"),
+                end_offset: row.get("end_offset"),
+                chunk_count: row.get::<Option<i64>, _>("chunk_count").unwrap_or(0) as u64,
+            });
+        }
+
+        Ok(aggregates)
+    }
+
+    /// Drop a continuous aggregate
+    pub async fn drop_aggregate(&self, view_name: &str) -> RepositoryResult<()> {
+        info!("Dropping continuous aggregate {}...", view_name);
+
+        let query = format!("DROP MATERIALIZED VIEW IF EXISTS {} CASCADE", view_name);
+        sqlx::query(&query).execute(&self.pool).await?;
+
+        info!("Dropped continuous aggregate {}", view_name);
+        Ok(())
+    }
 }
 
 /// Compression statistics
@@ -309,6 +417,17 @@ pub struct CompressionStats {
     pub uncompressed_chunks: u64,
     pub compressed_size: String,
     pub uncompressed_size: String,
+}
+
+/// Continuous aggregate information
+#[derive(Debug, Clone)]
+pub struct AggregateInfo {
+    pub view_name: String,
+    pub view_owner: String,
+    pub refresh_interval: Option<String>,
+    pub start_offset: Option<String>,
+    pub end_offset: Option<String>,
+    pub chunk_count: u64,
 }
 
 /// SQL migration script
