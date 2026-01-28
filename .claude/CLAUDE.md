@@ -205,7 +205,8 @@ Venue Response      →  Normalizer        →  Internal (DBT)
 - `data-manager/src/provider/kraken/symbol.rs` - Kraken spot/futures conversion
 - `data-manager/src/provider/binance/symbol.rs` - Binance conversion
 - `data-manager/src/provider/databento/` - Native DBT (no conversion needed)
-- `data-manager/src/provider/traits.rs` - `SymbolNormalizer` trait (enforces conversion)
+- `data-manager/src/provider/traits.rs` - `SymbolNormalizer` trait for data providers
+- `trading-common/src/venue/symbology.rs` - Unified `SymbolNormalizer` for execution venues
 
 #### Instrument ID Registry
 
@@ -624,6 +625,145 @@ trading-core                    data-manager
 - `--ipc-symbols BTCUSD,ETHUSD`: Subset of symbols to stream via IPC (default: all)
 - `--instance-id my-instance`: Custom instance identifier (default: auto-generated)
 
+#### 10. Unified Venue Infrastructure (trading-common/src/venue/)
+
+**Pattern**: Shared base traits and infrastructure for both data ingestion and order execution
+
+The `venue` module consolidates connection lifecycle, symbol normalization, error handling, and HTTP/WebSocket infrastructure that was previously duplicated between data providers and execution venues.
+
+**Module Structure**:
+```
+trading-common/src/venue/
+├── mod.rs              # Public exports
+├── connection.rs       # VenueConnection trait, ConnectionStatus
+├── symbology.rs        # SymbolNormalizer trait, NativeDbVenue marker
+├── error.rs            # VenueError with error classification
+├── config.rs           # VenueConfig, RestConfig, StreamConfig, AuthConfig
+├── types.rs            # VenueInfo, VenueCapabilities
+├── data/               # Data plane traits (future: DataStreamVenue)
+├── execution/          # Execution plane traits (future: OrderSubmissionVenue)
+├── http/               # HTTP client with rate limiting and request signing
+│   ├── client.rs       # HttpClient with automatic retries
+│   ├── rate_limiter.rs # Multi-bucket rate limiter (governor crate)
+│   └── signer.rs       # RequestSigner trait for venue-specific auth
+└── websocket/          # WebSocket client with reconnection
+    └── client.rs       # WebSocketClient with exponential backoff
+```
+
+**VenueConnection Base Trait**:
+
+All venues (data or execution) implement this shared interface:
+
+```rust
+#[async_trait]
+pub trait VenueConnection: Send + Sync {
+    fn info(&self) -> &VenueInfo;
+    async fn connect(&mut self) -> VenueResult<()>;
+    async fn disconnect(&mut self) -> VenueResult<()>;
+    fn is_connected(&self) -> bool;
+    fn connection_status(&self) -> ConnectionStatus;
+}
+```
+
+**ConnectionStatus**:
+- `Disconnected` - Not connected
+- `Connecting` - Connection in progress
+- `Connected` - Ready for operations
+- `Reconnecting` - Temporarily disconnected, auto-reconnecting
+- `Error` - Connection failed (check logs)
+
+**Unified SymbolNormalizer**:
+
+Located in `trading-common/src/venue/symbology.rs`, provides DBT canonical symbol conversion:
+
+```rust
+pub trait SymbolNormalizer: Send + Sync {
+    fn to_canonical(&self, venue_symbol: &str) -> VenueResult<String>;
+    fn to_venue(&self, canonical_symbol: &str) -> VenueResult<String>;
+    fn venue_id(&self) -> &str;
+    fn register_symbols(&self, symbols: &[String], registry: &InstrumentRegistry)
+        -> VenueResult<HashMap<String, u32>>;
+    fn is_native_dbt(&self) -> bool { false }
+}
+
+// Marker for DBT-native venues (auto-implements SymbolNormalizer with no-op)
+pub trait NativeDbVenue: Send + Sync {
+    fn venue_id(&self) -> &str;
+}
+```
+
+**Error Classification** (VenueError):
+
+Errors are classified for retry logic:
+- **Transient**: Network timeouts, rate limits (auto-retry with backoff)
+- **Permanent**: Authentication failures, invalid orders (do not retry)
+- **ResourceExhausted**: Rate limits, insufficient balance (wait and retry)
+
+```rust
+pub enum VenueError {
+    Connection(String),      // Transient
+    Authentication(String),  // Permanent
+    RateLimit(String),       // ResourceExhausted
+    OrderRejected(String),   // Permanent
+    InsufficientBalance(String), // ResourceExhausted
+    // ... other variants
+}
+
+impl VenueError {
+    pub fn is_transient(&self) -> bool;
+    pub fn is_retryable(&self) -> bool;
+    pub fn suggested_retry_delay(&self) -> Option<Duration>;
+}
+```
+
+**HTTP Infrastructure** (`venue/http/`):
+
+- `HttpClient`: Authenticated HTTP client with automatic rate limiting
+- `RequestSigner`: Trait for venue-specific HMAC/signature generation
+- `RateLimiter`: Multi-bucket rate limiter using governor crate
+
+```rust
+// Example: Creating authenticated client
+let signer = BinanceSigner::new(api_key, api_secret);
+let client = HttpClient::new(config, Arc::new(signer))?;
+let response = client.get("/api/v3/account").await?;
+```
+
+**WebSocket Infrastructure** (`venue/websocket/`):
+
+- `WebSocketClient`: Reconnecting WebSocket with exponential backoff
+- Ping/pong keepalive handling
+- Graceful shutdown via broadcast channel
+
+```rust
+let client = WebSocketClientBuilder::new("wss://stream.example.com/ws")
+    .max_reconnect_attempts(10)
+    .reconnect_initial_delay(Duration::from_secs(1))
+    .ping_interval(Duration::from_secs(30))
+    .build();
+
+client.run(callback, shutdown_rx).await?;
+```
+
+**Backward Compatibility**:
+
+The `execution/venue/` module re-exports from `venue/` for existing code:
+
+```rust
+// Old path (still works)
+use trading_common::execution::venue::{VenueError, VenueConfig};
+
+// New canonical path (preferred)
+use trading_common::venue::{VenueError, VenueConfig};
+```
+
+**Key files**:
+- `trading-common/src/venue/mod.rs` - Central exports
+- `trading-common/src/venue/connection.rs` - VenueConnection trait
+- `trading-common/src/venue/symbology.rs` - SymbolNormalizer trait
+- `trading-common/src/venue/error.rs` - VenueError with classification
+- `trading-common/src/execution/venue/mod.rs` - Backward-compatible re-exports
+
 ## Configuration System
 
 ### Environment Variables
@@ -904,6 +1044,8 @@ pub trait NativeDbProvider: Send + Sync {
 // Auto-implements SymbolNormalizer with no-op conversions
 ```
 
+**Note**: A unified `SymbolNormalizer` trait also exists in `trading-common/src/venue/symbology.rs` for execution venues. The data-manager version uses `ProviderError` while the trading-common version uses `VenueError`. Error conversion is provided via `From<VenueError> for ProviderError`.
+
 **Current implementations**:
 
 | Provider | Trait | Conversions |
@@ -914,10 +1056,11 @@ pub trait NativeDbProvider: Send + Sync {
 | Databento | `NativeDbProvider` | No conversion needed |
 
 **Key files**:
-- `data-manager/src/provider/traits.rs` - Trait definitions
+- `data-manager/src/provider/traits.rs` - Data provider trait definitions
 - `data-manager/src/provider/binance/normalizer.rs` - Binance implementation
 - `data-manager/src/provider/kraken/normalizer.rs` - Kraken implementation
 - `data-manager/src/instruments/registry.rs` - InstrumentRegistry for persistent IDs
+- `trading-common/src/venue/symbology.rs` - Unified SymbolNormalizer for execution venues
 
 ### Adding a New Trading Strategy
 
