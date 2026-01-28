@@ -3,6 +3,12 @@
 //! Converts Kraken-specific message formats to TickData, QuoteTick, OrderBook,
 //! and DBN-native types (TradeMsg, BboMsg) for both Spot and Futures markets.
 //!
+//! # Instrument ID Assignment
+//!
+//! When an `InstrumentRegistry` is provided, the normalizer uses persistent
+//! instrument_ids from the database. Call `register_symbols()` before processing
+//! to pre-cache the IDs for all subscribed symbols.
+//!
 //! # DBN-Native Methods
 //!
 //! This normalizer provides DBN-native output methods that produce `dbn::TradeMsg`
@@ -14,8 +20,12 @@
 //! - `normalize_futures_ticker_to_dbn()` - Futures ticker → BboMsg
 
 use chrono::{DateTime, Utc};
+use dashmap::DashMap;
 use rust_decimal::Decimal;
+use std::collections::HashMap;
+use std::sync::Arc;
 
+use crate::instruments::InstrumentRegistry;
 use crate::provider::ProviderError;
 use trading_common::data::orderbook::{BookAction, BookSide, OrderBook, OrderBookDelta};
 use trading_common::data::quotes::QuoteTick;
@@ -24,7 +34,7 @@ use trading_common::data::SequenceGenerator;
 
 // DBN types for native output
 use trading_common::data::{
-    create_bbo_msg_from_decimals, create_trade_msg_from_decimals, datetime_to_nanos, BboMsg,
+    create_bbo_msg_from_decimals, create_trade_msg_with_instrument_id, datetime_to_nanos, BboMsg,
     TradeMsg, TradeSideCompat,
 };
 
@@ -38,6 +48,15 @@ use super::types::{
 pub struct KrakenNormalizer {
     /// Sequence counter for ordering
     sequence: SequenceGenerator,
+
+    /// Whether this is a futures normalizer
+    is_futures: bool,
+
+    /// Cached instrument_id mappings: canonical_symbol -> instrument_id
+    instrument_ids: DashMap<String, u32>,
+
+    /// Optional registry reference for on-demand lookups
+    registry: Option<Arc<InstrumentRegistry>>,
 }
 
 impl KrakenNormalizer {
@@ -45,6 +64,9 @@ impl KrakenNormalizer {
     pub fn spot() -> Self {
         Self {
             sequence: SequenceGenerator::new(),
+            is_futures: false,
+            instrument_ids: DashMap::new(),
+            registry: None,
         }
     }
 
@@ -52,7 +74,107 @@ impl KrakenNormalizer {
     pub fn futures() -> Self {
         Self {
             sequence: SequenceGenerator::new(),
+            is_futures: true,
+            instrument_ids: DashMap::new(),
+            registry: None,
         }
+    }
+
+    /// Create a new Spot normalizer with an instrument registry
+    pub fn spot_with_registry(registry: Arc<InstrumentRegistry>) -> Self {
+        Self {
+            sequence: SequenceGenerator::new(),
+            is_futures: false,
+            instrument_ids: DashMap::new(),
+            registry: Some(registry),
+        }
+    }
+
+    /// Create a new Futures normalizer with an instrument registry
+    pub fn futures_with_registry(registry: Arc<InstrumentRegistry>) -> Self {
+        Self {
+            sequence: SequenceGenerator::new(),
+            is_futures: true,
+            instrument_ids: DashMap::new(),
+            registry: Some(registry),
+        }
+    }
+
+    /// Set the instrument registry
+    pub fn set_registry(&mut self, registry: Arc<InstrumentRegistry>) {
+        self.registry = Some(registry);
+    }
+
+    /// Get the exchange name for this normalizer
+    fn exchange_name(&self) -> &'static str {
+        get_exchange_name(self.is_futures)
+    }
+
+    /// Pre-register symbols with the registry and cache their IDs
+    ///
+    /// Call this before processing messages to ensure all instrument_ids
+    /// are cached for fast synchronous lookup during normalization.
+    ///
+    /// # Arguments
+    /// * `symbols` - Kraken symbols to register (Spot: "BTC/USD", Futures: "PI_XBTUSD")
+    ///
+    /// # Returns
+    /// Map of canonical symbol to instrument_id
+    pub async fn register_symbols(
+        &self,
+        symbols: &[String],
+    ) -> Result<HashMap<String, u32>, ProviderError> {
+        let registry = self.registry.as_ref().ok_or_else(|| {
+            ProviderError::Configuration("No instrument registry configured".to_string())
+        })?;
+
+        let exchange = self.exchange_name();
+        let mut result = HashMap::new();
+
+        for symbol in symbols {
+            // Convert to canonical format
+            let canonical = to_canonical(symbol)?;
+
+            // Get or create instrument_id from registry
+            let id = registry
+                .get_or_create(&canonical, exchange)
+                .await
+                .map_err(|e| ProviderError::Internal(format!("Registry error: {}", e)))?;
+
+            // Cache for fast lookup
+            self.instrument_ids.insert(canonical.clone(), id);
+            result.insert(canonical, id);
+        }
+
+        Ok(result)
+    }
+
+    /// Get cached instrument_id for a canonical symbol
+    ///
+    /// Falls back to hash-based ID if not in cache
+    fn get_instrument_id(&self, canonical_symbol: &str) -> u32 {
+        if let Some(id) = self.instrument_ids.get(canonical_symbol) {
+            return *id;
+        }
+
+        // Fallback: generate hash-based ID (for backward compatibility)
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        canonical_symbol.hash(&mut hasher);
+        self.exchange_name().hash(&mut hasher);
+        (hasher.finish() >> 32) as u32
+    }
+
+    /// Check if registry is configured
+    pub fn has_registry(&self) -> bool {
+        self.registry.is_some()
+    }
+
+    /// Get the number of cached instrument IDs
+    pub fn cached_instruments(&self) -> usize {
+        self.instrument_ids.len()
     }
 
     /// Normalize a Kraken Spot trade to TickData
@@ -284,6 +406,8 @@ impl KrakenNormalizer {
     ///
     /// This produces a native `dbn::TradeMsg` without intermediate TickData conversion,
     /// which is more efficient for DBN-native pipelines.
+    ///
+    /// Uses persistent instrument_id from InstrumentRegistry if available.
     pub fn normalize_spot_to_dbn(&self, trade: KrakenSpotTrade) -> Result<TradeMsg, ProviderError> {
         // Parse timestamp (RFC3339 format)
         let ts_event = DateTime::parse_from_rfc3339(&trade.timestamp)
@@ -318,7 +442,9 @@ impl KrakenNormalizer {
 
         // Convert symbol to canonical format
         let canonical_symbol = to_canonical(&trade.symbol)?;
-        let exchange = get_exchange_name(false);
+
+        // Get instrument_id (cached or hash-based fallback)
+        let instrument_id = self.get_instrument_id(&canonical_symbol);
 
         // Get next sequence number
         let sequence = self.sequence.next();
@@ -326,11 +452,10 @@ impl KrakenNormalizer {
         let ts_nanos = datetime_to_nanos(ts_event);
         let ts_recv_nanos = datetime_to_nanos(Utc::now());
 
-        Ok(create_trade_msg_from_decimals(
+        Ok(create_trade_msg_with_instrument_id(
             ts_nanos,
             ts_recv_nanos,
-            &canonical_symbol,
-            exchange,
+            instrument_id,
             price,
             quantity,
             side,
@@ -341,6 +466,8 @@ impl KrakenNormalizer {
     /// Normalize a Kraken Futures trade to DBN TradeMsg
     ///
     /// This produces a native `dbn::TradeMsg` without intermediate TickData conversion.
+    ///
+    /// Uses persistent instrument_id from InstrumentRegistry if available.
     pub fn normalize_futures_to_dbn(
         &self,
         trade: KrakenFuturesTradeMessage,
@@ -373,16 +500,17 @@ impl KrakenNormalizer {
 
         // Convert symbol to canonical format
         let canonical_symbol = to_canonical(&trade.product_id)?;
-        let exchange = get_exchange_name(true);
+
+        // Get instrument_id (cached or hash-based fallback)
+        let instrument_id = self.get_instrument_id(&canonical_symbol);
 
         let ts_nanos = datetime_to_nanos(ts_event);
         let ts_recv_nanos = datetime_to_nanos(Utc::now());
 
-        Ok(create_trade_msg_from_decimals(
+        Ok(create_trade_msg_with_instrument_id(
             ts_nanos,
             ts_recv_nanos,
-            &canonical_symbol,
-            exchange,
+            instrument_id,
             price,
             quantity,
             side,

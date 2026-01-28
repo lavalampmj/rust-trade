@@ -214,7 +214,8 @@ pub fn create_trade_msg(
 
 /// Create a TradeMsg from Decimal price and size values
 ///
-/// Convenience function that handles the fixed-point conversion
+/// Convenience function that handles the fixed-point conversion.
+/// Uses hash-based instrument_id generation from symbol and exchange.
 #[allow(clippy::too_many_arguments)]
 pub fn create_trade_msg_from_decimals(
     ts_event_nanos: u64,
@@ -228,6 +229,44 @@ pub fn create_trade_msg_from_decimals(
 ) -> TradeMsg {
     let instrument_id = symbol_to_instrument_id(symbol, exchange);
 
+    // Convert size to u32 (assuming reasonable trade sizes)
+    let size_u32 = size.round().to_string().parse::<u32>().unwrap_or(0);
+
+    create_trade_msg(
+        ts_event_nanos,
+        ts_recv_nanos,
+        instrument_id,
+        price,
+        size_u32,
+        side,
+        sequence,
+        CUSTOM_PUBLISHER_ID,
+    )
+}
+
+/// Create a TradeMsg with an explicit instrument_id
+///
+/// Use this when you have a persistent instrument_id from InstrumentRegistry
+/// rather than generating a hash-based ID.
+///
+/// # Arguments
+/// * `ts_event_nanos` - Event timestamp in nanoseconds
+/// * `ts_recv_nanos` - Receive timestamp in nanoseconds
+/// * `instrument_id` - Pre-assigned instrument identifier
+/// * `price` - Trade price as Decimal
+/// * `size` - Trade size as Decimal
+/// * `side` - Trade side (Buy/Sell)
+/// * `sequence` - Sequence number for ordering
+#[allow(clippy::too_many_arguments)]
+pub fn create_trade_msg_with_instrument_id(
+    ts_event_nanos: u64,
+    ts_recv_nanos: u64,
+    instrument_id: u32,
+    price: Decimal,
+    size: Decimal,
+    side: TradeSideCompat,
+    sequence: u32,
+) -> TradeMsg {
     // Convert size to u32 (assuming reasonable trade sizes)
     let size_u32 = size.round().to_string().parse::<u32>().unwrap_or(0);
 

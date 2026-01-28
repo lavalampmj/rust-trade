@@ -19,6 +19,7 @@
 pub mod backfill;
 pub mod cli;
 pub mod config;
+pub mod instruments;
 pub mod provider;
 pub mod scheduler;
 pub mod schema;
@@ -30,6 +31,7 @@ pub mod validation;
 
 // Re-export commonly used types
 pub use config::Settings;
+pub use instruments::{InstrumentRegistry, RegistryError};
 pub use provider::{
     DataProvider, HistoricalDataProvider, LiveStreamProvider, ProviderError, ProviderInfo,
     ProviderResult,

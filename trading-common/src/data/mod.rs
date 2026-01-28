@@ -22,7 +22,7 @@ pub use dbn_types::{
     BookActionCompat, BookSideCompat, TradeSideCompat,
     // Creation functions
     create_bbo_msg, create_bbo_msg_from_decimals, create_mbo_msg, create_trade_msg,
-    create_trade_msg_from_decimals,
+    create_trade_msg_from_decimals, create_trade_msg_with_instrument_id,
     // Conversion functions
     datetime_to_nanos, decimal_to_dbn_price, decimal_to_dbn_size, nanos_to_datetime,
     symbol_to_instrument_id,

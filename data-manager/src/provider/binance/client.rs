@@ -1,6 +1,12 @@
 //! Binance data provider implementation
 //!
 //! Implements the LiveStreamProvider trait for Binance WebSocket streams.
+//!
+//! # Instrument Registration
+//!
+//! When an `InstrumentRegistry` is provided, the provider will automatically
+//! register all subscribed symbols and use persistent instrument_ids in the
+//! normalized data.
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -19,6 +25,7 @@ use tokio::time::sleep;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{debug, error, info, warn};
 
+use crate::instruments::InstrumentRegistry;
 use crate::provider::{
     ConnectionStatus, DataProvider, DataType, LiveStreamProvider, LiveSubscription, ProviderError,
     ProviderInfo, ProviderResult, StreamCallback, StreamEvent, SubscriptionStatus,
@@ -82,6 +89,8 @@ pub struct BinanceProvider {
     rate_limit_max_attempts: u32,
     /// Rate limit window duration
     rate_limit_window: Duration,
+    /// Optional instrument registry for persistent IDs
+    registry: Option<Arc<InstrumentRegistry>>,
 }
 
 impl BinanceProvider {
@@ -116,7 +125,27 @@ impl BinanceProvider {
             rate_limiter: Arc::new(RateLimiter::direct(quota)),
             rate_limit_max_attempts: settings.rate_limit_attempts,
             rate_limit_window: Duration::from_secs(settings.rate_limit_window_secs),
+            registry: None,
         }
+    }
+
+    /// Create a new Binance provider with an instrument registry
+    ///
+    /// When a registry is provided, all subscribed symbols will be registered
+    /// and assigned persistent instrument_ids.
+    pub fn with_registry(settings: BinanceSettings, registry: Arc<InstrumentRegistry>) -> Self {
+        let mut provider = Self::with_settings(settings);
+        provider.registry = Some(registry.clone());
+        provider.normalizer = Arc::new(BinanceNormalizer::with_registry(registry));
+        provider
+    }
+
+    /// Set the instrument registry
+    ///
+    /// Call this before subscribing to enable persistent instrument_ids.
+    pub fn set_registry(&mut self, registry: Arc<InstrumentRegistry>) {
+        self.registry = Some(registry.clone());
+        self.normalizer = Arc::new(BinanceNormalizer::with_registry(registry));
     }
 
     /// Parse WebSocket message and extract trade data
@@ -430,6 +459,28 @@ impl LiveStreamProvider for BinanceProvider {
             "Starting Binance trade subscription for symbols: {:?}",
             subscription.symbols
         );
+
+        // Pre-register symbols with the instrument registry if available
+        if self.normalizer.has_registry() {
+            let symbol_names: Vec<String> =
+                subscription.symbols.iter().map(|s| s.symbol.clone()).collect();
+
+            match self.normalizer.register_symbols(&symbol_names).await {
+                Ok(ids) => {
+                    info!(
+                        "Registered {} symbols with instrument registry",
+                        ids.len()
+                    );
+                    for (symbol, id) in &ids {
+                        debug!("  {} -> instrument_id {}", symbol, id);
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to register symbols with registry: {}", e);
+                    // Continue anyway - normalizer will fall back to hash-based IDs
+                }
+            }
+        }
 
         self.subscription_status.symbols = subscription.symbols.clone();
         self.subscription_status.connection = ConnectionStatus::Disconnected;
