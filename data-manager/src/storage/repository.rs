@@ -12,6 +12,8 @@ use tracing::debug;
 use uuid::Uuid;
 
 use crate::config::DatabaseSettings;
+use trading_common::data::orderbook::{BookSide, OrderBook, OrderBookDelta};
+use trading_common::data::quotes::QuoteTick;
 use trading_common::data::types::{TickData, TradeSide};
 use trading_common::error::{ErrorCategory, ErrorClassification};
 
@@ -316,6 +318,367 @@ impl MarketDataRepository {
             min_price: row.get("min_price"),
             max_price: row.get("max_price"),
         })
+    }
+
+    // ========================================================================
+    // L1 Quote Operations
+    // ========================================================================
+
+    /// Insert a single quote (L1 BBO)
+    pub async fn insert_quote(&self, quote: &QuoteTick) -> RepositoryResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO quote_data (
+                timestamp, symbol, exchange, bid_price, ask_price,
+                bid_size, ask_size, sequence
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT DO NOTHING
+            "#,
+        )
+        .bind(quote.ts_event)
+        .bind(&quote.symbol)
+        .bind(&quote.exchange)
+        .bind(quote.bid_price)
+        .bind(quote.ask_price)
+        .bind(quote.bid_size)
+        .bind(quote.ask_size)
+        .bind(quote.sequence as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Batch insert quotes
+    pub async fn batch_insert_quotes(&self, quotes: &[QuoteTick]) -> RepositoryResult<usize> {
+        if quotes.is_empty() {
+            return Ok(0);
+        }
+
+        let mut total_inserted = 0;
+
+        for chunk in quotes.chunks(self.batch_size) {
+            let inserted = self.insert_quote_batch(chunk).await?;
+            total_inserted += inserted;
+        }
+
+        debug!("Batch inserted {} quotes", total_inserted);
+        Ok(total_inserted)
+    }
+
+    /// Insert a batch of quotes
+    async fn insert_quote_batch(&self, quotes: &[QuoteTick]) -> RepositoryResult<usize> {
+        let mut query = String::from(
+            r#"
+            INSERT INTO quote_data (
+                timestamp, symbol, exchange, bid_price, ask_price,
+                bid_size, ask_size, sequence
+            ) VALUES
+            "#,
+        );
+
+        let mut param_count = 1;
+
+        for (i, _quote) in quotes.iter().enumerate() {
+            if i > 0 {
+                query.push_str(", ");
+            }
+
+            query.push_str(&format!(
+                "(${}, ${}, ${}, ${}, ${}, ${}, ${}, ${})",
+                param_count,
+                param_count + 1,
+                param_count + 2,
+                param_count + 3,
+                param_count + 4,
+                param_count + 5,
+                param_count + 6,
+                param_count + 7,
+            ));
+            param_count += 8;
+        }
+
+        query.push_str(" ON CONFLICT DO NOTHING");
+
+        let mut sqlx_query = sqlx::query(&query);
+
+        for quote in quotes {
+            sqlx_query = sqlx_query
+                .bind(quote.ts_event)
+                .bind(&quote.symbol)
+                .bind(&quote.exchange)
+                .bind(quote.bid_price)
+                .bind(quote.ask_price)
+                .bind(quote.bid_size)
+                .bind(quote.ask_size)
+                .bind(quote.sequence as i64);
+        }
+
+        let result = sqlx_query.execute(&self.pool).await?;
+        Ok(result.rows_affected() as usize)
+    }
+
+    /// Query quotes by symbol and time range
+    pub async fn get_quotes(
+        &self,
+        symbol: &str,
+        exchange: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: Option<i64>,
+    ) -> RepositoryResult<Vec<QuoteTick>> {
+        let limit = limit.unwrap_or(100_000);
+
+        let rows = sqlx::query(
+            r#"
+            SELECT timestamp, symbol, exchange, bid_price, ask_price,
+                   bid_size, ask_size, sequence
+            FROM quote_data
+            WHERE symbol = $1 AND exchange = $2
+              AND timestamp >= $3 AND timestamp < $4
+            ORDER BY timestamp ASC, sequence ASC
+            LIMIT $5
+            "#,
+        )
+        .bind(symbol)
+        .bind(exchange)
+        .bind(start)
+        .bind(end)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let quotes: Vec<QuoteTick> = rows
+            .iter()
+            .map(|row| {
+                QuoteTick::with_details(
+                    row.get("timestamp"),
+                    row.get("timestamp"),
+                    row.get("symbol"),
+                    row.get("exchange"),
+                    row.get("bid_price"),
+                    row.get("ask_price"),
+                    row.get("bid_size"),
+                    row.get("ask_size"),
+                    row.get::<i64, _>("sequence") as u64,
+                )
+            })
+            .collect();
+
+        Ok(quotes)
+    }
+
+    // ========================================================================
+    // L2 Order Book Operations
+    // ========================================================================
+
+    /// Insert order book snapshot (all levels)
+    pub async fn insert_orderbook_snapshot(&self, book: &OrderBook) -> RepositoryResult<()> {
+        let mut levels = Vec::new();
+
+        // Collect bid levels
+        for (depth, level) in book.all_bids().iter().enumerate() {
+            levels.push((
+                book.ts_event,
+                &book.symbol,
+                &book.exchange,
+                "BID",
+                level.price,
+                level.size,
+                level.order_count as i32,
+                depth as i16,
+                book.sequence as i64,
+                true, // is_snapshot
+            ));
+        }
+
+        // Collect ask levels
+        for (depth, level) in book.all_asks().iter().enumerate() {
+            levels.push((
+                book.ts_event,
+                &book.symbol,
+                &book.exchange,
+                "ASK",
+                level.price,
+                level.size,
+                level.order_count as i32,
+                depth as i16,
+                book.sequence as i64,
+                true,
+            ));
+        }
+
+        if levels.is_empty() {
+            return Ok(());
+        }
+
+        // Batch insert all levels
+        self.insert_orderbook_levels(&levels).await
+    }
+
+    /// Insert order book delta (single level update)
+    pub async fn insert_orderbook_delta(&self, delta: &OrderBookDelta) -> RepositoryResult<()> {
+        let side = match delta.side {
+            BookSide::Bid => "BID",
+            BookSide::Ask => "ASK",
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO orderbook_levels (
+                timestamp, symbol, exchange, side, price, size,
+                order_count, depth_position, sequence, is_snapshot
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            "#,
+        )
+        .bind(delta.ts_event)
+        .bind(&delta.symbol)
+        .bind(&delta.exchange)
+        .bind(side)
+        .bind(delta.price)
+        .bind(delta.size)
+        .bind(delta.order_count as i32)
+        .bind(0i16) // depth_position not tracked for deltas
+        .bind(delta.sequence as i64)
+        .bind(false) // is_snapshot = false for deltas
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Batch insert order book levels
+    async fn insert_orderbook_levels(
+        &self,
+        levels: &[(
+            DateTime<Utc>,
+            &String,
+            &String,
+            &str,
+            Decimal,
+            Decimal,
+            i32,
+            i16,
+            i64,
+            bool,
+        )],
+    ) -> RepositoryResult<()> {
+        if levels.is_empty() {
+            return Ok(());
+        }
+
+        // Build batch insert query
+        let mut query = String::from(
+            r#"
+            INSERT INTO orderbook_levels (
+                timestamp, symbol, exchange, side, price, size,
+                order_count, depth_position, sequence, is_snapshot
+            ) VALUES
+            "#,
+        );
+
+        let mut param_count = 1;
+
+        for (i, _) in levels.iter().enumerate() {
+            if i > 0 {
+                query.push_str(", ");
+            }
+            query.push_str(&format!(
+                "(${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${})",
+                param_count,
+                param_count + 1,
+                param_count + 2,
+                param_count + 3,
+                param_count + 4,
+                param_count + 5,
+                param_count + 6,
+                param_count + 7,
+                param_count + 8,
+                param_count + 9,
+            ));
+            param_count += 10;
+        }
+
+        let mut sqlx_query = sqlx::query(&query);
+
+        for level in levels {
+            sqlx_query = sqlx_query
+                .bind(level.0)
+                .bind(level.1)
+                .bind(level.2)
+                .bind(level.3)
+                .bind(level.4)
+                .bind(level.5)
+                .bind(level.6)
+                .bind(level.7)
+                .bind(level.8)
+                .bind(level.9);
+        }
+
+        sqlx_query.execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// Get the latest order book snapshot for a symbol
+    pub async fn get_latest_orderbook(
+        &self,
+        symbol: &str,
+        exchange: &str,
+        depth: usize,
+    ) -> RepositoryResult<OrderBook> {
+        // Find the latest snapshot timestamp
+        let snapshot_row = sqlx::query(
+            r#"
+            SELECT MAX(timestamp) as latest_ts
+            FROM orderbook_levels
+            WHERE symbol = $1 AND exchange = $2 AND is_snapshot = TRUE
+            "#,
+        )
+        .bind(symbol)
+        .bind(exchange)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let latest_ts: Option<DateTime<Utc>> = snapshot_row.get("latest_ts");
+
+        let Some(ts) = latest_ts else {
+            return Ok(OrderBook::with_exchange(symbol, exchange));
+        };
+
+        // Fetch all levels for that snapshot
+        let rows = sqlx::query(
+            r#"
+            SELECT side, price, size, order_count, depth_position, sequence
+            FROM orderbook_levels
+            WHERE symbol = $1 AND exchange = $2 AND timestamp = $3 AND is_snapshot = TRUE
+            ORDER BY side, depth_position
+            LIMIT $4
+            "#,
+        )
+        .bind(symbol)
+        .bind(exchange)
+        .bind(ts)
+        .bind((depth * 2) as i64) // Both sides
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut book = OrderBook::with_exchange(symbol, exchange);
+        book.set_timestamp(ts, rows.first().map(|r| r.get::<i64, _>("sequence") as u64).unwrap_or(0));
+
+        for row in rows {
+            let side: String = row.get("side");
+            let price: Decimal = row.get("price");
+            let size: Decimal = row.get("size");
+            let order_count: i32 = row.get("order_count");
+
+            match side.as_str() {
+                "BID" => book.update_bid(price, size, order_count as u32),
+                "ASK" => book.update_ask(price, size, order_count as u32),
+                _ => {}
+            }
+        }
+
+        Ok(book)
     }
 
     /// Get overall database statistics

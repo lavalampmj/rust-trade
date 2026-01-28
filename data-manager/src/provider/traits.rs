@@ -12,6 +12,8 @@ use tokio::sync::broadcast;
 
 use crate::schema::NormalizedOHLC;
 use crate::symbol::SymbolSpec;
+use trading_common::data::orderbook::{OrderBook, OrderBookDelta};
+use trading_common::data::quotes::QuoteTick;
 use trading_common::data::types::TickData;
 
 use trading_common::error::{ErrorCategory, ErrorClassification};
@@ -193,6 +195,24 @@ impl LiveSubscription {
         }
     }
 
+    /// Create a new live subscription for L1 quotes (BBO)
+    pub fn quotes(symbols: Vec<SymbolSpec>) -> Self {
+        Self {
+            symbols,
+            data_type: DataType::Quotes,
+            dataset: None,
+        }
+    }
+
+    /// Create a new live subscription for L2 order book
+    pub fn orderbook(symbols: Vec<SymbolSpec>) -> Self {
+        Self {
+            symbols,
+            data_type: DataType::OrderBook,
+            dataset: None,
+        }
+    }
+
     /// Set the dataset
     pub fn with_dataset(mut self, dataset: String) -> Self {
         self.dataset = Some(dataset);
@@ -210,6 +230,14 @@ pub enum StreamEvent {
     Tick(TickData),
     /// Batch of ticks
     TickBatch(Vec<TickData>),
+    /// L1 quote (best bid/ask)
+    Quote(QuoteTick),
+    /// Batch of L1 quotes
+    QuoteBatch(Vec<QuoteTick>),
+    /// L2 order book snapshot
+    OrderBookSnapshot(OrderBook),
+    /// L2 order book delta (incremental update)
+    OrderBookUpdate(OrderBookDelta),
     /// Connection status change
     Status(ConnectionStatus),
     /// Error occurred

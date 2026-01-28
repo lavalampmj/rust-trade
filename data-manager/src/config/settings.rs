@@ -63,6 +63,8 @@ pub struct ProviderSettings {
     pub databento: Option<DatabentoSettings>,
     /// Binance configuration
     pub binance: Option<BinanceSettings>,
+    /// Kraken configuration
+    pub kraken: Option<KrakenSettings>,
 }
 
 /// Binance provider settings
@@ -145,6 +147,50 @@ impl Default for BinanceSettings {
             rate_limit_window_secs: default_rate_limit_window(),
             default_symbols: vec!["BTCUSDT".to_string(), "ETHUSDT".to_string()],
             reconnection: BinanceReconnectionSettings::default(),
+        }
+    }
+}
+
+/// Kraken provider settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KrakenSettings {
+    /// Enable Kraken provider
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Market type: "spot" or "futures"
+    #[serde(default = "default_kraken_market_type")]
+    pub market_type: String,
+    /// Use demo/testnet endpoints (Futures only - Spot has no public testnet)
+    #[serde(default)]
+    pub demo: bool,
+    /// Maximum reconnection attempts per window
+    #[serde(default = "default_rate_limit_attempts")]
+    pub rate_limit_attempts: u32,
+    /// Rate limit window in seconds
+    #[serde(default = "default_rate_limit_window")]
+    pub rate_limit_window_secs: u64,
+    /// Default symbols to subscribe to
+    #[serde(default = "default_kraken_symbols")]
+    pub default_symbols: Vec<String>,
+}
+
+fn default_kraken_market_type() -> String {
+    "spot".to_string()
+}
+
+fn default_kraken_symbols() -> Vec<String> {
+    vec!["XBT/USD".to_string(), "ETH/USD".to_string()]
+}
+
+impl Default for KrakenSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            market_type: default_kraken_market_type(),
+            demo: false,
+            rate_limit_attempts: default_rate_limit_attempts(),
+            rate_limit_window_secs: default_rate_limit_window(),
+            default_symbols: default_kraken_symbols(),
         }
     }
 }
@@ -503,6 +549,7 @@ impl Settings {
             provider: ProviderSettings {
                 databento: None,
                 binance: Some(BinanceSettings::default()),
+                kraken: Some(KrakenSettings::default()),
             },
             transport: TransportSettings {
                 ipc: IpcSettings {

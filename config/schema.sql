@@ -381,3 +381,194 @@ SELECT
 FROM market_calendars
 GROUP BY venue, calendar_type
 ORDER BY venue, calendar_type;
+
+-- =================================================================
+-- L1 Quote Data Table (Best Bid/Ask - BBO)
+-- Design: Time-series storage for top-of-book quotes
+-- =================================================================
+
+CREATE TABLE IF NOT EXISTS quote_data (
+    -- Event timestamp from exchange
+    timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+
+    -- Trading pair (e.g., 'BTCUSDT')
+    symbol VARCHAR(20) NOT NULL,
+
+    -- Exchange identifier (e.g., 'KRAKEN', 'BINANCE')
+    exchange VARCHAR(20) NOT NULL,
+
+    -- Best bid price
+    bid_price DECIMAL(20, 8) NOT NULL,
+
+    -- Best ask price
+    ask_price DECIMAL(20, 8) NOT NULL,
+
+    -- Best bid size/quantity
+    bid_size DECIMAL(20, 8) NOT NULL,
+
+    -- Best ask size/quantity
+    ask_size DECIMAL(20, 8) NOT NULL,
+
+    -- Sequence number for ordering
+    sequence BIGINT NOT NULL DEFAULT 0
+);
+
+-- Convert quote_data to hypertable
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM timescaledb_information.hypertables
+        WHERE hypertable_name = 'quote_data'
+    ) THEN
+        PERFORM create_hypertable(
+            'quote_data',
+            'timestamp',
+            chunk_time_interval => INTERVAL '1 day',
+            if_not_exists => TRUE,
+            migrate_data => TRUE
+        );
+        RAISE NOTICE 'Created hypertable for quote_data with 1-day chunks';
+    ELSE
+        RAISE NOTICE 'quote_data is already a hypertable';
+    END IF;
+END $$;
+
+-- Indexes for quote_data
+CREATE INDEX IF NOT EXISTS idx_quote_symbol_time ON quote_data(symbol, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_quote_exchange_symbol_time ON quote_data(exchange, symbol, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_quote_timestamp ON quote_data(timestamp);
+
+-- Unique index to prevent duplicate quotes
+CREATE UNIQUE INDEX IF NOT EXISTS idx_quote_unique ON quote_data(symbol, exchange, timestamp, sequence);
+
+-- Enable compression for quote_data
+DO $$
+BEGIN
+    ALTER TABLE quote_data SET (
+        timescaledb.compress,
+        timescaledb.compress_segmentby = 'symbol,exchange',
+        timescaledb.compress_orderby = 'timestamp DESC'
+    );
+    RAISE NOTICE 'Compression enabled for quote_data';
+EXCEPTION
+    WHEN others THEN
+        RAISE NOTICE 'Compression settings may already be configured: %', SQLERRM;
+END $$;
+
+-- Add compression policy for quote_data
+DO $$
+BEGIN
+    PERFORM add_compression_policy('quote_data', INTERVAL '7 days', if_not_exists => TRUE);
+    RAISE NOTICE 'Compression policy added for quote_data';
+EXCEPTION
+    WHEN others THEN
+        RAISE NOTICE 'Compression policy may already exist: %', SQLERRM;
+END $$;
+
+-- =================================================================
+-- L2 Order Book Levels Table
+-- Design: Stores order book snapshots and updates
+-- Each row represents a single price level at a point in time
+-- =================================================================
+
+CREATE TABLE IF NOT EXISTS orderbook_levels (
+    -- Event timestamp from exchange
+    timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+
+    -- Trading pair (e.g., 'BTCUSDT')
+    symbol VARCHAR(20) NOT NULL,
+
+    -- Exchange identifier
+    exchange VARCHAR(20) NOT NULL,
+
+    -- Side: 'BID' or 'ASK'
+    side VARCHAR(4) NOT NULL CHECK (side IN ('BID', 'ASK')),
+
+    -- Price level
+    price DECIMAL(20, 8) NOT NULL,
+
+    -- Size/quantity at this level
+    size DECIMAL(20, 8) NOT NULL,
+
+    -- Number of orders at this level (if available)
+    order_count INTEGER NOT NULL DEFAULT 0,
+
+    -- Depth position (0 = best bid/ask, 1 = second best, etc.)
+    depth_position SMALLINT NOT NULL DEFAULT 0,
+
+    -- Sequence number for ordering
+    sequence BIGINT NOT NULL DEFAULT 0,
+
+    -- Is this part of a snapshot (TRUE) or incremental update (FALSE)
+    is_snapshot BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+-- Convert orderbook_levels to hypertable
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM timescaledb_information.hypertables
+        WHERE hypertable_name = 'orderbook_levels'
+    ) THEN
+        PERFORM create_hypertable(
+            'orderbook_levels',
+            'timestamp',
+            chunk_time_interval => INTERVAL '1 hour',
+            if_not_exists => TRUE,
+            migrate_data => TRUE
+        );
+        RAISE NOTICE 'Created hypertable for orderbook_levels with 1-hour chunks';
+    ELSE
+        RAISE NOTICE 'orderbook_levels is already a hypertable';
+    END IF;
+END $$;
+
+-- Indexes for orderbook_levels
+CREATE INDEX IF NOT EXISTS idx_orderbook_symbol_time ON orderbook_levels(symbol, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_orderbook_symbol_side_time ON orderbook_levels(symbol, side, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_orderbook_timestamp ON orderbook_levels(timestamp);
+CREATE INDEX IF NOT EXISTS idx_orderbook_snapshot ON orderbook_levels(symbol, timestamp, is_snapshot) WHERE is_snapshot = TRUE;
+
+-- Enable compression for orderbook_levels
+DO $$
+BEGIN
+    ALTER TABLE orderbook_levels SET (
+        timescaledb.compress,
+        timescaledb.compress_segmentby = 'symbol,exchange,side',
+        timescaledb.compress_orderby = 'timestamp DESC,depth_position'
+    );
+    RAISE NOTICE 'Compression enabled for orderbook_levels';
+EXCEPTION
+    WHEN others THEN
+        RAISE NOTICE 'Compression settings may already be configured: %', SQLERRM;
+END $$;
+
+-- Add compression policy for orderbook_levels (compress after 1 day due to higher volume)
+DO $$
+BEGIN
+    PERFORM add_compression_policy('orderbook_levels', INTERVAL '1 day', if_not_exists => TRUE);
+    RAISE NOTICE 'Compression policy added for orderbook_levels';
+EXCEPTION
+    WHEN others THEN
+        RAISE NOTICE 'Compression policy may already exist: %', SQLERRM;
+END $$;
+
+-- =================================================================
+-- Verification Queries for Quote and OrderBook Tables
+-- =================================================================
+
+-- Check quote_data hypertable
+SELECT
+    hypertable_name,
+    num_chunks,
+    compression_enabled
+FROM timescaledb_information.hypertables
+WHERE hypertable_name = 'quote_data';
+
+-- Check orderbook_levels hypertable
+SELECT
+    hypertable_name,
+    num_chunks,
+    compression_enabled
+FROM timescaledb_information.hypertables
+WHERE hypertable_name = 'orderbook_levels';

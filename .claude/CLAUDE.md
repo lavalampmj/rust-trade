@@ -34,6 +34,12 @@ cd data-manager
 # Start data manager service with live Binance streaming and IPC transport
 cargo run serve --live --provider binance --symbols BTCUSDT,ETHUSDT --ipc
 
+# Start with Kraken Spot streaming
+cargo run serve --live --provider kraken --symbols XBT/USD,ETH/USD --ipc
+
+# Start with Kraken Futures streaming (demo/testnet)
+cargo run serve --live --provider kraken_futures --demo --symbols PI_XBTUSD,PI_ETHUSD --ipc
+
 # Start with persistence to database
 cargo run serve --live --ipc --persist
 
@@ -135,7 +141,7 @@ The project uses a Rust workspace with four crates:
 This separation enables code reuse: trading-core, data-manager, and src-tauri all depend on trading-common, avoiding duplication.
 
 **Data flow architecture**:
-- **IPC mode only**: data-manager streams from Binance → shared memory IPC → trading-core consumes
+- **IPC mode only**: data-manager streams from exchanges (Binance, Kraken) → shared memory IPC → trading-core consumes
 - trading-core does not persist tick data to database (handled by data-manager with TimescaleDB)
 - trading-core only updates cache and processes paper trading signals
 
@@ -150,7 +156,7 @@ This separation enables code reuse: trading-core, data-manager, and src-tauri al
 - Uses callback pattern: `subscribe_trades()` accepts closure for real-time tick processing
 - Graceful shutdown via broadcast channel (`shutdown_rx`)
 
-**Data flow**: data-manager (Binance WebSocket) → IPC shared memory → trading-core (IpcExchange)
+**Data flow**: data-manager (Binance/Kraken WebSocket) → IPC shared memory → trading-core (IpcExchange)
 
 **Important**: Exchange callbacks execute synchronously - avoid blocking operations in handlers.
 
@@ -485,7 +491,7 @@ Terminal 1: cd data-manager && cargo run serve --live --ipc --persist --symbols 
 Terminal 2: cd trading-core && cargo run live --paper-trading
 
 Data flow:
-  data-manager (Binance WebSocket)
+  data-manager (Exchange WebSocket: Binance, Kraken, etc.)
     → Shared memory ring buffer (IPC)
     → trading-core (IpcExchange)
     → Processing pipeline:
@@ -573,6 +579,20 @@ shutdown_tx.send(()).ok();
 4. Register in `src/exchange/mod.rs`
 5. Update config to support new exchange selection
 
+### Adding a New Data Provider (data-manager)
+
+1. Create `data-manager/src/provider/your_provider/` directory with:
+   - `mod.rs` - Public exports
+   - `client.rs` - Implement `DataProvider` + `LiveStreamProvider` traits
+   - `types.rs` - WebSocket message structs
+   - `normalizer.rs` - Convert venue messages to `TickData`, `QuoteTick`, `OrderBook`
+   - `symbol.rs` - Symbol format conversion (optional)
+2. Register in `data-manager/src/provider/mod.rs`
+3. Add provider settings in `data-manager/src/config/settings.rs`
+4. Add provider dispatch in `data-manager/src/cli/serve.rs`
+
+**Existing providers**: Binance (trades), Kraken Spot/Futures (trades, L1 quotes, L2 orderbook), Databento (historical)
+
 ### Adding a New Trading Strategy
 
 1. Create `trading-common/src/backtest/strategy/your_strategy.rs`
@@ -647,7 +667,7 @@ The system supports running data-manager, TimescaleDB, and Redis in Docker conta
 │                    Docker Containers                         │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
 │  │ TimescaleDB │  │   Redis     │  │   data-manager      │  │
-│  │  :5432      │  │   :6379     │  │  (Binance WS)       │  │
+│  │  :5432      │  │   :6379     │  │  (Exchange WS)      │  │
 │  └─────────────┘  └─────────────┘  └──────────┬──────────┘  │
 │                                               │              │
 │                                     /dev/shm/trading (IPC)  │
