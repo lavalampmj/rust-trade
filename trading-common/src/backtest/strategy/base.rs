@@ -1,7 +1,8 @@
 use crate::accounts::AccountEvent;
 use crate::backtest::bar_generator::SessionAwareConfig;
-use crate::data::events::MarketDataEvent;
+use crate::data::events::{MarketDataEvent, MarketDataEventDbn};
 use crate::data::types::{BarData, BarDataMode, BarType, Timeframe};
+use crate::data::{BboMsg, MboMsg, Mbp10Msg, TradeMsg};
 use crate::instruments::SessionEvent;
 use crate::orders::{
     ClientOrderId, Order, OrderCanceled, OrderEventAny, OrderFilled, OrderRejected,
@@ -486,5 +487,175 @@ pub trait Strategy: Send + Sync {
     #[allow(unused_variables)]
     fn on_session_update(&mut self, event: &SessionEvent) {
         // Default: no-op
+    }
+
+    // ========================================================================
+    // DBN-Native Market Data Handlers (L1/L2/L3)
+    // ========================================================================
+    //
+    // These handlers receive native DBN types directly without intermediate
+    // conversions. Use these for high-performance strategies that need
+    // low-latency access to market data.
+    //
+    // Data flow:
+    //   Exchange WebSocket → DBN TradeMsg/BboMsg/Mbp10Msg/MboMsg → Strategy
+    //
+    // The instrument_id in each message can be resolved via InstrumentRegistry
+    // to get (symbol, exchange) if needed.
+
+    /// Called on trade execution (L0 - tick data).
+    ///
+    /// Receives native DBN `TradeMsg` for maximum efficiency.
+    /// This is the most granular trade data - every executed trade.
+    ///
+    /// # Performance
+    /// - TradeMsg is 48 bytes fixed-size (no heap allocation)
+    /// - Use `TradeMsgExt` trait for Decimal price/size access
+    ///
+    /// # Example
+    /// ```text
+    /// use trading_common::data::TradeMsgExt;
+    ///
+    /// fn on_trade_dbn(&mut self, msg: &TradeMsg) {
+    ///     let price = msg.price_decimal();
+    ///     let size = msg.size_decimal();
+    ///     let is_buy = msg.is_buy();
+    ///
+    ///     if is_buy && size > dec!(100) {
+    ///         // Large buy detected
+    ///         self.bullish_pressure += 1;
+    ///     }
+    /// }
+    /// ```
+    #[allow(unused_variables)]
+    fn on_trade_dbn(&mut self, msg: &TradeMsg) {
+        // Default: no-op
+    }
+
+    /// Called on L1 quote update (best bid/ask).
+    ///
+    /// Receives native DBN `BboMsg` with best bid and ask.
+    /// Use for spread monitoring, market making, or BBO-based signals.
+    ///
+    /// # Performance
+    /// - BboMsg contains bid/ask price, size, and counts
+    /// - Use `BboMsgExt` trait for Decimal conversions
+    ///
+    /// # Example
+    /// ```text
+    /// use trading_common::data::BboMsgExt;
+    ///
+    /// fn on_quote_dbn(&mut self, msg: &BboMsg) {
+    ///     let spread = msg.spread();
+    ///     let mid = msg.mid_price();
+    ///
+    ///     if spread < dec!(0.01) {
+    ///         // Tight spread - good liquidity
+    ///         self.can_trade = true;
+    ///     }
+    /// }
+    /// ```
+    #[allow(unused_variables)]
+    fn on_quote_dbn(&mut self, msg: &BboMsg) {
+        // Default: no-op
+    }
+
+    /// Called on L2 order book snapshot (10-level depth).
+    ///
+    /// Receives native DBN `Mbp10Msg` with 10 price levels on each side.
+    /// Use for depth analysis, liquidity assessment, or book-based signals.
+    ///
+    /// # Performance
+    /// - Mbp10Msg contains 10 BidAskPair levels
+    /// - Use `Mbp10MsgExt` trait for Decimal conversions
+    ///
+    /// # Example
+    /// ```text
+    /// use trading_common::data::Mbp10MsgExt;
+    ///
+    /// fn on_book_snapshot_dbn(&mut self, msg: &Mbp10Msg) {
+    ///     // Get aggregated bid/ask volume across all levels
+    ///     let total_bid_vol = msg.total_bid_size();
+    ///     let total_ask_vol = msg.total_ask_size();
+    ///
+    ///     // Calculate order book imbalance
+    ///     let imbalance = (total_bid_vol - total_ask_vol)
+    ///         / (total_bid_vol + total_ask_vol);
+    ///
+    ///     if imbalance > dec!(0.3) {
+    ///         // Strong bid-side imbalance - bullish signal
+    ///     }
+    /// }
+    /// ```
+    #[allow(unused_variables)]
+    fn on_book_snapshot_dbn(&mut self, msg: &Mbp10Msg) {
+        // Default: no-op
+    }
+
+    /// Called on L3 order book update (individual order events).
+    ///
+    /// Receives native DBN `MboMsg` with individual order-level updates.
+    /// This is the most granular order book data - every add/modify/cancel.
+    ///
+    /// # Performance
+    /// - MboMsg contains single order event with order_id, action, price, size
+    /// - Use `MboMsgExt` trait for Decimal conversions
+    ///
+    /// # Example
+    /// ```text
+    /// use trading_common::data::{MboMsgExt, BookActionCompat};
+    ///
+    /// fn on_book_update_dbn(&mut self, msg: &MboMsg) {
+    ///     let action = msg.action_compat();
+    ///     let price = msg.price_decimal();
+    ///     let size = msg.size_decimal();
+    ///
+    ///     match action {
+    ///         BookActionCompat::Add => {
+    ///             // New order added
+    ///             self.order_flow_tracker.add_order(msg.order_id, price, size);
+    ///         }
+    ///         BookActionCompat::Cancel => {
+    ///             // Order cancelled
+    ///             self.order_flow_tracker.remove_order(msg.order_id);
+    ///         }
+    ///         BookActionCompat::Trade => {
+    ///             // Order filled - significant event
+    ///             self.on_order_flow_fill(price, size);
+    ///         }
+    ///         _ => {}
+    ///     }
+    /// }
+    /// ```
+    #[allow(unused_variables)]
+    fn on_book_update_dbn(&mut self, msg: &MboMsg) {
+        // Default: no-op
+    }
+
+    /// Called on any DBN market data event (unified handler).
+    ///
+    /// This is a unified handler for all DBN market data types.
+    /// Use this if you want a single entry point for all DBN data.
+    ///
+    /// # Example
+    /// ```text
+    /// fn on_marketdata_dbn(&mut self, event: &MarketDataEventDbn) {
+    ///     match event {
+    ///         MarketDataEventDbn::Trade(msg) => self.on_trade_dbn(msg),
+    ///         MarketDataEventDbn::Quote(msg) => self.on_quote_dbn(msg),
+    ///         MarketDataEventDbn::BookSnapshot(msg) => self.on_book_snapshot_dbn(msg),
+    ///         MarketDataEventDbn::BookUpdate(msg) => self.on_book_update_dbn(msg),
+    ///     }
+    /// }
+    /// ```
+    #[allow(unused_variables)]
+    fn on_marketdata_dbn(&mut self, event: &MarketDataEventDbn) {
+        // Default: dispatch to individual handlers
+        match event {
+            MarketDataEventDbn::Trade(msg) => self.on_trade_dbn(msg),
+            MarketDataEventDbn::Quote(msg) => self.on_quote_dbn(msg),
+            MarketDataEventDbn::BookSnapshot(msg) => self.on_book_snapshot_dbn(msg),
+            MarketDataEventDbn::BookUpdate(msg) => self.on_book_update_dbn(msg),
+        }
     }
 }

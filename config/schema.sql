@@ -572,3 +572,34 @@ SELECT
     compression_enabled
 FROM timescaledb_information.hypertables
 WHERE hypertable_name = 'orderbook_levels';
+
+-- =================================================================
+-- Instrument ID Mappings Table
+-- Maps (symbol, exchange) pairs to DBN instrument_id values
+-- Used by InstrumentRegistry for persistence across restarts
+-- =================================================================
+
+CREATE TABLE IF NOT EXISTS instrument_mappings (
+    -- DBN instrument_id (hash-based, deterministic)
+    instrument_id BIGINT PRIMARY KEY,
+
+    -- Symbol as used by the exchange (e.g., 'BTCUSDT', 'XBT/USD')
+    symbol VARCHAR(50) NOT NULL,
+
+    -- Exchange/venue identifier (e.g., 'BINANCE', 'KRAKEN')
+    exchange VARCHAR(50) NOT NULL,
+
+    -- When this mapping was first created
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Unique constraint on (symbol, exchange)
+    CONSTRAINT uq_instrument_symbol_exchange UNIQUE (symbol, exchange)
+);
+
+-- Indexes for instrument_mappings
+CREATE INDEX IF NOT EXISTS idx_instrument_symbol ON instrument_mappings(symbol);
+CREATE INDEX IF NOT EXISTS idx_instrument_exchange ON instrument_mappings(exchange);
+CREATE INDEX IF NOT EXISTS idx_instrument_symbol_exchange ON instrument_mappings(symbol, exchange);
+
+-- Verification query
+SELECT 'instrument_mappings table created' as status;

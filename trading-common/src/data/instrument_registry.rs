@@ -5,7 +5,7 @@
 //!
 //! - Thread-safe read/write access via RwLock
 //! - Bidirectional lookup (symbol→id and id→symbol)
-//! - Optional database persistence for restart recovery
+//! - Database persistence for restart recovery
 //!
 //! # Usage
 //!
@@ -29,10 +29,30 @@
 //!     println!("Instrument ID: {}", id);
 //! }
 //! ```
+//!
+//! # Persistence
+//!
+//! ```ignore
+//! use sqlx::PgPool;
+//!
+//! // Load from database on startup
+//! let pool = PgPool::connect(&database_url).await?;
+//! let registry = InstrumentRegistry::new();
+//! registry.load_from_db(&pool).await?;
+//!
+//! // Register new symbol (automatically persisted)
+//! registry.register_with_persist(&pool, "BTCUSDT", "BINANCE").await?;
+//!
+//! // Or register in memory only, then batch persist
+//! registry.register("ETHUSDT", "BINANCE");
+//! registry.save_to_db(&pool).await?;
+//! ```
 
 use parking_lot::RwLock;
+use sqlx::{PgPool, Row};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tracing::{debug, info};
 
 use super::dbn_types::symbol_to_instrument_id;
 
@@ -233,6 +253,304 @@ impl InstrumentRegistry {
     /// Returns a non-thread-safe copy of the internal state for serialization.
     pub fn snapshot(&self) -> HashMap<u32, (String, String)> {
         self.inner.read().id_to_symbol.clone()
+    }
+
+    // =========================================================================
+    // Database Persistence
+    // =========================================================================
+
+    /// Load all instrument mappings from the database.
+    ///
+    /// Populates the registry with all entries from the `instrument_mappings` table.
+    /// This should be called on application startup to restore state.
+    ///
+    /// # Errors
+    /// Returns an error if the database query fails.
+    pub async fn load_from_db(&self, pool: &PgPool) -> Result<usize, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT instrument_id, symbol, exchange
+            FROM instrument_mappings
+            ORDER BY instrument_id
+            "#,
+        )
+        .fetch_all(pool)
+        .await?;
+
+        let count = rows.len();
+        let mut inner = self.inner.write();
+
+        for row in rows {
+            let id: i64 = row.get("instrument_id");
+            let symbol: String = row.get("symbol");
+            let exchange: String = row.get("exchange");
+
+            let id = id as u32;
+            inner
+                .id_to_symbol
+                .insert(id, (symbol.clone(), exchange.clone()));
+            inner.symbol_to_id.insert((symbol, exchange), id);
+        }
+
+        info!("Loaded {} instrument mappings from database", count);
+        Ok(count)
+    }
+
+    /// Save all instrument mappings to the database.
+    ///
+    /// Persists all entries in the registry to the `instrument_mappings` table.
+    /// Uses upsert (ON CONFLICT) to handle existing entries.
+    ///
+    /// # Errors
+    /// Returns an error if the database operation fails.
+    pub async fn save_to_db(&self, pool: &PgPool) -> Result<usize, sqlx::Error> {
+        let entries = self.export();
+        let count = entries.len();
+
+        if count == 0 {
+            debug!("No instrument mappings to save");
+            return Ok(0);
+        }
+
+        // Use a transaction for batch insert
+        let mut tx = pool.begin().await?;
+
+        for (id, symbol, exchange) in &entries {
+            sqlx::query(
+                r#"
+                INSERT INTO instrument_mappings (instrument_id, symbol, exchange)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (instrument_id) DO UPDATE SET
+                    symbol = EXCLUDED.symbol,
+                    exchange = EXCLUDED.exchange
+                "#,
+            )
+            .bind(*id as i64)
+            .bind(symbol)
+            .bind(exchange)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+
+        info!("Saved {} instrument mappings to database", count);
+        Ok(count)
+    }
+
+    /// Register a symbol and persist to database.
+    ///
+    /// Combines registration with database persistence in a single operation.
+    ///
+    /// # Errors
+    /// Returns an error if the database operation fails.
+    pub async fn register_with_persist(
+        &self,
+        pool: &PgPool,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<u32, sqlx::Error> {
+        let id = self.register(symbol, exchange);
+
+        sqlx::query(
+            r#"
+            INSERT INTO instrument_mappings (instrument_id, symbol, exchange)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (instrument_id) DO NOTHING
+            "#,
+        )
+        .bind(id as i64)
+        .bind(symbol)
+        .bind(exchange)
+        .execute(pool)
+        .await?;
+
+        debug!(
+            "Registered and persisted instrument: {} ({} @ {})",
+            id, symbol, exchange
+        );
+        Ok(id)
+    }
+
+    /// Register multiple symbols and persist to database.
+    ///
+    /// More efficient than calling `register_with_persist` in a loop.
+    ///
+    /// # Errors
+    /// Returns an error if the database operation fails.
+    pub async fn register_batch_with_persist(
+        &self,
+        pool: &PgPool,
+        symbols: &[(&str, &str)],
+    ) -> Result<Vec<u32>, sqlx::Error> {
+        let ids = self.register_batch(symbols);
+
+        if ids.is_empty() {
+            return Ok(ids);
+        }
+
+        let mut tx = pool.begin().await?;
+
+        for (i, (symbol, exchange)) in symbols.iter().enumerate() {
+            sqlx::query(
+                r#"
+                INSERT INTO instrument_mappings (instrument_id, symbol, exchange)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (instrument_id) DO NOTHING
+                "#,
+            )
+            .bind(ids[i] as i64)
+            .bind(*symbol)
+            .bind(*exchange)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+
+        debug!("Registered and persisted {} instruments", ids.len());
+        Ok(ids)
+    }
+
+    /// Delete an instrument mapping from the database.
+    ///
+    /// # Errors
+    /// Returns an error if the database operation fails.
+    pub async fn unregister_with_persist(
+        &self,
+        pool: &PgPool,
+        instrument_id: u32,
+    ) -> Result<Option<(String, String)>, sqlx::Error> {
+        let removed = self.unregister(instrument_id);
+
+        if removed.is_some() {
+            sqlx::query("DELETE FROM instrument_mappings WHERE instrument_id = $1")
+                .bind(instrument_id as i64)
+                .execute(pool)
+                .await?;
+        }
+
+        Ok(removed)
+    }
+
+    /// Get count of mappings in database (for verification).
+    pub async fn db_count(pool: &PgPool) -> Result<i64, sqlx::Error> {
+        let row = sqlx::query("SELECT COUNT(*) as count FROM instrument_mappings")
+            .fetch_one(pool)
+            .await?;
+        Ok(row.get("count"))
+    }
+
+    /// Sync registry with database.
+    ///
+    /// Loads from DB, then saves any new entries that were registered in memory.
+    /// Useful for ensuring consistency after application restart.
+    pub async fn sync_with_db(&self, pool: &PgPool) -> Result<(usize, usize), sqlx::Error> {
+        // Get current in-memory entries before loading
+        let current_entries = self.export();
+
+        // Load from database (adds to registry)
+        let loaded = self.load_from_db(pool).await?;
+
+        // Find entries that were in memory but not in DB
+        let mut new_count = 0;
+        for (id, symbol, exchange) in &current_entries {
+            // Check if this was already in DB (would have been loaded)
+            // We need to persist entries that were registered in memory only
+            let in_db = sqlx::query("SELECT 1 FROM instrument_mappings WHERE instrument_id = $1")
+                .bind(*id as i64)
+                .fetch_optional(pool)
+                .await?
+                .is_some();
+
+            if !in_db {
+                sqlx::query(
+                    r#"
+                    INSERT INTO instrument_mappings (instrument_id, symbol, exchange)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (instrument_id) DO NOTHING
+                    "#,
+                )
+                .bind(*id as i64)
+                .bind(symbol)
+                .bind(exchange)
+                .execute(pool)
+                .await?;
+                new_count += 1;
+            }
+        }
+
+        if new_count > 0 {
+            info!("Synced {} new instrument mappings to database", new_count);
+        }
+
+        Ok((loaded, new_count))
+    }
+
+    /// Load from symbol_definitions table (alternative to instrument_mappings).
+    ///
+    /// This loads instrument_id mappings from the comprehensive symbol_definitions
+    /// table, which contains full symbol metadata. Use this when you have
+    /// SymbolDefinitions already populated and want to populate the registry.
+    ///
+    /// # Note
+    /// This uses the hash-based instrument_id (recalculated from symbol+venue),
+    /// not the instrument_id stored in symbol_definitions, to ensure consistency
+    /// with the DBN ID generation scheme.
+    pub async fn load_from_symbol_definitions(
+        &self,
+        pool: &PgPool,
+    ) -> Result<usize, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT symbol, venue
+            FROM symbol_definitions
+            WHERE status = 'ACTIVE'
+            ORDER BY venue, symbol
+            "#,
+        )
+        .fetch_all(pool)
+        .await?;
+
+        let count = rows.len();
+        let mut inner = self.inner.write();
+
+        for row in rows {
+            let symbol: String = row.get("symbol");
+            let exchange: String = row.get("venue");
+
+            // Generate consistent hash-based ID
+            let id = symbol_to_instrument_id(&symbol, &exchange);
+
+            inner
+                .id_to_symbol
+                .insert(id, (symbol.clone(), exchange.clone()));
+            inner.symbol_to_id.insert((symbol, exchange), id);
+        }
+
+        info!(
+            "Loaded {} instrument mappings from symbol_definitions",
+            count
+        );
+        Ok(count)
+    }
+
+    /// Create a resolver function suitable for use with StreamEventDbn::to_stream_event.
+    ///
+    /// Returns a closure that resolves instrument_id to (symbol, exchange).
+    /// This is useful for converting DBN events to legacy TickData.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let registry = InstrumentRegistry::new();
+    /// registry.register("BTCUSDT", "BINANCE");
+    ///
+    /// let resolver = registry.resolver();
+    /// let event: StreamEventDbn = ...;
+    /// let legacy_event = event.to_stream_event(resolver);
+    /// ```
+    pub fn resolver(&self) -> impl Fn(u32) -> Option<(String, String)> + '_ {
+        move |instrument_id| self.lookup(instrument_id)
     }
 }
 

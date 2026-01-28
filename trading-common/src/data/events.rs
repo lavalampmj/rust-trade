@@ -2,10 +2,16 @@
 //!
 //! This module provides market data event types that can be used by strategies
 //! to react to various market data updates including ticks, quotes, and order book changes.
+//!
+//! # DBN-Native Events
+//!
+//! For high-performance strategies, use `MarketDataEventDbn` which wraps native
+//! DBN types (TradeMsg, BboMsg, Mbp10Msg, MboMsg) without intermediate conversions.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use super::dbn_types::{BboMsg, MboMsg, Mbp10Msg, TradeMsg};
 use super::orderbook::{OrderBook, OrderBookDelta};
 use super::quotes::QuoteTick;
 use super::types::TickData;
@@ -167,6 +173,128 @@ impl MarketDataEvent {
     }
 }
 
+// =============================================================================
+// DBN-Native Market Data Events
+// =============================================================================
+
+/// DBN-native market data event for high-performance strategy processing.
+///
+/// This enum provides direct access to DBN record types without intermediate
+/// conversions, enabling maximum performance for strategies that need to process
+/// large volumes of market data.
+///
+/// # Data Levels
+///
+/// | Variant | DBN Type | Level | Description |
+/// |---------|----------|-------|-------------|
+/// | `Trade` | `TradeMsg` | L0 | Individual trade executions |
+/// | `Quote` | `BboMsg` | L1 | Best bid/offer quotes |
+/// | `BookSnapshot` | `Mbp10Msg` | L2 | 10-level order book snapshot |
+/// | `BookUpdate` | `MboMsg` | L3 | Individual order events |
+///
+/// # Example
+///
+/// ```ignore
+/// use trading_common::data::events::MarketDataEventDbn;
+/// use trading_common::data::{TradeMsgExt, BboMsgExt};
+///
+/// fn process_event(event: &MarketDataEventDbn) {
+///     match event {
+///         MarketDataEventDbn::Trade(msg) => {
+///             println!("Trade: {} @ {}", msg.size_decimal(), msg.price_decimal());
+///         }
+///         MarketDataEventDbn::Quote(msg) => {
+///             println!("Spread: {}", msg.spread());
+///         }
+///         _ => {}
+///     }
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub enum MarketDataEventDbn {
+    /// Trade execution (L0 - tick data)
+    Trade(TradeMsg),
+
+    /// Best bid/offer quote (L1)
+    Quote(BboMsg),
+
+    /// 10-level order book snapshot (L2)
+    BookSnapshot(Mbp10Msg),
+
+    /// Individual order event (L3)
+    BookUpdate(MboMsg),
+}
+
+impl MarketDataEventDbn {
+    /// Get the instrument_id from the underlying message
+    pub fn instrument_id(&self) -> u32 {
+        match self {
+            MarketDataEventDbn::Trade(msg) => msg.hd.instrument_id,
+            MarketDataEventDbn::Quote(msg) => msg.hd.instrument_id,
+            MarketDataEventDbn::BookSnapshot(msg) => msg.hd.instrument_id,
+            MarketDataEventDbn::BookUpdate(msg) => msg.hd.instrument_id,
+        }
+    }
+
+    /// Get the event timestamp in nanoseconds
+    pub fn ts_event(&self) -> u64 {
+        match self {
+            MarketDataEventDbn::Trade(msg) => msg.hd.ts_event,
+            MarketDataEventDbn::Quote(msg) => msg.hd.ts_event,
+            MarketDataEventDbn::BookSnapshot(msg) => msg.hd.ts_event,
+            MarketDataEventDbn::BookUpdate(msg) => msg.hd.ts_event,
+        }
+    }
+
+    /// Check if this is a trade event
+    pub fn is_trade(&self) -> bool {
+        matches!(self, MarketDataEventDbn::Trade(_))
+    }
+
+    /// Check if this is a quote event
+    pub fn is_quote(&self) -> bool {
+        matches!(self, MarketDataEventDbn::Quote(_))
+    }
+
+    /// Check if this is a book event (snapshot or update)
+    pub fn is_book(&self) -> bool {
+        matches!(
+            self,
+            MarketDataEventDbn::BookSnapshot(_) | MarketDataEventDbn::BookUpdate(_)
+        )
+    }
+
+    /// Get the data level (0=trade, 1=L1 quote, 2=L2 book, 3=L3 order)
+    pub fn level(&self) -> u8 {
+        match self {
+            MarketDataEventDbn::Trade(_) => 0,
+            MarketDataEventDbn::Quote(_) => 1,
+            MarketDataEventDbn::BookSnapshot(_) => 2,
+            MarketDataEventDbn::BookUpdate(_) => 3,
+        }
+    }
+
+    /// Create from TradeMsg
+    pub fn trade(msg: TradeMsg) -> Self {
+        MarketDataEventDbn::Trade(msg)
+    }
+
+    /// Create from BboMsg
+    pub fn quote(msg: BboMsg) -> Self {
+        MarketDataEventDbn::Quote(msg)
+    }
+
+    /// Create from Mbp10Msg
+    pub fn book_snapshot(msg: Mbp10Msg) -> Self {
+        MarketDataEventDbn::BookSnapshot(msg)
+    }
+
+    /// Create from MboMsg
+    pub fn book_update(msg: MboMsg) -> Self {
+        MarketDataEventDbn::BookUpdate(msg)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,5 +365,111 @@ mod tests {
         assert!(event.tick.is_none());
         assert!(event.quote.is_some());
         assert!(event.book_snapshot.is_none());
+    }
+
+    // ========================================================================
+    // MarketDataEventDbn Tests
+    // ========================================================================
+
+    #[test]
+    fn test_market_data_event_dbn_trade() {
+        use crate::data::{create_trade_msg_from_decimals, TradeSideCompat};
+
+        let trade = create_trade_msg_from_decimals(
+            1_000_000_000, // ts_event: 1 second
+            1_000_000_100, // ts_recv
+            "BTCUSDT",
+            "BINANCE",
+            dec!(50000.0),
+            dec!(1.5),
+            TradeSideCompat::Buy,
+            1,
+        );
+
+        let event = MarketDataEventDbn::trade(trade);
+
+        assert!(event.is_trade());
+        assert!(!event.is_quote());
+        assert!(!event.is_book());
+        assert_eq!(event.level(), 0);
+        assert_eq!(event.ts_event(), 1_000_000_000);
+    }
+
+    #[test]
+    fn test_market_data_event_dbn_quote() {
+        use crate::data::create_bbo_msg_from_decimals;
+
+        let quote = create_bbo_msg_from_decimals(
+            2_000_000_000, // ts_event
+            2_000_000_100, // ts_recv
+            "ETHUSDT",
+            "BINANCE",
+            dec!(3000.0),  // bid_price
+            dec!(3001.0),  // ask_price
+            dec!(10.0),    // bid_size
+            dec!(15.0),    // ask_size
+            1,             // sequence
+        );
+
+        let event = MarketDataEventDbn::quote(quote);
+
+        assert!(!event.is_trade());
+        assert!(event.is_quote());
+        assert!(!event.is_book());
+        assert_eq!(event.level(), 1);
+        assert_eq!(event.ts_event(), 2_000_000_000);
+    }
+
+    #[test]
+    fn test_market_data_event_dbn_levels() {
+        use crate::data::{create_bbo_msg_from_decimals, create_trade_msg_from_decimals, TradeSideCompat};
+
+        let trade = create_trade_msg_from_decimals(
+            1_000_000_000,
+            1_000_000_100,
+            "BTCUSDT",
+            "BINANCE",
+            dec!(50000.0),
+            dec!(1.5),
+            TradeSideCompat::Buy,
+            1,
+        );
+        let quote = create_bbo_msg_from_decimals(
+            2_000_000_000,
+            2_000_000_100,
+            "BTCUSDT",
+            "BINANCE",
+            dec!(50000.0),
+            dec!(50001.0),
+            dec!(10.0),
+            dec!(10.0),
+            1,
+        );
+
+        // Check level assignments
+        assert_eq!(MarketDataEventDbn::trade(trade.clone()).level(), 0);
+        assert_eq!(MarketDataEventDbn::quote(quote.clone()).level(), 1);
+        // L2 and L3 would need Mbp10Msg and MboMsg which require more setup
+    }
+
+    #[test]
+    fn test_market_data_event_dbn_instrument_id() {
+        use crate::data::{create_trade_msg_from_decimals, symbol_to_instrument_id, TradeSideCompat};
+
+        let trade = create_trade_msg_from_decimals(
+            1_000_000_000,
+            1_000_000_100,
+            "BTCUSDT",
+            "BINANCE",
+            dec!(50000.0),
+            dec!(1.5),
+            TradeSideCompat::Buy,
+            1,
+        );
+
+        let event = MarketDataEventDbn::trade(trade);
+        let expected_id = symbol_to_instrument_id("BTCUSDT", "BINANCE");
+
+        assert_eq!(event.instrument_id(), expected_id);
     }
 }

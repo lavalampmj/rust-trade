@@ -40,7 +40,7 @@ pub use quotes::{QuoteStats, QuoteStatsBuilder, QuoteTick};
 pub use symbol_repository::SymbolRepository;
 
 // Re-export market data events
-pub use events::{MarketDataEvent, MarketDataType};
+pub use events::{MarketDataEvent, MarketDataEventDbn, MarketDataType};
 
 // Re-export sequence generator
 pub use sequence::SequenceGenerator;
