@@ -32,13 +32,14 @@ cargo clippy
 cd data-manager
 
 # Start data manager service with live Binance streaming and IPC transport
-cargo run serve --live --provider binance --symbols BTCUSDT,ETHUSDT --ipc
+# Note: Use DBT canonical symbology (BTCUSD) - converted to venue format automatically
+cargo run serve --live --provider binance --symbols BTCUSD,ETHUSD --ipc
 
-# Start with Kraken Spot streaming
-cargo run serve --live --provider kraken --symbols XBT/USD,ETH/USD --ipc
+# Start with Kraken Spot streaming (DBT format converted to BTC/USD internally)
+cargo run serve --live --provider kraken --symbols BTCUSD,ETHUSD,SOLUSD --ipc
 
 # Start with Kraken Futures streaming (demo/testnet)
-cargo run serve --live --provider kraken_futures --demo --symbols PI_XBTUSD,PI_ETHUSD --ipc
+cargo run serve --live --provider kraken_futures --demo --symbols BTCUSD,ETHUSD --ipc
 
 # Start with persistence to database
 cargo run serve --live --ipc --persist
@@ -47,14 +48,14 @@ cargo run serve --live --ipc --persist
 cargo run serve -c ../config/development.toml --live --ipc
 
 # Fetch historical data from Databento
-cargo run fetch --symbols BTCUSDT --exchange binance --provider databento --start 2024-01-01 --end 2024-01-31
+cargo run fetch --symbols BTCUSD --exchange binance --provider databento --start 2024-01-01 --end 2024-01-31
 
 # Dry run to see what would be fetched
-cargo run fetch --symbols BTCUSDT --exchange binance --start 2024-01-01 --end 2024-01-31 --dry-run
+cargo run fetch --symbols BTCUSD --exchange binance --start 2024-01-01 --end 2024-01-31 --dry-run
 
 # Symbol management
-cargo run symbol list                           # List registered symbols
-cargo run symbol add --symbols BTCUSDT,ETHUSDT  # Add symbols
+cargo run symbol list                         # List registered symbols
+cargo run symbol add --symbols BTCUSD,ETHUSD  # Add symbols (DBT canonical format)
 cargo run symbol remove --symbols DOGEUSDT      # Remove symbols
 cargo run symbol discover --provider binance    # Discover available symbols
 
@@ -64,9 +65,9 @@ cargo run db stats                              # Show database statistics
 cargo run db compress                           # Compress old data
 
 # Backfill with cost tracking
-cargo run backfill estimate --symbols BTCUSDT --start 2024-01-01 --end 2024-01-31
-cargo run backfill fetch --symbols BTCUSDT --start 2024-01-01 --end 2024-01-31
-cargo run backfill fill-gaps --symbols BTCUSDT  # Detect and fill data gaps
+cargo run backfill estimate --symbols BTCUSD --start 2024-01-01 --end 2024-01-31
+cargo run backfill fetch --symbols BTCUSD --start 2024-01-01 --end 2024-01-31
+cargo run backfill fill-gaps --symbols BTCUSD  # Detect and fill data gaps
 cargo run backfill status                       # Show backfill status
 cargo run backfill cost-report                  # Show cost report
 
@@ -144,6 +145,60 @@ This separation enables code reuse: trading-core, data-manager, and src-tauri al
 - **IPC mode only**: data-manager streams from exchanges (Binance, Kraken) → shared memory IPC → trading-core consumes
 - trading-core does not persist tick data to database (handled by data-manager with TimescaleDB)
 - trading-core only updates cache and processes paper trading signals
+
+### DBT-Native Architecture
+
+The framework uses **Databento (DBT) data structures and symbology** as the canonical internal format throughout the system. Conversions to/from venue-specific formats happen only at the edges.
+
+#### Canonical Symbology
+
+**DBT format**: `BTCUSD`, `ETHUSD`, `SOLUSD` (base + quote, no separators)
+
+| Component | Format Used | Example |
+|-----------|-------------|---------|
+| CLI arguments | DBT canonical | `--symbols BTCUSD,ETHUSD` |
+| Config files | DBT canonical | `symbols = ["BTCUSD", "ETHUSD"]` |
+| Internal data structures | DBT canonical | `tick.symbol = "BTCUSD"` |
+| Database storage | DBT canonical | `symbol VARCHAR = 'BTCUSD'` |
+| Cache keys | DBT canonical | `ticks:BTCUSD` |
+| Strategy instances | DBT canonical | `StrategyInstanceConfig::new("rsi", "BTCUSD")` |
+
+#### Edge Conversions
+
+Venue-specific symbol formats are handled **only** at data ingestion and order submission:
+
+```
+CLI Input (DBT)     →  Provider Adapter  →  Venue WebSocket
+   BTCUSD           →  to_kraken_spot()  →  BTC/USD
+   BTCUSD           →  to_binance()      →  BTCUSDT
+   BTCUSD           →  to_kraken_futures →  PI_XBTUSD
+
+Venue Response      →  Normalizer        →  Internal (DBT)
+   BTC/USD          →  from_kraken()     →  BTCUSD
+   BTCUSDT          →  from_binance()    →  BTCUSD
+```
+
+**Key files for symbol conversion**:
+- `data-manager/src/provider/kraken/symbol.rs` - Kraken spot/futures conversion
+- `data-manager/src/provider/binance/symbol.rs` - Binance conversion
+- `data-manager/src/provider/databento/` - Native DBT (no conversion needed)
+
+#### DBN Data Types
+
+For market data, the framework uses DBN (Databento Binary) types internally:
+- `TradeMsg` - Trade/tick data (48 bytes fixed-size)
+- `BboMsg` - Best bid/offer quotes (L1)
+- `Mbp10Msg` - Market-by-price 10 levels (L2)
+- `MboMsg` - Market-by-order (L3)
+
+**Benefits**:
+- Fixed-point math (i64 with 1e-9 scale) faster than Decimal for comparisons
+- Compact memory layout for high-frequency processing
+- Native Databento compatibility for futures/equities data
+
+**Extension traits** in `trading-common/src/data/dbn_types.rs`:
+- `TradeMsgExt` - Helper methods for TradeMsg
+- `create_trade_msg_from_decimals()` - Construct from Decimal prices
 
 ### Key Architectural Patterns
 
@@ -402,7 +457,7 @@ DATA_MANAGER_CONFIG_DIR=/custom/config/path  # Custom config directory for data-
 
 **Key configuration**:
 ```toml
-symbols = ["BTCUSDT", "ETHUSDT", ...]  # Trading pairs to monitor
+symbols = ["BTCUSD", "ETHUSD", ...]  # Trading pairs (DBT canonical format)
 
 [database]
 max_connections = 5
@@ -487,7 +542,7 @@ psql -d trading_core -c "\dt"
 **Architecture**: trading-core receives all live data via IPC from data-manager. Tick persistence is handled by data-manager.
 
 ```
-Terminal 1: cd data-manager && cargo run serve --live --ipc --persist --symbols BTCUSDT
+Terminal 1: cd data-manager && cargo run serve --live --ipc --persist --symbols BTCUSD
 Terminal 2: cd trading-core && cargo run live --paper-trading
 
 Data flow:
@@ -631,7 +686,7 @@ shutdown_tx.send(()).ok();
 ```bash
 # Terminal 1: Start data-manager with debug logging
 cd data-manager
-RUST_LOG=data_manager=debug cargo run serve --live --ipc --symbols BTCUSDT
+RUST_LOG=data_manager=debug cargo run serve --live --ipc --symbols BTCUSD
 
 # Terminal 2: Start trading-core with debug logging
 cd trading-core
@@ -642,7 +697,7 @@ psql -d trading_core -c "SELECT COUNT(*) FROM tick_data WHERE created_at > NOW()
 
 # Monitor Redis cache
 redis-cli KEYS "ticks:*"
-redis-cli LRANGE "ticks:BTCUSDT" 0 10
+redis-cli LRANGE "ticks:BTCUSD" 0 10
 
 # Check data-manager database stats
 cd data-manager && cargo run db stats
@@ -754,7 +809,7 @@ Required:
 Optional:
 - `POSTGRES_USER`: Database user (default: trading)
 - `POSTGRES_DB`: Database name (default: trading_core)
-- `TRADING_SYMBOLS`: Symbols to subscribe (default: BTCUSDT,ETHUSDT)
+- `TRADING_SYMBOLS`: Symbols to subscribe (default: BTCUSD,ETHUSD) - DBT canonical format
 - `RUST_LOG`: Log levels (default: data_manager=info,sqlx=warn)
 - `LOG_FORMAT`: Log format (default: json)
 - `BINANCE_API_KEY`, `BINANCE_API_SECRET`: For authenticated Binance endpoints

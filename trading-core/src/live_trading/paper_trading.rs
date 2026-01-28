@@ -14,6 +14,11 @@ use trading_common::orders::{Order, OrderSide};
 use trading_common::series::bars_context::BarsContext;
 use trading_common::state::{ComponentId, ComponentState, StateCoordinator, StrategyStateTracker};
 
+/// Paper trading processor for single-symbol strategies.
+///
+/// **Deprecated**: Use [`MultiSymbolProcessor`](crate::live_trading::MultiSymbolProcessor)
+/// instead, which supports multiple symbols with independent strategy instances.
+#[allow(dead_code)]
 pub struct PaperTradingProcessor {
     strategy: Box<dyn Strategy + Send>,
     repository: Arc<TickDataRepository>,
@@ -38,6 +43,7 @@ pub struct PaperTradingProcessor {
     warmup_transitioned: bool,
 }
 
+#[allow(dead_code)]
 impl PaperTradingProcessor {
     pub fn new(
         strategy: Box<dyn Strategy + Send>,

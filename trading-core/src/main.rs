@@ -3,10 +3,7 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
-use tracing::{debug, error, info, warn};
-
-// State management for lifecycle tracking
-use trading_common::state::StateCoordinator;
+use tracing::{error, info, warn};
 
 // CLI-specific modules
 mod alerting;
@@ -24,7 +21,8 @@ use trading_common::data;
 use config::Settings;
 use data::{cache::TieredCache, repository::TickDataRepository};
 use exchange::Exchange;
-use live_trading::PaperTradingProcessor;
+use live_trading::MultiSymbolProcessor;
+use trading_common::backtest::strategy::StrategyInstanceConfig;
 use service::MarketDataService;
 
 use data::cache::TickDataCache;
@@ -193,43 +191,33 @@ async fn run_live_with_paper_trading() -> Result<(), Box<dyn std::error::Error>>
     let exchange: Arc<dyn Exchange> = Arc::new(data_source::IpcExchange::binance());
     info!("✅ Data source ready");
 
-    // Create strategy
-    info!(
-        "🧠 Initializing strategy: {}",
-        settings.paper_trading.strategy
-    );
-    let strategy = backtest::strategy::create_strategy(&settings.paper_trading.strategy)?;
-    info!("✅ Strategy initialized: {}", strategy.name());
-
-    // Create paper trading processor with state tracking
+    // Create multi-symbol paper trading processor
     let initial_capital = Decimal::try_from(settings.paper_trading.initial_capital)
         .map_err(|e| format!("Invalid initial capital: {}", e))?;
 
-    // Create shared state coordinator for lifecycle management
-    let coordinator = Arc::new(StateCoordinator::default());
+    // Calculate per-symbol capital allocation
+    let num_symbols = settings.symbols.len();
+    let capital_per_symbol = initial_capital / Decimal::from(num_symbols);
 
-    // Subscribe to state changes for monitoring/logging
-    let mut state_rx = coordinator.subscribe();
-    tokio::spawn(async move {
-        while let Ok(event) = state_rx.recv().await {
-            info!(
-                "STATE CHANGE: {} | {:?} → {:?} | reason: {:?}",
-                event.component_id, event.old_state, event.new_state, event.reason
-            );
-        }
-        debug!("State change subscriber task ended");
-    });
+    info!(
+        "🧠 Initializing strategy '{}' for {} symbols (${} per symbol)",
+        settings.paper_trading.strategy,
+        num_symbols,
+        capital_per_symbol
+    );
 
-    // Get the first symbol for state tracking
-    let primary_symbol = settings
+    // Create strategy instance configs for each symbol
+    let configs: Vec<StrategyInstanceConfig> = settings
         .symbols
-        .first()
-        .map(|s| s.as_str())
-        .unwrap_or("BTCUSDT");
+        .iter()
+        .map(|symbol| {
+            StrategyInstanceConfig::new(&settings.paper_trading.strategy, symbol)
+                .with_starting_cash(capital_per_symbol, "USD")
+        })
+        .collect();
 
-    // Create processor with state tracking enabled
-    let processor = PaperTradingProcessor::new(strategy, Arc::clone(&repository), initial_capital)
-        .with_coordinator(Arc::clone(&coordinator), primary_symbol)
+    // Create multi-symbol processor
+    let processor = MultiSymbolProcessor::new(configs, Arc::clone(&repository))
         .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
 
     let paper_trading = Arc::new(tokio::sync::Mutex::new(processor));

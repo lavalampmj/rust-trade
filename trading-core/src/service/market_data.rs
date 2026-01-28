@@ -7,7 +7,7 @@ use tracing::{debug, error, info, warn};
 
 use super::{ProcessingStats, ServiceError};
 use crate::exchange::Exchange;
-use crate::live_trading::PaperTradingProcessor;
+use crate::live_trading::MultiSymbolProcessor;
 use crate::metrics;
 use trading_common::data::cache::TickDataCache;
 use trading_common::data::types::TickData;
@@ -32,8 +32,8 @@ pub struct MarketDataService {
     shutdown_tx: broadcast::Sender<()>,
     /// Processing statistics
     stats: Arc<Mutex<ProcessingStats>>,
-    /// Paper trading processor
-    paper_trading: Option<Arc<Mutex<PaperTradingProcessor>>>,
+    /// Multi-symbol paper trading processor
+    paper_trading: Option<Arc<Mutex<MultiSymbolProcessor>>>,
 }
 
 impl MarketDataService {
@@ -55,7 +55,7 @@ impl MarketDataService {
         }
     }
 
-    pub fn with_paper_trading(mut self, paper_trading: Arc<Mutex<PaperTradingProcessor>>) -> Self {
+    pub fn with_paper_trading(mut self, paper_trading: Arc<Mutex<MultiSymbolProcessor>>) -> Self {
         self.paper_trading = Some(paper_trading);
         self
     }

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use rust_decimal::Decimal;
 use std::str::FromStr;
 
-use super::PaperTradingProcessor;
+use super::paper_trading::PaperTradingProcessor;
 use trading_common::backtest::strategy::Strategy;
 use trading_common::data::types::{BarData, TickData, TradeSide};
 use trading_common::data::{

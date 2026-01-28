@@ -795,9 +795,10 @@ impl OHLCData {
 // =================================================================
 
 /// Operational mode for strategy bar data processing
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum BarDataMode {
     /// Fire on every tick (both current_tick and ohlc_bar available)
+    #[default]
     OnEachTick,
     /// Fire only when price changes from previous tick
     OnPriceMove,

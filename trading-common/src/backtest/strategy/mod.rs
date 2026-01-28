@@ -1,6 +1,7 @@
 pub(crate) mod base;
 mod config;
 pub mod dispatcher;
+pub mod instance_config;
 pub mod position;
 mod python_bridge;
 mod python_loader;
@@ -14,6 +15,10 @@ mod security_tests;
 pub use base::Strategy;
 pub use config::StrategiesConfig;
 pub use dispatcher::StrategyEventDispatcher;
+pub use instance_config::{
+    BarSpec, FillConfig, FillModel, FillResolution, OrderDefaults, StartupBehavior,
+    StrategyInstanceConfig, TimeInForce, TransformParams, TransformValue,
+};
 pub use position::PositionEvent;
 pub use python_loader::{
     calculate_file_hash, HotReloadConfig, PythonStrategyRegistry, ReloadMetrics, ReloadStats,

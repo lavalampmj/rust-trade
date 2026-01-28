@@ -7,19 +7,22 @@ use crate::provider::ProviderError;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-/// Mapping from common names to Kraken Spot names
-/// Kraken uses XBT instead of BTC for Bitcoin
+/// Mapping from common names to Kraken Spot V2 WebSocket names
+/// Note: Kraken Spot V2 WebSocket API uses standard names (BTC, not XBT)
+/// The old REST API used XBT, but V2 WebSocket uses BTC
 static TO_KRAKEN_SPOT: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
     HashMap::from([
-        ("BTC", "XBT"),
+        // V2 WebSocket uses standard BTC, no conversion needed
+        // ("BTC", "XBT"),  // Old REST API mapping - not used in V2
         ("DOGE", "XDG"), // Kraken uses XDG for Dogecoin in some contexts
     ])
 });
 
 /// Reverse mapping from Kraken names to common names
+/// Also used to convert legacy XBT format to standard BTC
 static FROM_KRAKEN: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
     HashMap::from([
-        ("XBT", "BTC"),
+        ("XBT", "BTC"), // Legacy REST API used XBT, convert to BTC for V2
         ("XDG", "DOGE"),
     ])
 });
@@ -27,33 +30,48 @@ static FROM_KRAKEN: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::ne
 /// Common quote currencies for Kraken
 static QUOTE_CURRENCIES: &[&str] = &["USD", "EUR", "GBP", "CAD", "JPY", "AUD", "USDT", "USDC"];
 
-/// Convert a canonical symbol to Kraken Spot format.
+/// Convert a canonical symbol to Kraken Spot V2 WebSocket format.
 ///
 /// # Examples
-/// - "BTCUSD" -> "XBT/USD"
+/// - "BTCUSD" -> "BTC/USD"
 /// - "ETHUSD" -> "ETH/USD"
 /// - "SOLUSD" -> "SOL/USD"
-/// - "XBT/USD" -> "XBT/USD" (already in Kraken format)
+/// - "XBT/USD" -> "BTC/USD" (converts legacy XBT to BTC for V2)
+/// - "BTC/USD" -> "BTC/USD" (already in correct format)
 pub fn to_kraken_spot(symbol: &str) -> Result<String, ProviderError> {
     let symbol = symbol.trim().to_uppercase();
 
-    // If already in Kraken format (contains /), validate and return
+    // If already in slash format, validate and normalize
     if symbol.contains('/') {
         validate_kraken_spot_symbol(&symbol)?;
-        return Ok(symbol);
+        let parts: Vec<&str> = symbol.split('/').collect();
+        // Convert legacy XBT to BTC for V2 API
+        let base = convert_from_kraken(parts[0]);
+        let quote = convert_from_kraken(parts[1]);
+        return Ok(format!("{}/{}", base, quote));
     }
 
     // Try to split into base and quote
     let (base, quote) = split_symbol(&symbol)?;
 
-    // Convert base currency if needed (BTC -> XBT)
+    // Convert base currency if needed (apply TO_KRAKEN_SPOT mapping)
+    // Also convert legacy XBT to BTC
+    let normalized_base = convert_from_kraken(&base);
     let kraken_base = TO_KRAKEN_SPOT
-        .get(base.as_str())
+        .get(normalized_base.as_str())
         .map(|s| s.to_string())
-        .unwrap_or(base);
+        .unwrap_or(normalized_base);
 
     Ok(format!("{}/{}", kraken_base, quote))
 }
+
+/// Mapping for Kraken Futures - uses XBT instead of BTC
+static TO_KRAKEN_FUTURES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
+    HashMap::from([
+        ("BTC", "XBT"), // Futures API uses XBT
+        ("DOGE", "XDG"),
+    ])
+});
 
 /// Convert a canonical symbol to Kraken Futures format.
 ///
@@ -76,11 +94,14 @@ pub fn to_kraken_futures(symbol: &str) -> Result<String, ProviderError> {
     // Try to split into base and quote
     let (base, quote) = split_symbol(&clean)?;
 
-    // Convert base currency if needed (BTC -> XBT)
-    let kraken_base = TO_KRAKEN_SPOT
-        .get(base.as_str())
+    // First normalize legacy XBT input to BTC for consistent handling
+    let normalized_base = convert_from_kraken(&base);
+
+    // Convert base currency for Futures API (BTC -> XBT)
+    let kraken_base = TO_KRAKEN_FUTURES
+        .get(normalized_base.as_str())
         .map(|s| s.to_string())
-        .unwrap_or(base);
+        .unwrap_or(normalized_base);
 
     // PI_ prefix is for perpetual inverse contracts (most common)
     Ok(format!("PI_{}{}", kraken_base, quote))
@@ -248,17 +269,19 @@ mod tests {
 
     #[test]
     fn test_to_kraken_spot() {
-        assert_eq!(to_kraken_spot("BTCUSD").unwrap(), "XBT/USD");
+        // V2 WebSocket API uses standard BTC, not XBT
+        assert_eq!(to_kraken_spot("BTCUSD").unwrap(), "BTC/USD");
         assert_eq!(to_kraken_spot("ETHUSD").unwrap(), "ETH/USD");
         assert_eq!(to_kraken_spot("SOLUSD").unwrap(), "SOL/USD");
-        assert_eq!(to_kraken_spot("btcusd").unwrap(), "XBT/USD");
+        assert_eq!(to_kraken_spot("btcusd").unwrap(), "BTC/USD");
     }
 
     #[test]
     fn test_to_kraken_spot_passthrough() {
-        // Already in Kraken format
-        assert_eq!(to_kraken_spot("XBT/USD").unwrap(), "XBT/USD");
+        // Already in slash format - normalize legacy XBT to BTC
+        assert_eq!(to_kraken_spot("XBT/USD").unwrap(), "BTC/USD");
         assert_eq!(to_kraken_spot("ETH/USD").unwrap(), "ETH/USD");
+        assert_eq!(to_kraken_spot("BTC/USD").unwrap(), "BTC/USD");
     }
 
     #[test]
@@ -319,7 +342,8 @@ mod tests {
 
     #[test]
     fn test_various_quote_currencies() {
-        assert_eq!(to_kraken_spot("BTCEUR").unwrap(), "XBT/EUR");
+        // V2 uses standard BTC, not XBT
+        assert_eq!(to_kraken_spot("BTCEUR").unwrap(), "BTC/EUR");
         assert_eq!(to_kraken_spot("ETHGBP").unwrap(), "ETH/GBP");
         assert_eq!(to_kraken_spot("SOLJPY").unwrap(), "SOL/JPY");
     }

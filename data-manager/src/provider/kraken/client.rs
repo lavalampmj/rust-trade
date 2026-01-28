@@ -900,7 +900,8 @@ mod tests {
             SymbolSpec::new("ETHUSD", "KRAKEN"),
         ];
         let kraken_symbols = provider.convert_symbols(&symbols).unwrap();
-        assert_eq!(kraken_symbols, vec!["XBT/USD", "ETH/USD"]);
+        // V2 WebSocket API uses standard BTC, not XBT
+        assert_eq!(kraken_symbols, vec!["BTC/USD", "ETH/USD"]);
     }
 
     #[test]
@@ -919,7 +920,9 @@ mod tests {
         let provider = KrakenProvider::spot();
         let symbols = provider.discover_symbols(None).await.unwrap();
         assert!(!symbols.is_empty());
-        assert!(symbols.iter().any(|s| s.symbol == "XBT/USD"));
+        // Discover returns raw Kraken symbols which may use XBT
+        // The conversion to BTC happens in to_kraken_spot()
+        assert!(symbols.iter().any(|s| s.symbol == "XBT/USD" || s.symbol == "BTC/USD"));
     }
 
     #[tokio::test]
