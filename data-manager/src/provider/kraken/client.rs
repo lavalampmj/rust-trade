@@ -754,33 +754,114 @@ impl DataProvider for KrakenProvider {
     async fn discover_symbols(&self, _exchange: Option<&str>) -> ProviderResult<Vec<SymbolSpec>> {
         let exchange = get_exchange_name(self.market_type == KrakenMarketType::Futures);
 
-        // Return common Kraken trading pairs
         match self.market_type {
-            KrakenMarketType::Spot => Ok(vec![
-                SymbolSpec::new("XBT/USD", exchange),
-                SymbolSpec::new("ETH/USD", exchange),
-                SymbolSpec::new("SOL/USD", exchange),
-                SymbolSpec::new("XRP/USD", exchange),
-                SymbolSpec::new("ADA/USD", exchange),
-                SymbolSpec::new("DOGE/USD", exchange),
-                SymbolSpec::new("DOT/USD", exchange),
-                SymbolSpec::new("AVAX/USD", exchange),
-                SymbolSpec::new("MATIC/USD", exchange),
-                SymbolSpec::new("LINK/USD", exchange),
-            ]),
-            KrakenMarketType::Futures => Ok(vec![
-                SymbolSpec::new("PI_XBTUSD", exchange),
-                SymbolSpec::new("PI_ETHUSD", exchange),
-                SymbolSpec::new("PI_SOLUSD", exchange),
-                SymbolSpec::new("PI_XRPUSD", exchange),
-                SymbolSpec::new("PI_ADAUSD", exchange),
-                SymbolSpec::new("PI_DOGEUSD", exchange),
-                SymbolSpec::new("PI_DOTUSD", exchange),
-                SymbolSpec::new("PI_AVAXUSD", exchange),
-                SymbolSpec::new("PI_MATICUSD", exchange),
-                SymbolSpec::new("PI_LINKUSD", exchange),
-            ]),
+            KrakenMarketType::Spot => self.discover_spot_symbols(&exchange).await,
+            KrakenMarketType::Futures => self.discover_futures_symbols(&exchange).await,
         }
+    }
+}
+
+impl KrakenProvider {
+    /// Discover available spot trading pairs from Kraken REST API
+    async fn discover_spot_symbols(&self, exchange: &str) -> ProviderResult<Vec<SymbolSpec>> {
+        let url = "https://api.kraken.com/0/public/AssetPairs";
+
+        let response = reqwest::get(url)
+            .await
+            .map_err(|e| ProviderError::Connection(format!("Failed to fetch asset pairs: {}", e)))?;
+
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| ProviderError::Parse(format!("Failed to parse response: {}", e)))?;
+
+        // Check for API errors
+        if let Some(errors) = json.get("error").and_then(|e: &serde_json::Value| e.as_array()) {
+            if !errors.is_empty() {
+                let error_msgs: Vec<String> = errors
+                    .iter()
+                    .filter_map(|e: &serde_json::Value| e.as_str().map(String::from))
+                    .collect();
+                return Err(ProviderError::Request(error_msgs.join(", ")));
+            }
+        }
+
+        let mut symbols = Vec::new();
+
+        if let Some(result) = json.get("result").and_then(|r: &serde_json::Value| r.as_object()) {
+            for (pair_name, pair_info) in result {
+                // Skip darkpool pairs (contain ".d")
+                if pair_name.contains(".d") {
+                    continue;
+                }
+
+                // Get the wsname (WebSocket name) which is the format we need
+                if let Some(wsname) = pair_info.get("wsname").and_then(|w: &serde_json::Value| w.as_str()) {
+                    // Filter for USD pairs only (most common)
+                    if wsname.ends_with("/USD") {
+                        symbols.push(SymbolSpec::new(wsname, exchange));
+                    }
+                }
+            }
+        }
+
+        // Sort alphabetically
+        symbols.sort_by(|a, b| a.symbol.cmp(&b.symbol));
+
+        Ok(symbols)
+    }
+
+    /// Discover available futures instruments from Kraken Futures REST API
+    async fn discover_futures_symbols(&self, exchange: &str) -> ProviderResult<Vec<SymbolSpec>> {
+        let url = if self.demo {
+            "https://demo-futures.kraken.com/derivatives/api/v3/instruments"
+        } else {
+            "https://futures.kraken.com/derivatives/api/v3/instruments"
+        };
+
+        let response = reqwest::get(url)
+            .await
+            .map_err(|e| ProviderError::Connection(format!("Failed to fetch instruments: {}", e)))?;
+
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| ProviderError::Parse(format!("Failed to parse response: {}", e)))?;
+
+        // Check for API errors
+        if json.get("result").and_then(|r: &serde_json::Value| r.as_str()) == Some("error") {
+            let error = json
+                .get("error")
+                .and_then(|e: &serde_json::Value| e.as_str())
+                .unwrap_or("Unknown error");
+            return Err(ProviderError::Request(error.to_string()));
+        }
+
+        let mut symbols = Vec::new();
+
+        if let Some(instruments) = json.get("instruments").and_then(|i: &serde_json::Value| i.as_array()) {
+            for instrument in instruments {
+                if let Some(symbol) = instrument.get("symbol").and_then(|s: &serde_json::Value| s.as_str()) {
+                    // Filter for perpetual inverse contracts (PI_) with USD
+                    if symbol.starts_with("PI_") && symbol.ends_with("USD") {
+                        // Check if tradeable
+                        let tradeable = instrument
+                            .get("tradeable")
+                            .and_then(|t: &serde_json::Value| t.as_bool())
+                            .unwrap_or(false);
+
+                        if tradeable {
+                            symbols.push(SymbolSpec::new(symbol, exchange));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sort alphabetically
+        symbols.sort_by(|a, b| a.symbol.cmp(&b.symbol));
+
+        Ok(symbols)
     }
 }
 
