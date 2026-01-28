@@ -19,12 +19,10 @@ use crate::execution::venue::binance::endpoints::{futures, BinanceEndpoints};
 use crate::execution::venue::error::{VenueError, VenueResult};
 use crate::execution::venue::http::{HttpClient, RateLimiter};
 use crate::execution::venue::traits::{
-    AccountQueryVenue, ExecutionCallback, ExecutionStreamVenue, ExecutionVenue,
-    OrderSubmissionVenue,
+    AccountQueryVenue, ExecutionCallback, ExecutionStreamVenue, OrderSubmissionVenue,
 };
-use crate::execution::venue::types::{
-    BalanceInfo, OrderQueryResponse, VenueConnectionStatus, VenueInfo,
-};
+use crate::execution::venue::types::{BalanceInfo, OrderQueryResponse, VenueInfo};
+use crate::venue::{ConnectionStatus, VenueConnection};
 use crate::orders::{ClientOrderId, Order, OrderType, PositionSide, TimeInForce, VenueOrderId};
 
 use super::normalizer::FuturesExecutionNormalizer;
@@ -294,7 +292,7 @@ impl BinanceFuturesVenue {
 }
 
 #[async_trait]
-impl ExecutionVenue for BinanceFuturesVenue {
+impl VenueConnection for BinanceFuturesVenue {
     fn info(&self) -> &VenueInfo {
         &self.info
     }
@@ -347,11 +345,11 @@ impl ExecutionVenue for BinanceFuturesVenue {
         self.connected.load(Ordering::SeqCst)
     }
 
-    fn connection_status(&self) -> VenueConnectionStatus {
+    fn connection_status(&self) -> ConnectionStatus {
         if self.connected.load(Ordering::SeqCst) {
-            VenueConnectionStatus::Connected
+            ConnectionStatus::Connected
         } else {
-            VenueConnectionStatus::Disconnected
+            ConnectionStatus::Disconnected
         }
     }
 }
@@ -557,6 +555,7 @@ impl AccountQueryVenue for BinanceFuturesVenue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::venue::VenueConnection;
 
     #[test]
     fn test_venue_creation() {
@@ -640,7 +639,7 @@ mod tests {
         let config = BinanceVenueConfig::usdt_futures();
         let venue = BinanceFuturesVenue::new(config).unwrap();
 
-        assert_eq!(venue.connection_status(), VenueConnectionStatus::Disconnected);
+        assert_eq!(venue.connection_status(), ConnectionStatus::Disconnected);
         assert!(!venue.connected.load(std::sync::atomic::Ordering::SeqCst));
     }
 }

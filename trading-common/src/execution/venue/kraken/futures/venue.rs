@@ -23,12 +23,10 @@ use crate::execution::venue::kraken::common::KrakenFuturesSigner;
 use crate::execution::venue::kraken::config::KrakenFuturesVenueConfig;
 use crate::execution::venue::kraken::endpoints::KrakenFuturesEndpoints;
 use crate::execution::venue::traits::{
-    AccountQueryVenue, ExecutionCallback, ExecutionStreamVenue, ExecutionVenue,
-    OrderSubmissionVenue,
+    AccountQueryVenue, ExecutionCallback, ExecutionStreamVenue, OrderSubmissionVenue,
 };
-use crate::execution::venue::types::{
-    BalanceInfo, OrderQueryResponse, VenueConnectionStatus, VenueInfo,
-};
+use crate::execution::venue::types::{BalanceInfo, OrderQueryResponse, VenueInfo};
+use crate::venue::{ConnectionStatus, VenueConnection};
 use crate::orders::{ClientOrderId, Order, OrderType, TimeInForce, VenueOrderId};
 
 use super::normalizer::FuturesExecutionNormalizer;
@@ -149,7 +147,7 @@ impl KrakenFuturesVenue {
 }
 
 #[async_trait]
-impl ExecutionVenue for KrakenFuturesVenue {
+impl VenueConnection for KrakenFuturesVenue {
     fn info(&self) -> &VenueInfo {
         &self.info
     }
@@ -208,11 +206,11 @@ impl ExecutionVenue for KrakenFuturesVenue {
         self.connected.load(Ordering::SeqCst)
     }
 
-    fn connection_status(&self) -> VenueConnectionStatus {
+    fn connection_status(&self) -> ConnectionStatus {
         if self.connected.load(Ordering::SeqCst) {
-            VenueConnectionStatus::Connected
+            ConnectionStatus::Connected
         } else {
-            VenueConnectionStatus::Disconnected
+            ConnectionStatus::Disconnected
         }
     }
 }
@@ -507,6 +505,7 @@ impl AccountQueryVenue for KrakenFuturesVenue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::venue::VenueConnection;
 
     #[test]
     fn test_venue_creation() {
@@ -536,7 +535,7 @@ mod tests {
 
         assert!(!venue.is_connected());
         assert!(!venue.is_stream_active());
-        assert_eq!(venue.connection_status(), VenueConnectionStatus::Disconnected);
+        assert_eq!(venue.connection_status(), ConnectionStatus::Disconnected);
     }
 
     #[test]

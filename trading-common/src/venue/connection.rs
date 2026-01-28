@@ -7,7 +7,8 @@
 use async_trait::async_trait;
 
 use super::error::VenueResult;
-use super::types::VenueInfo;
+// Use VenueInfo from execution module (the canonical definition)
+use crate::execution::venue::VenueInfo;
 
 /// Connection status for a venue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

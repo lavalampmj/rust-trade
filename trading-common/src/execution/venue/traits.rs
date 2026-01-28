@@ -36,11 +36,12 @@ use rust_decimal::Decimal;
 use tokio::sync::broadcast;
 
 use crate::orders::{ClientOrderId, Order, OrderEventAny, VenueOrderId};
+use crate::venue::VenueConnection;
 
 use super::error::VenueResult;
 use super::types::{
     BalanceInfo, BatchCancelResult, BatchOrderResult, CancelRequest, OrderQueryResponse,
-    VenueConnectionStatus, VenueInfo,
+    VenueInfo,
 };
 
 /// Callback for execution reports from WebSocket streams.
@@ -52,52 +53,38 @@ pub type ExecutionCallback = Arc<dyn Fn(OrderEventAny) + Send + Sync>;
 
 /// Base trait for all execution venues.
 ///
-/// This trait provides the common interface for connecting to and
-/// managing the lifecycle of an execution venue connection.
+/// This trait extends [`VenueConnection`] to mark venues as execution-capable.
+/// All connection lifecycle methods come from `VenueConnection`.
 ///
-/// # Migration Notice
-///
-/// This trait is being unified with [`VenueConnection`] from `crate::venue`.
-/// The traits have identical interfaces. New venue implementations should
-/// consider implementing both traits to ensure forward compatibility:
+/// # Example
 ///
 /// ```ignore
 /// use trading_common::venue::VenueConnection;
 /// use trading_common::execution::venue::ExecutionVenue;
 ///
+/// // Implement VenueConnection first
 /// impl VenueConnection for MyVenue {
-///     // Implement connection lifecycle methods
+///     fn info(&self) -> &VenueInfo { &self.info }
+///     async fn connect(&mut self) -> VenueResult<()> { /* ... */ Ok(()) }
+///     async fn disconnect(&mut self) -> VenueResult<()> { /* ... */ Ok(()) }
+///     fn is_connected(&self) -> bool { self.connected }
+///     fn connection_status(&self) -> ConnectionStatus { self.status }
 /// }
 ///
-/// impl ExecutionVenue for MyVenue {
-///     // Delegate to VenueConnection methods
-///     fn info(&self) -> &VenueInfo { /* ... */ }
-///     // ...
-/// }
+/// // ExecutionVenue is auto-implemented for VenueConnection
+/// // No additional methods needed
 /// ```
-#[async_trait]
-pub trait ExecutionVenue: Send + Sync {
-    /// Returns information about this venue's capabilities.
-    fn info(&self) -> &VenueInfo;
-
-    /// Connect to the venue.
+pub trait ExecutionVenue: VenueConnection {
+    /// Returns venue info (delegated to VenueConnection).
     ///
-    /// This establishes the initial connection (e.g., validates API credentials,
-    /// creates HTTP client, etc.). WebSocket streams are started separately
-    /// via [`ExecutionStreamVenue::start_execution_stream`].
-    async fn connect(&mut self) -> VenueResult<()>;
-
-    /// Disconnect from the venue.
-    ///
-    /// This closes all connections and releases resources.
-    async fn disconnect(&mut self) -> VenueResult<()>;
-
-    /// Returns true if the venue is connected and ready for operations.
-    fn is_connected(&self) -> bool;
-
-    /// Returns the current connection status.
-    fn connection_status(&self) -> VenueConnectionStatus;
+    /// This is a convenience method that just calls `VenueConnection::info()`.
+    fn venue_info(&self) -> &VenueInfo {
+        self.info()
+    }
 }
+
+// Auto-implement ExecutionVenue for all VenueConnection types
+impl<T: VenueConnection> ExecutionVenue for T {}
 
 /// Trait for submitting and managing orders via REST API.
 ///

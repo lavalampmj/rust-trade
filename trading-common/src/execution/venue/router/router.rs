@@ -11,12 +11,11 @@ use tracing::{debug, error, info, warn};
 
 use crate::execution::venue::error::{VenueError, VenueResult};
 use crate::execution::venue::traits::{
-    AccountQueryVenue, ExecutionCallback, ExecutionStreamVenue, ExecutionVenue,
-    FullExecutionVenue, OrderSubmissionVenue,
+    AccountQueryVenue, ExecutionCallback, ExecutionStreamVenue, FullExecutionVenue,
+    OrderSubmissionVenue,
 };
-use crate::execution::venue::types::{
-    BalanceInfo, OrderQueryResponse, VenueConnectionStatus, VenueInfo,
-};
+use crate::execution::venue::types::{BalanceInfo, OrderQueryResponse, VenueInfo};
+use crate::venue::{ConnectionStatus, VenueConnection};
 use crate::orders::{ClientOrderId, Order, OrderEventAny, OrderType, TimeInForce, VenueOrderId};
 use rust_decimal::Decimal;
 
@@ -159,7 +158,7 @@ impl VenueRouter {
     }
 
     /// Get connection status for all venues.
-    pub async fn venue_statuses(&self) -> HashMap<VenueId, VenueConnectionStatus> {
+    pub async fn venue_statuses(&self) -> HashMap<VenueId, ConnectionStatus> {
         self.venues
             .read()
             .await
@@ -358,7 +357,7 @@ impl VenueRouter {
 }
 
 #[async_trait]
-impl ExecutionVenue for VenueRouter {
+impl VenueConnection for VenueRouter {
     fn info(&self) -> &VenueInfo {
         // Note: This is tricky with RwLock. We store a static reference.
         // In practice, the aggregated info rarely changes after initial setup.
@@ -475,11 +474,11 @@ impl ExecutionVenue for VenueRouter {
         self.connected.load(Ordering::SeqCst)
     }
 
-    fn connection_status(&self) -> VenueConnectionStatus {
+    fn connection_status(&self) -> ConnectionStatus {
         if self.connected.load(Ordering::SeqCst) {
-            VenueConnectionStatus::Connected
+            ConnectionStatus::Connected
         } else {
-            VenueConnectionStatus::Disconnected
+            ConnectionStatus::Disconnected
         }
     }
 }

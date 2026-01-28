@@ -44,8 +44,9 @@ use tokio::time::timeout;
 
 use trading_common::execution::venue::kraken::create_kraken_spot;
 use trading_common::execution::venue::{
-    AccountQueryVenue, ExecutionStreamVenue, ExecutionVenue, OrderSubmissionVenue,
+    AccountQueryVenue, ExecutionStreamVenue, OrderSubmissionVenue,
 };
+use trading_common::venue::VenueConnection;
 use trading_common::orders::{Order, OrderEventAny, OrderSide, TimeInForce};
 
 // ============================================================================

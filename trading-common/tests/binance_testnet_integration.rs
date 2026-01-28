@@ -39,8 +39,9 @@ use trading_common::execution::venue::binance::{
     create_binance_futures_testnet, create_binance_spot_testnet, MarginType,
 };
 use trading_common::execution::venue::{
-    AccountQueryVenue, ExecutionStreamVenue, ExecutionVenue, OrderSubmissionVenue,
+    AccountQueryVenue, ExecutionStreamVenue, OrderSubmissionVenue,
 };
+use trading_common::venue::VenueConnection;
 use trading_common::orders::{Order, OrderEventAny, OrderSide, TimeInForce};
 
 // ============================================================================

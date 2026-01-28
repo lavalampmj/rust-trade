@@ -149,7 +149,7 @@ pub fn create_kraken_futures_demo() -> VenueResult<KrakenFuturesVenue> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::execution::venue::traits::ExecutionVenue;
+    use crate::venue::VenueConnection;
 
     #[test]
     fn test_create_spot_venue() {

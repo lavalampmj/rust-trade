@@ -19,10 +19,10 @@ use crate::execution::venue::binance::endpoints::{spot, BinanceEndpoints};
 use crate::execution::venue::error::{VenueError, VenueResult};
 use crate::execution::venue::http::{HttpClient, RateLimiter};
 use crate::execution::venue::traits::{
-    AccountQueryVenue, ExecutionCallback, ExecutionStreamVenue, ExecutionVenue,
-    OrderSubmissionVenue,
+    AccountQueryVenue, ExecutionCallback, ExecutionStreamVenue, OrderSubmissionVenue,
 };
-use crate::execution::venue::types::{BalanceInfo, OrderQueryResponse, VenueConnectionStatus, VenueInfo};
+use crate::execution::venue::types::{BalanceInfo, OrderQueryResponse, VenueInfo};
+use crate::venue::{ConnectionStatus, VenueConnection};
 use crate::orders::{ClientOrderId, Order, OrderType, TimeInForce, VenueOrderId};
 
 use super::normalizer::SpotExecutionNormalizer;
@@ -157,7 +157,7 @@ impl BinanceSpotVenue {
 }
 
 #[async_trait]
-impl ExecutionVenue for BinanceSpotVenue {
+impl VenueConnection for BinanceSpotVenue {
     fn info(&self) -> &VenueInfo {
         &self.info
     }
@@ -211,11 +211,11 @@ impl ExecutionVenue for BinanceSpotVenue {
         self.connected.load(Ordering::SeqCst)
     }
 
-    fn connection_status(&self) -> VenueConnectionStatus {
+    fn connection_status(&self) -> ConnectionStatus {
         if self.connected.load(Ordering::SeqCst) {
-            VenueConnectionStatus::Connected
+            ConnectionStatus::Connected
         } else {
-            VenueConnectionStatus::Disconnected
+            ConnectionStatus::Disconnected
         }
     }
 }
@@ -430,6 +430,7 @@ impl AccountQueryVenue for BinanceSpotVenue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::venue::VenueConnection;
 
     #[test]
     fn test_venue_creation() {
@@ -458,7 +459,7 @@ mod tests {
 
         assert!(!venue.is_connected());
         assert!(!venue.is_stream_active());
-        assert_eq!(venue.connection_status(), VenueConnectionStatus::Disconnected);
+        assert_eq!(venue.connection_status(), ConnectionStatus::Disconnected);
     }
 
     #[test]
@@ -522,7 +523,7 @@ mod tests {
         let venue = BinanceSpotVenue::new(config).unwrap();
 
         // Initial state
-        assert_eq!(venue.connection_status(), VenueConnectionStatus::Disconnected);
+        assert_eq!(venue.connection_status(), ConnectionStatus::Disconnected);
 
         // Note: Can't test actual connection without mocking HTTP
         // But we can verify the state machine is properly initialized
