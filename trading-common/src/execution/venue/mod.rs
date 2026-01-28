@@ -3,6 +3,13 @@
 //! This module provides the traits, types, and implementations for
 //! connecting to execution venues (exchanges) for order management.
 //!
+//! # Migration Notice
+//!
+//! The core venue abstractions are being unified in the [`crate::venue`] module.
+//! HTTP and WebSocket infrastructure is now available from [`crate::venue::http`]
+//! and [`crate::venue::websocket`]. This module re-exports from there for
+//! backward compatibility.
+//!
 //! # Core Abstractions
 //!
 //! - **Traits**: [`ExecutionVenue`], [`OrderSubmissionVenue`], [`ExecutionStreamVenue`], [`AccountQueryVenue`]
@@ -58,10 +65,19 @@ mod traits;
 mod types;
 
 pub mod binance;
-pub mod http;
 pub mod kraken;
 pub mod router;
-pub mod websocket;
+
+// Re-export HTTP/WebSocket from unified venue module for new code
+pub mod http {
+    //! HTTP client infrastructure (re-exported from [`crate::venue::http`]).
+    pub use crate::venue::http::*;
+}
+
+pub mod websocket {
+    //! WebSocket client infrastructure (re-exported from [`crate::venue::websocket`]).
+    pub use crate::venue::websocket::*;
+}
 
 // Re-export core types
 pub use config::{AuthConfig, RateLimitConfig, RestConfig, StreamConfig, VenueConfig};
@@ -75,3 +91,7 @@ pub use types::{
     BalanceInfo, BatchCancelResult, BatchOrderResult, CancelRequest, ExecutionReport,
     OrderQueryResponse, VenueConnectionStatus, VenueInfo,
 };
+
+// Re-export unified venue types for new code
+pub use crate::venue::ConnectionStatus;
+pub use crate::venue::{NativeDbVenue, SymbolNormalizer};

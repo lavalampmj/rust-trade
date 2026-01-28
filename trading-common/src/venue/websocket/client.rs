@@ -14,15 +14,11 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio::sync::broadcast;
 use tokio::time::interval;
-use tokio_tungstenite::{
-    connect_async,
-    tungstenite::Message,
-    MaybeTlsStream, WebSocketStream,
-};
+use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use tracing::{debug, error, info, warn};
 
-use crate::execution::venue::config::StreamConfig;
-use crate::execution::venue::error::{VenueError, VenueResult};
+use crate::venue::config::StreamConfig;
+use crate::venue::error::{VenueError, VenueResult};
 
 /// Type alias for WebSocket connection.
 pub type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;

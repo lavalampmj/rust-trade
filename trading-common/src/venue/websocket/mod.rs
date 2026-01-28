@@ -1,4 +1,4 @@
-//! WebSocket client infrastructure for execution venues.
+//! WebSocket client infrastructure for venues.
 //!
 //! This module provides venue-agnostic WebSocket client components:
 //!
@@ -9,7 +9,7 @@
 //!
 //! ```ignore
 //! use std::sync::Arc;
-//! use trading_common::execution::venue::websocket::WebSocketClientBuilder;
+//! use trading_common::venue::websocket::WebSocketClientBuilder;
 //!
 //! // Create a WebSocket client
 //! let client = WebSocketClientBuilder::new("wss://stream.binance.com:9443/ws")

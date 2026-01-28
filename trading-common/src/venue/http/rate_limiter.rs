@@ -17,8 +17,8 @@ use governor::{
 };
 use tracing::{debug, warn};
 
-use crate::execution::venue::config::RateLimitConfig;
-use crate::execution::venue::error::{VenueError, VenueResult};
+use crate::venue::config::RateLimitConfig;
+use crate::venue::error::{VenueError, VenueResult};
 
 type Limiter = GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>;
 

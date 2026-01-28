@@ -130,8 +130,14 @@ mod tests {
         signer.sign(&mut params, 1234567890);
 
         assert_eq!(params.len(), 3);
-        assert_eq!(params[1], ("timestamp".to_string(), "1234567890".to_string()));
-        assert_eq!(params[2], ("signature".to_string(), "mock_signature".to_string()));
+        assert_eq!(
+            params[1],
+            ("timestamp".to_string(), "1234567890".to_string())
+        );
+        assert_eq!(
+            params[2],
+            ("signature".to_string(), "mock_signature".to_string())
+        );
         assert_eq!(signer.api_key(), "test_key");
         assert_eq!(signer.api_key_header(), "X-API-KEY");
     }

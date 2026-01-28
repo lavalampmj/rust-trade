@@ -15,3 +15,4 @@ pub mod series;
 pub mod state;
 pub mod transforms;
 pub mod validation;
+pub mod venue;

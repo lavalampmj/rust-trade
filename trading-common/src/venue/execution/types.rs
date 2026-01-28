@@ -1,7 +1,6 @@
-//! Venue-agnostic types for execution venues.
+//! Execution venue types.
 //!
-//! These types provide a common interface for all execution venues,
-//! abstracting away venue-specific details.
+//! Types for order management and account queries.
 
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
@@ -10,108 +9,6 @@ use serde::{Deserialize, Serialize};
 use crate::orders::{
     ClientOrderId, LiquiditySide, OrderSide, OrderStatus, OrderType, TimeInForce, VenueOrderId,
 };
-
-/// Information about an execution venue's capabilities.
-#[derive(Debug, Clone)]
-pub struct VenueInfo {
-    /// Unique identifier for this venue (e.g., "binance_us_spot")
-    pub venue_id: String,
-    /// Human-readable name (e.g., "Binance.US Spot")
-    pub display_name: String,
-    /// Venue name for logging/display (e.g., "BINANCE_US")
-    pub name: String,
-    /// Supported order types
-    pub supported_order_types: Vec<OrderType>,
-    /// Supported time-in-force options
-    pub supported_tif: Vec<TimeInForce>,
-    /// Whether the venue supports order modification
-    pub supports_modify: bool,
-    /// Whether the venue supports batch operations
-    pub supports_batch: bool,
-    /// Maximum orders per batch (if batch is supported)
-    pub max_orders_per_batch: usize,
-    /// Whether the venue supports stop orders natively
-    pub supports_stop_orders: bool,
-    /// Whether the venue supports trailing stop orders
-    pub supports_trailing_stop: bool,
-}
-
-impl VenueInfo {
-    /// Create a new VenueInfo with default values.
-    pub fn new(venue_id: impl Into<String>, display_name: impl Into<String>) -> Self {
-        Self {
-            venue_id: venue_id.into(),
-            display_name: display_name.into(),
-            name: String::new(),
-            supported_order_types: vec![OrderType::Market, OrderType::Limit],
-            supported_tif: vec![TimeInForce::GTC, TimeInForce::IOC, TimeInForce::FOK],
-            supports_modify: false,
-            supports_batch: false,
-            max_orders_per_batch: 0,
-            supports_stop_orders: false,
-            supports_trailing_stop: false,
-        }
-    }
-
-    /// Set the venue name.
-    pub fn with_name(mut self, name: impl Into<String>) -> Self {
-        self.name = name.into();
-        self
-    }
-
-    /// Set supported order types.
-    pub fn with_order_types(mut self, types: Vec<OrderType>) -> Self {
-        self.supported_order_types = types;
-        self
-    }
-
-    /// Set supported time-in-force options.
-    pub fn with_tif(mut self, tif: Vec<TimeInForce>) -> Self {
-        self.supported_tif = tif;
-        self
-    }
-
-    /// Enable order modification support.
-    pub fn with_modify_support(mut self) -> Self {
-        self.supports_modify = true;
-        self
-    }
-
-    /// Enable batch operation support.
-    pub fn with_batch_support(mut self, max_per_batch: usize) -> Self {
-        self.supports_batch = true;
-        self.max_orders_per_batch = max_per_batch;
-        self
-    }
-
-    /// Enable stop order support.
-    pub fn with_stop_orders(mut self) -> Self {
-        self.supports_stop_orders = true;
-        self
-    }
-
-    /// Enable trailing stop support.
-    pub fn with_trailing_stop(mut self) -> Self {
-        self.supports_trailing_stop = true;
-        self
-    }
-
-    /// Check if an order type is supported.
-    pub fn supports_order_type(&self, order_type: &OrderType) -> bool {
-        self.supported_order_types.contains(order_type)
-    }
-
-    /// Check if a time-in-force option is supported.
-    pub fn supports_tif(&self, tif: &TimeInForce) -> bool {
-        self.supported_tif.contains(tif)
-    }
-}
-
-/// Connection status for a venue.
-///
-/// This is a re-export of [`crate::venue::ConnectionStatus`] for backward compatibility.
-/// New code should use `ConnectionStatus` from `crate::venue` directly.
-pub use crate::venue::ConnectionStatus as VenueConnectionStatus;
 
 /// Response from an order status query.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -340,7 +237,9 @@ pub struct ExecutionReport {
 impl ExecutionReport {
     /// Returns true if this is a fill report.
     pub fn is_fill(&self) -> bool {
-        self.last_qty.is_some() && self.last_qty.unwrap() > Decimal::ZERO
+        self.last_qty
+            .map(|qty| qty > Decimal::ZERO)
+            .unwrap_or(false)
     }
 
     /// Returns true if the order is fully filled.
@@ -362,37 +261,19 @@ impl ExecutionReport {
     pub fn is_expired(&self) -> bool {
         self.status == OrderStatus::Expired
     }
+
+    /// Check if this report represents a new fill that should be processed.
+    pub fn has_new_fill(&self) -> bool {
+        self.last_qty
+            .map(|qty| qty > Decimal::ZERO)
+            .unwrap_or(false)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use rust_decimal_macros::dec;
-
-    #[test]
-    fn test_venue_info_builder() {
-        let info = VenueInfo::new("binance_us_spot", "Binance.US Spot")
-            .with_name("BINANCE_US")
-            .with_order_types(vec![OrderType::Market, OrderType::Limit, OrderType::Stop])
-            .with_modify_support()
-            .with_batch_support(10)
-            .with_stop_orders();
-
-        assert_eq!(info.venue_id, "binance_us_spot");
-        assert!(info.supports_modify);
-        assert!(info.supports_batch);
-        assert_eq!(info.max_orders_per_batch, 10);
-        assert!(info.supports_order_type(&OrderType::Stop));
-        assert!(!info.supports_order_type(&OrderType::TrailingStop));
-    }
-
-    #[test]
-    fn test_connection_status() {
-        assert!(VenueConnectionStatus::Connected.is_ready());
-        assert!(!VenueConnectionStatus::Connecting.is_ready());
-        assert!(VenueConnectionStatus::Error.is_error());
-        assert!(VenueConnectionStatus::Reconnecting.is_connecting());
-    }
 
     #[test]
     fn test_balance_info() {
@@ -414,10 +295,8 @@ mod tests {
         );
         assert!(success.is_success());
 
-        let failure = BatchOrderResult::failure(
-            ClientOrderId::new("order-2"),
-            "Insufficient balance",
-        );
+        let failure =
+            BatchOrderResult::failure(ClientOrderId::new("order-2"), "Insufficient balance");
         assert!(!failure.is_success());
     }
 

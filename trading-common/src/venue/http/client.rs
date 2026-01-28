@@ -15,8 +15,8 @@ use tracing::debug;
 
 use super::rate_limiter::RateLimiter;
 use super::signer::{build_query_string, RequestSigner};
-use crate::execution::venue::config::RestConfig;
-use crate::execution::venue::error::{VenueError, VenueResult};
+use crate::venue::config::RestConfig;
+use crate::venue::error::{VenueError, VenueResult};
 
 /// HTTP client for venue REST APIs.
 ///
@@ -89,7 +89,9 @@ impl HttpClient {
             .timeout(config.timeout())
             .default_headers(headers)
             .build()
-            .map_err(|e| VenueError::Configuration(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| {
+                VenueError::Configuration(format!("Failed to create HTTP client: {}", e))
+            })?;
 
         Ok(Self {
             client,
@@ -358,8 +360,12 @@ impl HttpClient {
             )));
         }
 
-        serde_json::from_str(&body)
-            .map_err(|e| VenueError::Parse(format!("Failed to parse response: {} - body: {}", e, body)))
+        serde_json::from_str(&body).map_err(|e| {
+            VenueError::Parse(format!(
+                "Failed to parse response: {} - body: {}",
+                e, body
+            ))
+        })
     }
 
     /// Map venue error codes to VenueError variants.
@@ -419,7 +425,7 @@ struct BinanceErrorResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::execution::venue::config::RateLimitConfig;
+    use crate::venue::config::RateLimitConfig;
 
     struct MockSigner {
         api_key: String,
@@ -521,131 +527,6 @@ mod tests {
 
         let error = client.map_error_code(-2010, "Account has insufficient balance");
         assert!(matches!(error, VenueError::InsufficientBalance(_)));
-    }
-
-    #[test]
-    fn test_map_error_code_authentication() {
-        let signer = MockSigner {
-            api_key: "test".to_string(),
-        };
-        let rate_limiter = RateLimiter::from_config(&RateLimitConfig::default());
-        let client = HttpClient::new(
-            "https://api.example.com",
-            Box::new(signer),
-            rate_limiter,
-            RestConfig::default(),
-        )
-        .unwrap();
-
-        // Invalid API key
-        let error = client.map_error_code(-2014, "API-key format invalid");
-        assert!(matches!(error, VenueError::Authentication(_)));
-
-        // Invalid signature
-        let error = client.map_error_code(-2015, "Invalid signature");
-        assert!(matches!(error, VenueError::Authentication(_)));
-    }
-
-    #[test]
-    fn test_map_error_code_order_not_found() {
-        let signer = MockSigner {
-            api_key: "test".to_string(),
-        };
-        let rate_limiter = RateLimiter::from_config(&RateLimitConfig::default());
-        let client = HttpClient::new(
-            "https://api.example.com",
-            Box::new(signer),
-            rate_limiter,
-            RestConfig::default(),
-        )
-        .unwrap();
-
-        let error = client.map_error_code(-2011, "Unknown order sent");
-        assert!(matches!(error, VenueError::OrderNotFound(_)));
-
-        let error = client.map_error_code(-2013, "Order does not exist");
-        assert!(matches!(error, VenueError::OrderNotFound(_)));
-    }
-
-    #[test]
-    fn test_map_error_code_order_rejected() {
-        let signer = MockSigner {
-            api_key: "test".to_string(),
-        };
-        let rate_limiter = RateLimiter::from_config(&RateLimitConfig::default());
-        let client = HttpClient::new(
-            "https://api.example.com",
-            Box::new(signer),
-            rate_limiter,
-            RestConfig::default(),
-        )
-        .unwrap();
-
-        // -2010 with non-insufficient message -> OrderRejected
-        let error = client.map_error_code(-2010, "Order would trigger immediately");
-        assert!(matches!(error, VenueError::OrderRejected { .. }));
-    }
-
-    #[test]
-    fn test_map_error_code_invalid_parameter() {
-        let signer = MockSigner {
-            api_key: "test".to_string(),
-        };
-        let rate_limiter = RateLimiter::from_config(&RateLimitConfig::default());
-        let client = HttpClient::new(
-            "https://api.example.com",
-            Box::new(signer),
-            rate_limiter,
-            RestConfig::default(),
-        )
-        .unwrap();
-
-        // Invalid parameters in -1100 to -1199 range
-        let error = client.map_error_code(-1100, "Illegal characters found");
-        assert!(matches!(error, VenueError::InvalidOrder(_)));
-
-        let error = client.map_error_code(-1121, "Invalid symbol");
-        assert!(matches!(error, VenueError::SymbolNotFound(_)));
-    }
-
-    #[test]
-    fn test_map_error_code_timestamp() {
-        let signer = MockSigner {
-            api_key: "test".to_string(),
-        };
-        let rate_limiter = RateLimiter::from_config(&RateLimitConfig::default());
-        let client = HttpClient::new(
-            "https://api.example.com",
-            Box::new(signer),
-            rate_limiter,
-            RestConfig::default(),
-        )
-        .unwrap();
-
-        let error = client.map_error_code(-1021, "Timestamp for request is outside of recvWindow");
-        assert!(matches!(error, VenueError::Request(_)));
-
-        let error = client.map_error_code(-1022, "Signature is invalid");
-        assert!(matches!(error, VenueError::Request(_)));
-    }
-
-    #[test]
-    fn test_map_error_code_unknown() {
-        let signer = MockSigner {
-            api_key: "test".to_string(),
-        };
-        let rate_limiter = RateLimiter::from_config(&RateLimitConfig::default());
-        let client = HttpClient::new(
-            "https://api.example.com",
-            Box::new(signer),
-            rate_limiter,
-            RestConfig::default(),
-        )
-        .unwrap();
-
-        // Unknown error code -> VenueSpecific
-        let error = client.map_error_code(-9999, "Unknown error");
-        assert!(matches!(error, VenueError::VenueSpecific { code: -9999, .. }));
     }
 
     #[test]

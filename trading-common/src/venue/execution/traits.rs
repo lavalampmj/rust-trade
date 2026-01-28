@@ -2,32 +2,11 @@
 //!
 //! This module defines the trait hierarchy for execution venues:
 //!
-//! - [`VenueConnection`]: Base trait for all venue connections (from `crate::venue`)
-//! - [`ExecutionVenue`]: **Deprecated** - use `VenueConnection` directly
-//! - [`OrderSubmissionVenue`]: Trait for submitting orders via REST API
-//! - [`ExecutionStreamVenue`]: Trait for receiving execution reports via WebSocket
-//! - [`AccountQueryVenue`]: Trait for querying account balances
+//! - [`OrderSubmissionVenue`]: Order lifecycle management via REST
+//! - [`ExecutionStreamVenue`]: Real-time execution reports via WebSocket
+//! - [`AccountQueryVenue`]: Account balance queries
+//! - [`BatchOrderVenue`]: Batch order operations
 //! - [`FullExecutionVenue`]: Combined trait for full-featured venues
-//!
-//! # Migration
-//!
-//! The base trait `ExecutionVenue` is being replaced by [`VenueConnection`] from
-//! `crate::venue`. New code should use `VenueConnection` directly. Existing code
-//! can continue using `ExecutionVenue` which is now a supertrait alias.
-//!
-//! # Example
-//!
-//! ```ignore
-//! use trading_common::execution::venue::{OrderSubmissionVenue};
-//! use trading_common::venue::VenueConnection;
-//!
-//! async fn submit_order<V: OrderSubmissionVenue>(venue: &V, order: &Order) {
-//!     match venue.submit_order(order).await {
-//!         Ok(venue_order_id) => println!("Order submitted: {}", venue_order_id),
-//!         Err(e) => println!("Order failed: {}", e),
-//!     }
-//! }
-//! ```
 
 use std::sync::Arc;
 
@@ -35,13 +14,13 @@ use async_trait::async_trait;
 use rust_decimal::Decimal;
 use tokio::sync::broadcast;
 
-use crate::orders::{ClientOrderId, Order, OrderEventAny, VenueOrderId};
-
-use super::error::VenueResult;
 use super::types::{
     BalanceInfo, BatchCancelResult, BatchOrderResult, CancelRequest, OrderQueryResponse,
-    VenueConnectionStatus, VenueInfo,
 };
+use crate::orders::{ClientOrderId, Order, OrderEventAny, VenueOrderId};
+use crate::venue::connection::VenueConnection;
+use crate::venue::error::VenueResult;
+use crate::venue::symbology::SymbolNormalizer;
 
 /// Callback for execution reports from WebSocket streams.
 ///
@@ -50,61 +29,25 @@ use super::types::{
 /// should be delegated to a separate task.
 pub type ExecutionCallback = Arc<dyn Fn(OrderEventAny) + Send + Sync>;
 
-/// Base trait for all execution venues.
-///
-/// This trait provides the common interface for connecting to and
-/// managing the lifecycle of an execution venue connection.
-///
-/// # Migration Notice
-///
-/// This trait is being unified with [`VenueConnection`] from `crate::venue`.
-/// The traits have identical interfaces. New venue implementations should
-/// consider implementing both traits to ensure forward compatibility:
-///
-/// ```ignore
-/// use trading_common::venue::VenueConnection;
-/// use trading_common::execution::venue::ExecutionVenue;
-///
-/// impl VenueConnection for MyVenue {
-///     // Implement connection lifecycle methods
-/// }
-///
-/// impl ExecutionVenue for MyVenue {
-///     // Delegate to VenueConnection methods
-///     fn info(&self) -> &VenueInfo { /* ... */ }
-///     // ...
-/// }
-/// ```
-#[async_trait]
-pub trait ExecutionVenue: Send + Sync {
-    /// Returns information about this venue's capabilities.
-    fn info(&self) -> &VenueInfo;
-
-    /// Connect to the venue.
-    ///
-    /// This establishes the initial connection (e.g., validates API credentials,
-    /// creates HTTP client, etc.). WebSocket streams are started separately
-    /// via [`ExecutionStreamVenue::start_execution_stream`].
-    async fn connect(&mut self) -> VenueResult<()>;
-
-    /// Disconnect from the venue.
-    ///
-    /// This closes all connections and releases resources.
-    async fn disconnect(&mut self) -> VenueResult<()>;
-
-    /// Returns true if the venue is connected and ready for operations.
-    fn is_connected(&self) -> bool;
-
-    /// Returns the current connection status.
-    fn connection_status(&self) -> VenueConnectionStatus;
-}
-
 /// Trait for submitting and managing orders via REST API.
 ///
 /// This trait provides methods for order lifecycle management
 /// through synchronous REST API calls.
+///
+/// # Example
+///
+/// ```ignore
+/// use trading_common::venue::execution::OrderSubmissionVenue;
+///
+/// async fn submit_order<V: OrderSubmissionVenue>(venue: &V, order: &Order) {
+///     match venue.submit_order(order).await {
+///         Ok(venue_order_id) => println!("Order submitted: {}", venue_order_id),
+///         Err(e) => println!("Order failed: {}", e),
+///     }
+/// }
+/// ```
 #[async_trait]
-pub trait OrderSubmissionVenue: ExecutionVenue {
+pub trait OrderSubmissionVenue: VenueConnection + SymbolNormalizer {
     /// Submit a new order to the venue.
     ///
     /// # Arguments
@@ -245,7 +188,7 @@ pub trait BatchOrderVenue: OrderSubmissionVenue {
 /// This trait provides methods for managing the WebSocket connection
 /// that receives real-time execution reports.
 #[async_trait]
-pub trait ExecutionStreamVenue: ExecutionVenue {
+pub trait ExecutionStreamVenue: VenueConnection {
     /// Start the execution report stream.
     ///
     /// This connects to the venue's WebSocket and begins receiving
@@ -277,7 +220,7 @@ pub trait ExecutionStreamVenue: ExecutionVenue {
 
 /// Trait for querying account information.
 #[async_trait]
-pub trait AccountQueryVenue: ExecutionVenue {
+pub trait AccountQueryVenue: VenueConnection {
     /// Query all account balances.
     ///
     /// # Returns
@@ -320,7 +263,6 @@ mod tests {
     fn _assert_send_sync<T: Send + Sync>() {}
 
     fn _check_trait_bounds() {
-        _assert_send_sync::<Box<dyn ExecutionVenue>>();
         _assert_send_sync::<Box<dyn OrderSubmissionVenue>>();
         _assert_send_sync::<Box<dyn ExecutionStreamVenue>>();
         _assert_send_sync::<Box<dyn AccountQueryVenue>>();

@@ -88,6 +88,30 @@ impl ErrorClassification for ProviderError {
     }
 }
 
+/// Convert from unified VenueError to ProviderError.
+///
+/// This enables using `?` operator with functions that return VenueError
+/// when the calling function returns ProviderError.
+impl From<trading_common::venue::VenueError> for ProviderError {
+    fn from(err: trading_common::venue::VenueError) -> Self {
+        use trading_common::venue::VenueError;
+        match err {
+            VenueError::Connection(msg) => ProviderError::Connection(msg),
+            VenueError::Authentication(msg) => ProviderError::Authentication(msg),
+            VenueError::Request(msg) => ProviderError::Request(msg),
+            VenueError::RateLimit { .. } => ProviderError::RateLimit(err.to_string()),
+            VenueError::SymbolNotFound(msg) => ProviderError::SymbolNotFound(msg),
+            VenueError::Parse(msg) => ProviderError::Parse(msg),
+            VenueError::Subscription(msg) => ProviderError::Subscription(msg),
+            VenueError::DataNotAvailable(msg) => ProviderError::DataNotAvailable(msg),
+            VenueError::NotConnected => ProviderError::NotConnected,
+            VenueError::Configuration(msg) => ProviderError::Configuration(msg),
+            VenueError::Internal(msg) => ProviderError::Internal(msg),
+            _ => ProviderError::Internal(err.to_string()),
+        }
+    }
+}
+
 pub type ProviderResult<T> = Result<T, ProviderError>;
 
 /// Information about a data provider
@@ -507,6 +531,20 @@ use std::collections::HashMap;
 /// This trait enforces consistent DBT canonical symbology for all non-DBT native
 /// data providers (e.g., Binance, Kraken). Providers implementing this trait
 /// guarantee symbol conversion between venue-specific formats and canonical format.
+///
+/// # Relationship to Unified SymbolNormalizer
+///
+/// This trait mirrors [`trading_common::venue::SymbolNormalizer`] which provides
+/// a unified symbol normalization interface for the entire system. The key differences:
+///
+/// | Aspect | This trait | Unified trait |
+/// |--------|-----------|---------------|
+/// | Error type | `ProviderError` | `VenueError` |
+/// | Exchange method | `exchange_name()` | `venue_id()` |
+/// | Location | data-manager | trading-common |
+///
+/// Error conversion is available via `From<VenueError> for ProviderError`.
+/// New code should consider using the unified trait from `trading_common::venue`.
 ///
 /// # DBT Canonical Format
 ///

@@ -1,4 +1,4 @@
-//! HTTP client infrastructure for execution venues.
+//! HTTP client infrastructure for venues.
 //!
 //! This module provides venue-agnostic HTTP client components:
 //!
@@ -9,7 +9,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use trading_common::execution::venue::http::{HttpClient, RateLimiter, RequestSigner};
+//! use trading_common::venue::http::{HttpClient, RateLimiter, RequestSigner};
 //!
 //! // Create a custom signer for your venue
 //! struct MySigner { api_key: String, api_secret: String }
