@@ -603,3 +603,133 @@ CREATE INDEX IF NOT EXISTS idx_instrument_symbol_exchange ON instrument_mappings
 
 -- Verification query
 SELECT 'instrument_mappings table created' as status;
+
+-- =============================================================================
+-- Databento Instrument Definitions
+-- Stores canonical instrument metadata from Databento's security master.
+--
+-- IMPORTANT: The instrument_id is Databento's globally unique, opaque primary
+-- key for an instrument definition. It is:
+--   - Stable forever (never changes for a given instrument)
+--   - Unique across all datasets and time
+--   - Opaque (you cannot infer meaning from the number)
+--   - Never reused, even if an instrument delists
+--
+-- If two venues use the same raw_symbol (e.g., "BTCUSD" on Kraken vs Binance),
+-- they will have DIFFERENT instrument_ids because the venue is part of the
+-- instrument definition.
+--
+-- Example: ESM4 in 2024 and ESM4 in 2034 will have different instrument_ids,
+-- preventing any collision from symbol reuse across years.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS databento_instruments (
+    -- Databento's canonical instrument_id (globally unique, never reused)
+    -- This is the PRIMARY lookup key for all Databento data operations
+    instrument_id BIGINT PRIMARY KEY,
+
+    -- Raw symbol as used by publisher (e.g., "ESH6", "AAPL", "BTCUSD")
+    raw_symbol VARCHAR(50) NOT NULL,
+
+    -- Dataset (e.g., "GLBX.MDP3", "XNAS.ITCH", "DBEQ.BASIC")
+    dataset VARCHAR(50) NOT NULL,
+
+    -- Exchange/venue MIC code (e.g., "XCME", "XNAS", "GLBX")
+    exchange VARCHAR(20) NOT NULL,
+
+    -- Publisher ID from Databento (identifies the data source)
+    publisher_id SMALLINT,
+
+    -- Security type from Databento (e.g., "FUT", "OPT", "STK", "BOND")
+    security_type VARCHAR(10),
+
+    -- Instrument class character (Databento's single-char classification)
+    -- F=Future, O=Option, K=Stock, B=Bond, X=FX, C=Commodity, etc.
+    instrument_class CHAR(1),
+
+    -- Contract expiration timestamp (for futures/options, NULL for equities)
+    expiration TIMESTAMPTZ,
+
+    -- Activation timestamp (when instrument becomes tradeable)
+    activation TIMESTAMPTZ,
+
+    -- Underlying instrument_id (for derivatives, references another row)
+    underlying_id BIGINT,
+
+    -- Strike price in raw i64 format (for options)
+    -- To convert: strike_price * 10^(-price_precision)
+    strike_price BIGINT,
+
+    -- Pricing parameters (stored as raw i64 for exact DBN reproduction)
+    -- min_price_increment: tick size in raw units
+    -- display_factor: multiplier to convert raw price to display price
+    -- min_lot_size_round_lot: minimum order size in raw units
+    min_price_increment BIGINT NOT NULL DEFAULT 0,
+    display_factor BIGINT NOT NULL DEFAULT 1000000000,
+    min_lot_size_round_lot BIGINT NOT NULL DEFAULT 1,
+
+    -- Price precision (number of decimal places, typically 9 for DBN)
+    price_precision SMALLINT NOT NULL DEFAULT 9,
+
+    -- Contract multiplier in raw format (for futures notional calculation)
+    contract_multiplier BIGINT,
+
+    -- CFI code (ISO 10962 Classification of Financial Instruments)
+    cfi_code VARCHAR(10),
+
+    -- Full InstrumentDefMsg as JSONB for complete data access
+    -- Contains all 70+ fields from Databento's definition schema
+    raw_definition JSONB NOT NULL,
+
+    -- Timestamps for cache management
+    first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Composite unique constraint for symbol+dataset lookups
+    -- Note: Same symbol in different datasets = different instrument
+    CONSTRAINT uq_databento_symbol_dataset UNIQUE (raw_symbol, dataset)
+);
+
+-- =============================================================================
+-- Indexes for databento_instruments
+-- Optimized for common query patterns
+-- =============================================================================
+
+-- Lookup by raw symbol (e.g., find all instruments with symbol "ES")
+CREATE INDEX IF NOT EXISTS idx_dbt_instruments_raw_symbol
+ON databento_instruments (raw_symbol);
+
+-- Lookup by dataset (e.g., all instruments in "GLBX.MDP3")
+CREATE INDEX IF NOT EXISTS idx_dbt_instruments_dataset
+ON databento_instruments (dataset);
+
+-- Lookup by exchange/venue
+CREATE INDEX IF NOT EXISTS idx_dbt_instruments_exchange
+ON databento_instruments (exchange);
+
+-- Lookup by expiration (for finding expiring contracts)
+-- Partial index: only index rows where expiration is set
+CREATE INDEX IF NOT EXISTS idx_dbt_instruments_expiration
+ON databento_instruments (expiration)
+WHERE expiration IS NOT NULL;
+
+-- Lookup by security type (e.g., all futures, all options)
+CREATE INDEX IF NOT EXISTS idx_dbt_instruments_security_type
+ON databento_instruments (security_type);
+
+-- Lookup by underlying (e.g., find all options on ES)
+-- Partial index: only index derivatives with underlying
+CREATE INDEX IF NOT EXISTS idx_dbt_instruments_underlying
+ON databento_instruments (underlying_id)
+WHERE underlying_id IS NOT NULL;
+
+-- Composite index for dataset + security_type queries
+-- (e.g., all futures in GLBX.MDP3)
+CREATE INDEX IF NOT EXISTS idx_dbt_instruments_dataset_type
+ON databento_instruments (dataset, security_type);
+
+-- =============================================================================
+-- Verification
+-- =============================================================================
+
+SELECT 'databento_instruments table created' as status;

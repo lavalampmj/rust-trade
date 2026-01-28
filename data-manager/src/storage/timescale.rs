@@ -133,6 +133,131 @@ impl TimescaleOperations {
         .execute(&self.pool)
         .await?;
 
+        // Create databento_instruments table for storing canonical instrument definitions
+        // from Databento's security master. The instrument_id is globally unique and stable.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS databento_instruments (
+                -- Databento's canonical instrument_id (globally unique, never reused)
+                instrument_id BIGINT PRIMARY KEY,
+
+                -- Raw symbol as used by publisher (e.g., "ESH6", "AAPL")
+                raw_symbol VARCHAR(50) NOT NULL,
+
+                -- Dataset (e.g., "GLBX.MDP3", "XNAS.ITCH")
+                dataset VARCHAR(50) NOT NULL,
+
+                -- Exchange/venue MIC code (e.g., "XCME", "XNAS")
+                exchange VARCHAR(20) NOT NULL,
+
+                -- Publisher ID from Databento
+                publisher_id SMALLINT,
+
+                -- Security type from Databento (e.g., "FUT", "OPT", "STK")
+                security_type VARCHAR(10),
+
+                -- Instrument class character (F=Future, O=Option, K=Stock, etc.)
+                instrument_class CHAR(1),
+
+                -- Contract expiration timestamp (for futures/options)
+                expiration TIMESTAMPTZ,
+
+                -- Activation timestamp (when instrument becomes tradeable)
+                activation TIMESTAMPTZ,
+
+                -- Underlying instrument_id (for derivatives)
+                underlying_id BIGINT,
+
+                -- Strike price (for options, stored as raw i64)
+                strike_price BIGINT,
+
+                -- Pricing parameters (stored as raw i64 for exact DBN reproduction)
+                min_price_increment BIGINT NOT NULL DEFAULT 0,
+                display_factor BIGINT NOT NULL DEFAULT 1000000000,
+                min_lot_size_round_lot BIGINT NOT NULL DEFAULT 1,
+
+                -- Price precision (number of decimal places)
+                price_precision SMALLINT NOT NULL DEFAULT 9,
+
+                -- Contract multiplier (for futures, stored as raw)
+                contract_multiplier BIGINT,
+
+                -- CFI code (ISO 10962)
+                cfi_code VARCHAR(10),
+
+                -- Full InstrumentDefMsg as JSONB for complete data access
+                raw_definition JSONB NOT NULL,
+
+                -- Timestamps
+                first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+                -- Composite unique for symbol+dataset lookups
+                CONSTRAINT uq_databento_symbol_dataset UNIQUE (raw_symbol, dataset)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create indexes for databento_instruments
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_dbt_instruments_raw_symbol
+            ON databento_instruments (raw_symbol)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_dbt_instruments_dataset
+            ON databento_instruments (dataset)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_dbt_instruments_exchange
+            ON databento_instruments (exchange)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_dbt_instruments_expiration
+            ON databento_instruments (expiration)
+            WHERE expiration IS NOT NULL
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_dbt_instruments_security_type
+            ON databento_instruments (security_type)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create index on underlying_id for derivative lookups
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_dbt_instruments_underlying
+            ON databento_instruments (underlying_id)
+            WHERE underlying_id IS NOT NULL
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         info!("TimescaleDB migrations completed");
         Ok(())
     }
@@ -509,6 +634,79 @@ CREATE TABLE IF NOT EXISTS data_jobs (
 -- Create indexes for data_jobs
 CREATE INDEX IF NOT EXISTS idx_data_jobs_status ON data_jobs (status);
 CREATE INDEX IF NOT EXISTS idx_data_jobs_created ON data_jobs (created_at DESC);
+
+-- =============================================================================
+-- Databento Instrument Definitions
+-- Stores canonical instrument metadata from Databento's security master.
+-- The instrument_id is globally unique and stable across time.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS databento_instruments (
+    -- Databento's canonical instrument_id (globally unique, never reused)
+    instrument_id BIGINT PRIMARY KEY,
+
+    -- Raw symbol as used by publisher (e.g., "ESH6", "AAPL")
+    raw_symbol VARCHAR(50) NOT NULL,
+
+    -- Dataset (e.g., "GLBX.MDP3", "XNAS.ITCH")
+    dataset VARCHAR(50) NOT NULL,
+
+    -- Exchange/venue MIC code (e.g., "XCME", "XNAS")
+    exchange VARCHAR(20) NOT NULL,
+
+    -- Publisher ID from Databento
+    publisher_id SMALLINT,
+
+    -- Security type from Databento (e.g., "FUT", "OPT", "STK")
+    security_type VARCHAR(10),
+
+    -- Instrument class character (F=Future, O=Option, K=Stock, etc.)
+    instrument_class CHAR(1),
+
+    -- Contract expiration timestamp (for futures/options)
+    expiration TIMESTAMPTZ,
+
+    -- Activation timestamp (when instrument becomes tradeable)
+    activation TIMESTAMPTZ,
+
+    -- Underlying instrument_id (for derivatives)
+    underlying_id BIGINT,
+
+    -- Strike price (for options, stored as raw i64)
+    strike_price BIGINT,
+
+    -- Pricing parameters (stored as raw i64 for exact DBN reproduction)
+    min_price_increment BIGINT NOT NULL DEFAULT 0,
+    display_factor BIGINT NOT NULL DEFAULT 1000000000,
+    min_lot_size_round_lot BIGINT NOT NULL DEFAULT 1,
+
+    -- Price precision (number of decimal places)
+    price_precision SMALLINT NOT NULL DEFAULT 9,
+
+    -- Contract multiplier (for futures, stored as raw)
+    contract_multiplier BIGINT,
+
+    -- CFI code (ISO 10962)
+    cfi_code VARCHAR(10),
+
+    -- Full InstrumentDefMsg as JSONB for complete data access
+    raw_definition JSONB NOT NULL,
+
+    -- Timestamps
+    first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Composite unique for symbol+dataset lookups
+    CONSTRAINT uq_databento_symbol_dataset UNIQUE (raw_symbol, dataset)
+);
+
+-- Indexes for databento_instruments
+CREATE INDEX IF NOT EXISTS idx_dbt_instruments_raw_symbol ON databento_instruments (raw_symbol);
+CREATE INDEX IF NOT EXISTS idx_dbt_instruments_dataset ON databento_instruments (dataset);
+CREATE INDEX IF NOT EXISTS idx_dbt_instruments_exchange ON databento_instruments (exchange);
+CREATE INDEX IF NOT EXISTS idx_dbt_instruments_expiration ON databento_instruments (expiration) WHERE expiration IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_dbt_instruments_security_type ON databento_instruments (security_type);
+CREATE INDEX IF NOT EXISTS idx_dbt_instruments_underlying ON databento_instruments (underlying_id) WHERE underlying_id IS NOT NULL;
 "#;
 
 #[cfg(test)]
