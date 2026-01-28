@@ -494,3 +494,148 @@ impl Default for SubscriptionStatus {
         }
     }
 }
+
+// =============================================================================
+// Symbol Normalization Trait
+// =============================================================================
+
+use crate::instruments::InstrumentRegistry;
+use std::collections::HashMap;
+
+/// Trait for providers that require symbol normalization.
+///
+/// This trait enforces consistent DBT canonical symbology for all non-DBT native
+/// data providers (e.g., Binance, Kraken). Providers implementing this trait
+/// guarantee symbol conversion between venue-specific formats and canonical format.
+///
+/// # DBT Canonical Format
+///
+/// The canonical format is `BASE + QUOTE` without separators:
+/// - `BTCUSD`, `ETHUSD`, `SOLUSD`
+///
+/// # Venue-Specific Formats
+///
+/// Different venues use different formats:
+/// - **Binance**: `BTCUSDT`, `ETHBUSD` (stablecoin suffixes)
+/// - **Kraken Spot**: `BTC/USD`, `XBT/USD` (slash separator, legacy XBT)
+/// - **Kraken Futures**: `PI_XBTUSD` (prefix + legacy XBT)
+///
+/// # Example
+///
+/// ```ignore
+/// use data_manager::provider::SymbolNormalizer;
+///
+/// struct MyExchangeNormalizer { /* ... */ }
+///
+/// impl SymbolNormalizer for MyExchangeNormalizer {
+///     fn to_canonical(&self, venue_symbol: &str) -> Result<String, ProviderError> {
+///         // MYEX_BTC_USD -> BTCUSD
+///     }
+///
+///     fn to_venue(&self, canonical_symbol: &str) -> Result<String, ProviderError> {
+///         // BTCUSD -> MYEX_BTC_USD
+///     }
+///
+///     fn exchange_name(&self) -> &str {
+///         "MYEXCHANGE"
+///     }
+/// }
+/// ```
+#[async_trait]
+pub trait SymbolNormalizer: Send + Sync {
+    /// Convert a venue-specific symbol to DBT canonical format.
+    ///
+    /// # Examples
+    /// - Binance: `"BTCUSDT"` → `"BTCUSD"`
+    /// - Kraken Spot: `"XBT/USD"` → `"BTCUSD"`
+    /// - Kraken Futures: `"PI_XBTUSD"` → `"BTCUSD"`
+    fn to_canonical(&self, venue_symbol: &str) -> Result<String, ProviderError>;
+
+    /// Convert a DBT canonical symbol to venue-specific format.
+    ///
+    /// # Examples
+    /// - Binance: `"BTCUSD"` → `"BTCUSDT"`
+    /// - Kraken Spot: `"BTCUSD"` → `"BTC/USD"`
+    /// - Kraken Futures: `"BTCUSD"` → `"PI_XBTUSD"`
+    fn to_venue(&self, canonical_symbol: &str) -> Result<String, ProviderError>;
+
+    /// Get the exchange identifier for this normalizer.
+    ///
+    /// This is used for instrument registry lookups and should be consistent
+    /// across the system (e.g., "BINANCE", "KRAKEN", "KRAKEN_FUTURES").
+    fn exchange_name(&self) -> &str;
+
+    /// Pre-register symbols with the instrument registry and cache their IDs.
+    ///
+    /// Call this during subscription setup to ensure all instrument_ids are
+    /// cached for fast synchronous lookup during message normalization.
+    ///
+    /// # Arguments
+    /// * `symbols` - Venue-specific symbols to register (converted to canonical internally)
+    /// * `registry` - The instrument registry for persistent ID storage
+    ///
+    /// # Returns
+    /// Map of canonical symbol to instrument_id
+    ///
+    /// # Default Implementation
+    /// Converts each symbol to canonical format, then registers with the registry.
+    async fn register_symbols(
+        &self,
+        symbols: &[String],
+        registry: &Arc<InstrumentRegistry>,
+    ) -> Result<HashMap<String, u32>, ProviderError> {
+        let mut result = HashMap::new();
+
+        for venue_symbol in symbols {
+            let canonical = self.to_canonical(venue_symbol)?;
+            let id = registry
+                .get_or_create(&canonical, self.exchange_name())
+                .await
+                .map_err(|e| ProviderError::Internal(format!("Registry error: {}", e)))?;
+            result.insert(canonical, id);
+        }
+
+        Ok(result)
+    }
+
+    /// Check if this normalizer is for a DBT-native provider.
+    ///
+    /// DBT-native providers (like Databento) don't need symbol conversion.
+    /// This returns `false` by default, meaning conversion is required.
+    fn is_native_dbt(&self) -> bool {
+        false
+    }
+}
+
+/// Marker trait for DBT-native providers.
+///
+/// Providers that implement this trait use DBT symbology natively and
+/// don't require symbol conversion. Examples include Databento.
+///
+/// This trait provides default no-op implementations for `SymbolNormalizer`.
+pub trait NativeDbProvider: Send + Sync {
+    /// Get the exchange/venue identifier.
+    fn exchange_name(&self) -> &str;
+}
+
+/// Blanket implementation of SymbolNormalizer for DBT-native providers.
+#[async_trait]
+impl<T: NativeDbProvider> SymbolNormalizer for T {
+    fn to_canonical(&self, venue_symbol: &str) -> Result<String, ProviderError> {
+        // No conversion needed - already canonical
+        Ok(venue_symbol.to_uppercase())
+    }
+
+    fn to_venue(&self, canonical_symbol: &str) -> Result<String, ProviderError> {
+        // No conversion needed - already in venue format
+        Ok(canonical_symbol.to_uppercase())
+    }
+
+    fn exchange_name(&self) -> &str {
+        NativeDbProvider::exchange_name(self)
+    }
+
+    fn is_native_dbt(&self) -> bool {
+        true
+    }
+}

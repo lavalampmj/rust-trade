@@ -38,11 +38,12 @@ use trading_common::data::{
     TradeMsg, TradeSideCompat,
 };
 
-use super::symbol::{get_exchange_name, to_canonical};
+use super::symbol::{get_exchange_name, to_canonical, to_kraken_futures, to_kraken_spot};
 use super::types::{
     KrakenFuturesBookSnapshotMessage, KrakenFuturesBookUpdateMessage, KrakenFuturesTickerMessage,
     KrakenFuturesTradeMessage, KrakenSpotBook, KrakenSpotTicker, KrakenSpotTrade,
 };
+use crate::provider::traits::SymbolNormalizer;
 
 /// Normalizer for Kraken trade data
 pub struct KrakenNormalizer {
@@ -843,6 +844,57 @@ impl KrakenNormalizer {
         delta.sequence = update.seq as u64;
 
         Ok(delta)
+    }
+}
+
+// =============================================================================
+// SymbolNormalizer Trait Implementation
+// =============================================================================
+
+use async_trait::async_trait;
+
+#[async_trait]
+impl SymbolNormalizer for KrakenNormalizer {
+    fn to_canonical(&self, venue_symbol: &str) -> Result<String, ProviderError> {
+        to_canonical(venue_symbol)
+    }
+
+    fn to_venue(&self, canonical_symbol: &str) -> Result<String, ProviderError> {
+        if self.is_futures {
+            to_kraken_futures(canonical_symbol)
+        } else {
+            to_kraken_spot(canonical_symbol)
+        }
+    }
+
+    fn exchange_name(&self) -> &str {
+        get_exchange_name(self.is_futures)
+    }
+
+    async fn register_symbols(
+        &self,
+        symbols: &[String],
+        registry: &Arc<InstrumentRegistry>,
+    ) -> Result<HashMap<String, u32>, ProviderError> {
+        let exchange = get_exchange_name(self.is_futures);
+        let mut result = HashMap::new();
+
+        for symbol in symbols {
+            // Convert to canonical format
+            let canonical = to_canonical(symbol)?;
+
+            // Get or create instrument_id from registry
+            let id = registry
+                .get_or_create(&canonical, exchange)
+                .await
+                .map_err(|e| ProviderError::Internal(format!("Registry error: {}", e)))?;
+
+            // Cache for fast lookup
+            self.instrument_ids.insert(canonical.clone(), id);
+            result.insert(canonical, id);
+        }
+
+        Ok(result)
     }
 }
 

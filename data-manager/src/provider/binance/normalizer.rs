@@ -38,8 +38,9 @@ use trading_common::data::{
     create_trade_msg_with_instrument_id, datetime_to_nanos, TradeMsg, TradeSideCompat,
 };
 
-use super::symbol::to_canonical;
+use super::symbol::{to_binance, to_canonical};
 use super::types::BinanceTradeMessage;
+use crate::provider::traits::SymbolNormalizer;
 
 /// Exchange name for Binance
 const BINANCE_EXCHANGE: &str = "BINANCE";
@@ -289,6 +290,52 @@ impl BinanceNormalizer {
 impl Default for BinanceNormalizer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// =============================================================================
+// SymbolNormalizer Trait Implementation
+// =============================================================================
+
+use async_trait::async_trait;
+
+#[async_trait]
+impl SymbolNormalizer for BinanceNormalizer {
+    fn to_canonical(&self, venue_symbol: &str) -> Result<String, ProviderError> {
+        to_canonical(venue_symbol)
+    }
+
+    fn to_venue(&self, canonical_symbol: &str) -> Result<String, ProviderError> {
+        to_binance(canonical_symbol)
+    }
+
+    fn exchange_name(&self) -> &str {
+        BINANCE_EXCHANGE
+    }
+
+    async fn register_symbols(
+        &self,
+        symbols: &[String],
+        registry: &Arc<InstrumentRegistry>,
+    ) -> Result<HashMap<String, u32>, ProviderError> {
+        let mut result = HashMap::new();
+
+        for symbol in symbols {
+            // Convert to canonical format
+            let canonical = to_canonical(symbol)?;
+
+            // Get or create instrument_id from registry
+            let id = registry
+                .get_or_create(&canonical, BINANCE_EXCHANGE)
+                .await
+                .map_err(|e| ProviderError::Internal(format!("Registry error: {}", e)))?;
+
+            // Cache for fast lookup
+            self.instrument_ids.insert(canonical.clone(), id);
+            result.insert(canonical, id);
+        }
+
+        Ok(result)
     }
 }
 
