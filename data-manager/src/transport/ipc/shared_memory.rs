@@ -419,6 +419,28 @@ impl SharedMemoryTransport {
         let key = format!("{}@{}", symbol, exchange);
         self.channels.read().get(&key).map(|c| c.consumer())
     }
+
+    /// Pre-create a channel for a symbol (public interface)
+    ///
+    /// Use this to ensure channels exist before data starts flowing.
+    /// Returns Ok(true) if a new channel was created, Ok(false) if it already existed.
+    pub fn ensure_channel(&self, symbol: &str, exchange: &str) -> TransportResult<bool> {
+        let key = format!("{}@{}", symbol, exchange);
+
+        // Check if channel already exists
+        if self.channels.read().contains_key(&key) {
+            return Ok(false);
+        }
+
+        // Create the channel
+        self.get_or_create_channel(symbol, exchange)?;
+        Ok(true)
+    }
+
+    /// Get the number of active channels
+    pub fn channel_count(&self) -> usize {
+        self.channels.read().len()
+    }
 }
 
 impl Transport for SharedMemoryTransport {
@@ -541,5 +563,31 @@ mod tests {
 
         let symbols = transport.active_symbols();
         assert_eq!(symbols.len(), 3);
+    }
+
+    #[test]
+    fn test_ensure_channel() {
+        let transport = SharedMemoryTransport::new(SharedMemoryConfig {
+            path_prefix: "/test_ensure_".to_string(),
+            ..Default::default()
+        });
+
+        // Initially no channels
+        assert_eq!(transport.channel_count(), 0);
+
+        // Ensure channel creates it
+        let created = transport.ensure_channel("BTCUSD", "KRAKEN").unwrap();
+        assert!(created);
+        assert_eq!(transport.channel_count(), 1);
+
+        // Ensure again returns false (already exists)
+        let created_again = transport.ensure_channel("BTCUSD", "KRAKEN").unwrap();
+        assert!(!created_again);
+        assert_eq!(transport.channel_count(), 1);
+
+        // Ensure different symbol creates new channel
+        let created_new = transport.ensure_channel("ETHUSD", "KRAKEN").unwrap();
+        assert!(created_new);
+        assert_eq!(transport.channel_count(), 2);
     }
 }

@@ -3,6 +3,7 @@
 //! Provides CLI commands for the data manager.
 
 pub mod backfill;
+pub mod control_handler;
 pub mod db;
 pub mod fetch;
 pub mod import;

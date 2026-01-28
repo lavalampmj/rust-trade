@@ -36,6 +36,9 @@ pub enum TransportError {
 
     #[error("Consumer not found: {0}")]
     ConsumerNotFound(String),
+
+    #[error("Operation timed out")]
+    Timeout,
 }
 
 impl ErrorClassification for TransportError {
@@ -50,6 +53,7 @@ impl ErrorClassification for TransportError {
             TransportError::Serialization(_) => ErrorCategory::Permanent,
             TransportError::NotInitialized => ErrorCategory::Configuration,
             TransportError::ConsumerNotFound(_) => ErrorCategory::Permanent,
+            TransportError::Timeout => ErrorCategory::Transient,
         }
     }
 

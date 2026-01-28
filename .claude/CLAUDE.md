@@ -44,6 +44,14 @@ cargo run serve --live --provider kraken_futures --demo --symbols BTCUSD,ETHUSD 
 # Start with persistence to database
 cargo run serve --live --ipc --persist
 
+# Selective IPC streaming: subscribe to many symbols for database,
+# but only stream a subset to IPC for trading (saves memory)
+cargo run serve --live --provider kraken \
+  --symbols BTCUSD,ETHUSD,SOLUSD,XRPUSD,ADAUSD,DOGEUSD,AVAXUSD,DOTUSD,LINKUSD \
+  --ipc --ipc-symbols BTCUSD,ETHUSD,SOLUSD \
+  --persist
+# Result: All 9 symbols persisted to DB, only 3 IPC channels created (~9MB vs ~28MB)
+
 # Start with custom config file
 cargo run serve -c ../config/development.toml --live --ipc
 
@@ -520,6 +528,73 @@ cache_failure_threshold = 0.1           # 10% WARNING
 
 **Test coverage**: Tests passing (see `alerting/tests.rs`)
 
+#### 9. IPC Transport System (data-manager/src/transport/ipc/)
+
+**Pattern**: Lock-free shared memory ring buffers with service registry for multi-instance discovery
+
+The IPC transport provides ultra-low latency (~10µs) data distribution from data-manager to trading-core using POSIX shared memory.
+
+**Components**:
+- `SharedMemoryTransport`: Creates/manages per-symbol ring buffer channels
+- `SharedMemoryChannel`: Single symbol's shared memory segment with SPSC ring buffer
+- `ControlChannel`: Request-response channel for dynamic subscription
+- `Registry`: Service registry for multi-instance discovery
+
+**Multi-Instance Support**:
+
+When running multiple data-manager instances (e.g., one for Kraken, one for Binance), the service registry enables trading-core to automatically discover which instance serves each symbol.
+
+```bash
+# Terminal 1: Kraken instance
+cargo run serve --live --provider kraken --symbols BTCUSD,ETHUSD --ipc --instance-id kraken-prod
+
+# Terminal 2: Binance instance
+cargo run serve --live --provider binance --symbols BNBUSD,SOLUSD --ipc --instance-id binance-prod
+
+# Terminal 3: trading-core auto-discovers correct instance
+cargo run live --paper-trading --symbols BTCUSD  # → Uses kraken-prod
+cargo run live --paper-trading --symbols BNBUSD  # → Uses binance-prod
+```
+
+**Service Registry** (`data-manager/src/transport/ipc/registry.rs`):
+- Shared memory at `/data_manager_registry` (64 slots, ~28KB total)
+- Each entry (432 bytes): instance_id, provider, exchange, channel_prefix, symbols, heartbeat
+- Heartbeat every 5 seconds, entries stale after 30 seconds
+- Automatic deregistration on graceful shutdown
+
+**Instance-Specific IPC Paths**:
+- Default: `/data_manager_BTCUSD_KRAKEN`
+- With instance ID: `/data_manager_kraken-prod__BTCUSD_KRAKEN`
+- Prevents conflicts between multiple data-manager instances
+
+**Dynamic Subscription via Control Channel**:
+
+If trading-core requests a symbol that's subscribed but not streaming via IPC, the control channel allows runtime channel creation:
+
+```
+trading-core                    data-manager
+     │                               │
+     ├── SUBSCRIBE BTCUSD ──────────►│
+     │                               │ (checks: is BTCUSD subscribed?)
+     │                               │ (creates IPC channel if yes)
+     │◄──────── SUCCESS ─────────────┤
+     │                               │
+     ├── (opens IPC channel) ────────┤
+```
+
+**Key files**:
+- `data-manager/src/transport/ipc/shared_memory.rs` - Transport and channel implementation
+- `data-manager/src/transport/ipc/ring_buffer.rs` - Lock-free SPSC ring buffer
+- `data-manager/src/transport/ipc/control.rs` - Control channel protocol
+- `data-manager/src/transport/ipc/registry.rs` - Service registry
+- `data-manager/src/cli/control_handler.rs` - Server-side request handling
+- `trading-core/src/data_source/ipc.rs` - Client-side with registry discovery
+
+**CLI flags for serve command**:
+- `--ipc`: Enable IPC transport
+- `--ipc-symbols BTCUSD,ETHUSD`: Subset of symbols to stream via IPC (default: all)
+- `--instance-id my-instance`: Custom instance identifier (default: auto-generated)
+
 ## Configuration System
 
 ### Environment Variables
@@ -918,6 +993,10 @@ Optional:
 5. **Database duplicate handling**: `ON CONFLICT DO NOTHING` silently ignores duplicates - no error logged, check `live_strategy_log` for actual insert counts
 
 6. **Paper trading single strategy**: Only one strategy runs in live mode - multiple strategies require separate processes
+
+7. **Multi-instance IPC**: When running multiple data-manager instances, each needs a unique `--instance-id` to avoid shared memory conflicts. Trading-core uses the service registry to discover instances automatically.
+
+8. **Registry stale entries**: If a data-manager crashes without graceful shutdown, its registry entry becomes stale after 30 seconds. The registry auto-cleans stale entries when new instances register.
 
 ## Performance Expectations
 
