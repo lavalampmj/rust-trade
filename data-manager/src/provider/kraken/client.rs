@@ -27,7 +27,7 @@ use crate::provider::{
 use crate::symbol::SymbolSpec;
 
 use super::normalizer::KrakenNormalizer;
-use super::symbol::{get_exchange_name, to_kraken_futures, to_kraken_spot};
+use super::symbol::{get_exchange_name, to_canonical, to_kraken_futures, to_kraken_spot};
 use super::types::{
     KrakenFuturesBookSnapshotMessage, KrakenFuturesBookUpdateMessage, KrakenFuturesResponse,
     KrakenFuturesSubscribeMessage, KrakenFuturesTickerMessage, KrakenFuturesTradeMessage,
@@ -795,11 +795,14 @@ impl KrakenProvider {
                     continue;
                 }
 
-                // Get the wsname (WebSocket name) which is the format we need
+                // Get the wsname (WebSocket name) and convert to canonical format
                 if let Some(wsname) = pair_info.get("wsname").and_then(|w: &serde_json::Value| w.as_str()) {
                     // Filter for USD pairs only (most common)
                     if wsname.ends_with("/USD") {
-                        symbols.push(SymbolSpec::new(wsname, exchange));
+                        // Convert to DBT canonical format (e.g., "BTC/USD" -> "BTCUSD")
+                        if let Ok(canonical) = to_canonical(wsname) {
+                            symbols.push(SymbolSpec::new(&canonical, exchange));
+                        }
                     }
                 }
             }
@@ -851,7 +854,10 @@ impl KrakenProvider {
                             .unwrap_or(false);
 
                         if tradeable {
-                            symbols.push(SymbolSpec::new(symbol, exchange));
+                            // Convert to DBT canonical format (e.g., "PI_XBTUSD" -> "BTCUSD")
+                            if let Ok(canonical) = to_canonical(symbol) {
+                                symbols.push(SymbolSpec::new(&canonical, exchange));
+                            }
                         }
                     }
                 }
