@@ -263,8 +263,8 @@ async fn run_binance_provider(
                 // Log periodically
                 let count = ticks_received_clone.load(Ordering::Relaxed);
                 if count % 100 == 0 {
-                    debug!(
-                        "Received {} ticks | Persisted: {} | IPC: {}",
+                    info!(
+                        "Live stats: {} ticks received | {} persisted | {} IPC",
                         count,
                         ticks_persisted_clone.load(Ordering::Relaxed),
                         ticks_ipc_clone.load(Ordering::Relaxed)
@@ -433,8 +433,8 @@ async fn run_kraken_provider(
                 // Log periodically
                 let count = ticks_received_clone.load(Ordering::Relaxed);
                 if count % 100 == 0 {
-                    debug!(
-                        "Received {} ticks | Persisted: {} | IPC: {}",
+                    info!(
+                        "Live stats: {} ticks received | {} persisted | {} IPC",
                         count,
                         ticks_persisted_clone.load(Ordering::Relaxed),
                         ticks_ipc_clone.load(Ordering::Relaxed)
@@ -489,8 +489,8 @@ async fn run_kraken_provider(
                 // Log periodically
                 let count = quotes_received_clone.load(Ordering::Relaxed);
                 if count % 100 == 0 {
-                    debug!(
-                        "Received {} quotes | Persisted: {}",
+                    info!(
+                        "Quote stats: {} received | {} persisted",
                         count,
                         quotes_persisted_clone.load(Ordering::Relaxed)
                     );
