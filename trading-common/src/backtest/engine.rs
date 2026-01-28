@@ -1071,6 +1071,7 @@ impl BacktestResult {
                     match trade.side {
                         crate::data::types::TradeSide::Buy => "BUY ",
                         crate::data::types::TradeSide::Sell => "SELL",
+                        crate::data::types::TradeSide::Unknown => "UNK ",
                     },
                     trade.symbol,
                     trade.price,
@@ -1104,16 +1105,21 @@ impl BacktestResult {
 
         let mut buy_trades = Vec::new();
         let mut sell_trades = Vec::new();
+        let mut unknown_trades = Vec::new();
 
         for trade in &self.trades {
             match trade.side {
                 crate::data::types::TradeSide::Buy => buy_trades.push(trade),
                 crate::data::types::TradeSide::Sell => sell_trades.push(trade),
+                crate::data::types::TradeSide::Unknown => unknown_trades.push(trade),
             }
         }
 
         println!("Buy Trades: {}", buy_trades.len());
         println!("Sell Trades: {}", sell_trades.len());
+        if !unknown_trades.is_empty() {
+            println!("Unknown Side Trades: {}", unknown_trades.len());
+        }
 
         if !sell_trades.is_empty() {
             let profitable_sells = sell_trades

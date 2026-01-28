@@ -124,6 +124,7 @@ pub async fn get_historical_data(
             side: match tick.side {
                 TradeSide::Buy => "Buy".to_string(),
                 TradeSide::Sell => "Sell".to_string(),
+                TradeSide::Unknown => "Unknown".to_string(),
             },
         })
         .collect();
@@ -215,6 +216,7 @@ fn create_backtest_response(result: BacktestResult, data_source: String) -> Back
                 side: match trade.side {
                     trading_common::data::types::TradeSide::Buy => "Buy".to_string(),
                     trading_common::data::types::TradeSide::Sell => "Sell".to_string(),
+                    trading_common::data::types::TradeSide::Unknown => "Unknown".to_string(),
                 },
                 quantity: trade.quantity.to_string(),
                 price: trade.price.to_string(),

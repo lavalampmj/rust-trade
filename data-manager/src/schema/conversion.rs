@@ -23,6 +23,7 @@ impl From<TradeSide> for CommonTradeSide {
         match side {
             TradeSide::Buy => CommonTradeSide::Buy,
             TradeSide::Sell => CommonTradeSide::Sell,
+            TradeSide::Unknown => CommonTradeSide::Unknown,
         }
     }
 }
@@ -32,6 +33,7 @@ impl From<CommonTradeSide> for TradeSide {
         match side {
             CommonTradeSide::Buy => TradeSide::Buy,
             CommonTradeSide::Sell => TradeSide::Sell,
+            CommonTradeSide::Unknown => TradeSide::Unknown,
         }
     }
 }

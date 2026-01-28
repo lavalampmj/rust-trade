@@ -383,6 +383,9 @@ impl Portfolio {
                         }
                     }
                 }
+                TradeSide::Unknown => {
+                    // Skip unknown side trades - can't determine position impact
+                }
             }
 
             // Calculate current portfolio value

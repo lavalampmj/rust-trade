@@ -12,11 +12,14 @@ use super::dbn_types::{
 // =================================================================
 
 /// Trading direction enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum TradeSide {
     Buy,
     Sell,
+    /// Unknown side (e.g., historical data without side information)
+    #[default]
+    Unknown,
 }
 
 /// Standard trading data structure - corresponds one-to-one with the market_ticks table fields
@@ -200,11 +203,12 @@ pub struct DbStats {
 // =================================================================
 
 impl TradeSide {
-    /// Convert to database string representation (single char: 'B' or 'S')
+    /// Convert to database string representation (single char: 'B', 'S', or 'U')
     pub fn as_db_str(&self) -> &'static str {
         match self {
             TradeSide::Buy => "B",
             TradeSide::Sell => "S",
+            TradeSide::Unknown => "U",
         }
     }
 
@@ -213,23 +217,26 @@ impl TradeSide {
         match self {
             TradeSide::Buy => 'B',
             TradeSide::Sell => 'S',
+            TradeSide::Unknown => 'U',
         }
     }
 
-    /// Parse from database char ('B' or 'S')
+    /// Parse from database char ('B', 'S', or 'U')
     pub fn from_db_char(c: char) -> Option<Self> {
         match c {
             'B' => Some(TradeSide::Buy),
             'S' => Some(TradeSide::Sell),
+            'U' | 'N' => Some(TradeSide::Unknown),
             _ => None,
         }
     }
 
-    /// Parse from database string ('B', 'S', 'BUY', 'SELL')
+    /// Parse from database string ('B', 'S', 'U', 'BUY', 'SELL', 'UNKNOWN')
     pub fn from_db_str(s: &str) -> Option<Self> {
         match s.to_uppercase().as_str() {
             "B" | "BUY" => Some(TradeSide::Buy),
             "S" | "SELL" => Some(TradeSide::Sell),
+            "U" | "N" | "UNKNOWN" | "NONE" => Some(TradeSide::Unknown),
             _ => None,
         }
     }
@@ -239,6 +246,7 @@ impl TradeSide {
         match self {
             TradeSide::Buy => TradeSideCompat::Buy,
             TradeSide::Sell => TradeSideCompat::Sell,
+            TradeSide::Unknown => TradeSideCompat::None,
         }
     }
 
@@ -246,8 +254,14 @@ impl TradeSide {
     pub fn from_dbn_side(side: TradeSideCompat) -> Self {
         match side {
             TradeSideCompat::Buy => TradeSide::Buy,
-            TradeSideCompat::Sell | TradeSideCompat::None => TradeSide::Sell,
+            TradeSideCompat::Sell => TradeSide::Sell,
+            TradeSideCompat::None => TradeSide::Unknown,
         }
+    }
+
+    /// Check if side is known (Buy or Sell)
+    pub fn is_known(&self) -> bool {
+        !matches!(self, TradeSide::Unknown)
     }
 }
 

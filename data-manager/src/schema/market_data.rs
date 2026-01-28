@@ -11,19 +11,23 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use trading_common::data::{create_trade_msg_from_decimals, TradeSideCompat};
 
-/// Trade side (buy or sell)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Trade side (buy, sell, or unknown)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum TradeSide {
     Buy,
     Sell,
+    /// Unknown side (e.g., historical data without side information)
+    #[default]
+    Unknown,
 }
 
 impl TradeSide {
-    /// Convert to single character representation ('B' or 'S')
+    /// Convert to single character representation ('B', 'S', or 'U')
     pub fn as_char(&self) -> char {
         match self {
             TradeSide::Buy => 'B',
             TradeSide::Sell => 'S',
+            TradeSide::Unknown => 'U',
         }
     }
 
@@ -32,6 +36,7 @@ impl TradeSide {
         match c {
             'B' | 'b' => Some(TradeSide::Buy),
             'S' | 's' => Some(TradeSide::Sell),
+            'U' | 'u' | 'N' | 'n' => Some(TradeSide::Unknown),
             _ => None,
         }
     }
@@ -41,8 +46,14 @@ impl TradeSide {
         match s.to_uppercase().as_str() {
             "BUY" | "B" => Some(TradeSide::Buy),
             "SELL" | "S" => Some(TradeSide::Sell),
+            "UNKNOWN" | "U" | "NONE" | "N" => Some(TradeSide::Unknown),
             _ => None,
         }
+    }
+
+    /// Check if side is known (Buy or Sell)
+    pub fn is_known(&self) -> bool {
+        !matches!(self, TradeSide::Unknown)
     }
 }
 
@@ -51,6 +62,7 @@ impl std::fmt::Display for TradeSide {
         match self {
             TradeSide::Buy => write!(f, "BUY"),
             TradeSide::Sell => write!(f, "SELL"),
+            TradeSide::Unknown => write!(f, "UNKNOWN"),
         }
     }
 }
@@ -60,6 +72,7 @@ impl From<TradeSide> for TradeSideCompat {
         match side {
             TradeSide::Buy => TradeSideCompat::Buy,
             TradeSide::Sell => TradeSideCompat::Sell,
+            TradeSide::Unknown => TradeSideCompat::None,
         }
     }
 }

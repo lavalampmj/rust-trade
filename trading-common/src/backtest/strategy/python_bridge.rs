@@ -518,6 +518,7 @@ fn bar_data_to_pydict<'a>(py: Python<'a>, bar_data: &BarData) -> PyResult<Bound<
             match tick.side {
                 TradeSide::Buy => "Buy",
                 TradeSide::Sell => "Sell",
+                TradeSide::Unknown => "Unknown",
             },
         )?;
         tick_dict.set_item("trade_id", &tick.trade_id)?;
@@ -1321,6 +1322,7 @@ impl Strategy for PythonStrategy {
                     match tick.side {
                         TradeSide::Buy => "Buy",
                         TradeSide::Sell => "Sell",
+                        TradeSide::Unknown => "Unknown",
                     },
                 );
                 let _ = tick_dict.set_item("trade_id", &tick.trade_id);

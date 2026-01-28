@@ -186,6 +186,9 @@ impl BacktestMetrics {
                         durations.push(duration.num_seconds() as f64);
                     }
                 }
+                crate::data::types::TradeSide::Unknown => {
+                    // Skip unknown side trades - can't determine position direction
+                }
             }
         }
 
