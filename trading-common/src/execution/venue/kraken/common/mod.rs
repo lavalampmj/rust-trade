@@ -1,15 +1,18 @@
 //! Common Kraken components shared between spot and futures.
 //!
 //! This module contains:
-//! - [`KrakenHmacSigner`]: HMAC-SHA512 request signer
+//! - [`KrakenHmacSigner`]: HMAC-SHA512 request signer for Spot API
+//! - [`KrakenFuturesSigner`]: HMAC-SHA512 request signer for Futures API
 //! - [`KrakenUserStream`]: WebSocket execution stream handler
 //! - Shared types and utilities
 
+mod futures_signer;
 mod signer;
 pub mod types;
 mod user_stream;
 mod ws_token;
 
+pub use futures_signer::KrakenFuturesSigner;
 pub use signer::KrakenHmacSigner;
 pub use types::{
     KrakenExecutionType, KrakenLiquiditySide, KrakenOrderSide, KrakenOrderStatus,

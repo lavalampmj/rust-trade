@@ -15,7 +15,7 @@ use tracing::debug;
 
 use crate::execution::venue::error::{VenueError, VenueResult};
 use crate::execution::venue::kraken::common::{
-    KrakenHmacSigner, KrakenOrderType, KrakenTimeInForce,
+    KrakenFuturesSigner, KrakenOrderType, KrakenTimeInForce,
 };
 use crate::execution::venue::kraken::endpoints::futures as endpoints;
 use crate::orders::{Order, OrderSide};
@@ -31,8 +31,8 @@ use super::types::{
 pub struct FuturesRestClient {
     /// HTTP client
     http_client: reqwest::Client,
-    /// Request signer
-    signer: Arc<KrakenHmacSigner>,
+    /// Request signer (Futures-specific)
+    signer: Arc<KrakenFuturesSigner>,
     /// Base URL
     base_url: String,
 }
@@ -41,7 +41,7 @@ impl FuturesRestClient {
     /// Create a new Futures REST client.
     pub fn new(
         http_client: reqwest::Client,
-        signer: Arc<KrakenHmacSigner>,
+        signer: Arc<KrakenFuturesSigner>,
         base_url: impl Into<String>,
     ) -> Self {
         Self {
@@ -276,7 +276,7 @@ impl FuturesRestClient {
 
     /// Sign the WebSocket challenge.
     pub fn sign_challenge(&self, challenge: &str) -> String {
-        self.signer.sign_message(challenge)
+        self.signer.sign_challenge(challenge)
     }
 
     // =========================================================================
@@ -328,20 +328,23 @@ impl FuturesRestClient {
 
     /// Make a private GET request.
     async fn get_private<T: serde::de::DeserializeOwned>(&self, endpoint: &str) -> VenueResult<T> {
-        let nonce = KrakenHmacSigner::generate_nonce();
+        let nonce = KrakenFuturesSigner::generate_nonce();
+        let nonce_str = nonce.to_string();
 
-        // Futures uses different signing for GET requests
-        let post_data = format!("nonce={}", nonce);
-        let signature = self.signer.sign(endpoint, &post_data, nonce);
+        // For GET requests, post_data is empty string
+        let post_data = "";
+        let signature = self.signer.sign(endpoint, post_data, nonce);
 
-        let url = format!("{}{}?{}", self.base_url, endpoint, post_data);
+        let url = format!("{}{}", self.base_url, endpoint);
 
-        debug!("GET (private) {}", endpoint);
+        debug!("GET (private) {} nonce={} api_key={}", endpoint, nonce, &self.signer.api_key()[..8]);
+        debug!("Signature: {}", &signature[..20]);
 
         let response = self
             .http_client
             .get(&url)
             .header(self.signer.api_key_header(), self.signer.api_key())
+            .header("Nonce", &nonce_str)
             .header(self.signer.signature_header(), signature)
             .send()
             .await
@@ -382,16 +385,11 @@ impl FuturesRestClient {
         endpoint: &str,
         params: &[(&str, &str)],
     ) -> VenueResult<T> {
-        let nonce = KrakenHmacSigner::generate_nonce();
+        let nonce = KrakenFuturesSigner::generate_nonce();
+        let nonce_str = nonce.to_string();
 
-        // Build POST body with nonce
-        let mut post_params: Vec<(String, String)> = params
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        post_params.insert(0, ("nonce".to_string(), nonce.to_string()));
-
-        let post_data: String = post_params
+        // Build POST body (WITHOUT nonce in body - nonce goes in header for Futures)
+        let post_data: String = params
             .iter()
             .map(|(k, v)| format!("{}={}", k, v))
             .collect::<Vec<_>>()
@@ -402,12 +400,13 @@ impl FuturesRestClient {
 
         let url = format!("{}{}", self.base_url, endpoint);
 
-        debug!("POST (private) {}", endpoint);
+        debug!("POST (private) {} nonce={}", endpoint, nonce);
 
         let response = self
             .http_client
             .post(&url)
             .header(self.signer.api_key_header(), self.signer.api_key())
+            .header("Nonce", &nonce_str)
             .header(self.signer.signature_header(), signature)
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body(post_data)
@@ -481,7 +480,7 @@ mod tests {
     fn test_error_mapping() {
         let client = FuturesRestClient::new(
             reqwest::Client::new(),
-            Arc::new(KrakenHmacSigner::new("key", "dGVzdF9zZWNyZXRfa2V5XzEyMzQ1").unwrap()),
+            Arc::new(KrakenFuturesSigner::new("key", "dGVzdF9zZWNyZXRfa2V5XzEyMzQ1").unwrap()),
             "https://demo-futures.kraken.com",
         );
 

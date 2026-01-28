@@ -19,7 +19,7 @@ use tokio::sync::broadcast;
 use tracing::{info, warn};
 
 use crate::execution::venue::error::{VenueError, VenueResult};
-use crate::execution::venue::kraken::common::KrakenHmacSigner;
+use crate::execution::venue::kraken::common::KrakenFuturesSigner;
 use crate::execution::venue::kraken::config::KrakenFuturesVenueConfig;
 use crate::execution::venue::kraken::endpoints::KrakenFuturesEndpoints;
 use crate::execution::venue::traits::{
@@ -65,8 +65,8 @@ pub struct KrakenFuturesVenue {
     info: VenueInfo,
     /// HTTP client
     http_client: Option<reqwest::Client>,
-    /// Request signer
-    signer: Option<Arc<KrakenHmacSigner>>,
+    /// Request signer (Futures-specific)
+    signer: Option<Arc<KrakenFuturesSigner>>,
     /// REST client
     rest_client: Option<FuturesRestClient>,
     /// Execution normalizer
@@ -122,7 +122,7 @@ impl KrakenFuturesVenue {
     }
 
     /// Create the HTTP client and signer.
-    fn create_clients(&self) -> VenueResult<(reqwest::Client, Arc<KrakenHmacSigner>)> {
+    fn create_clients(&self) -> VenueResult<(reqwest::Client, Arc<KrakenFuturesSigner>)> {
         let api_key = self
             .config
             .base
@@ -137,7 +137,7 @@ impl KrakenFuturesVenue {
             .load_api_secret()
             .ok_or_else(|| VenueError::Configuration("API secret not found in environment".to_string()))?;
 
-        let signer = Arc::new(KrakenHmacSigner::new(api_key, &api_secret)?);
+        let signer = Arc::new(KrakenFuturesSigner::new(api_key, &api_secret)?);
 
         let http_client = reqwest::Client::builder()
             .timeout(self.config.base.rest.timeout())

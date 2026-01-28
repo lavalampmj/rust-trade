@@ -328,6 +328,7 @@ impl VenueRouter {
     /// Convert venue raw_symbol to canonical symbol.
     ///
     /// Returns the canonical symbol, or the original symbol if no mapping exists.
+    #[allow(dead_code)]
     fn to_canonical(&self, raw_symbol: &str, venue_id: &str) -> String {
         self.symbol_registry
             .read()

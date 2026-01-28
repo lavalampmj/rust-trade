@@ -95,6 +95,7 @@ impl ListenKeyManager {
     }
 
     /// Refresh the listen key (keepalive).
+    #[allow(dead_code)]
     async fn keepalive_listen_key(&self, listen_key: &str) -> VenueResult<()> {
         debug!("Refreshing listen key");
 
