@@ -97,6 +97,49 @@ pub struct DatabentoInstrumentRow {
     /// CFI code (ISO 10962)
     pub cfi_code: Option<String>,
 
+    // =========================================================================
+    // Additional metadata fields from InstrumentDefMsg
+    // =========================================================================
+
+    /// Timestamp when Databento received the definition (nanoseconds since epoch)
+    pub ts_recv: Option<i64>,
+
+    /// Currency for price fields (e.g., "USD")
+    pub currency: Option<String>,
+
+    /// Settlement currency if different
+    pub settl_currency: Option<String>,
+
+    /// Underlying asset/product code (e.g., "ES", "CL", "GC")
+    pub asset: Option<String>,
+
+    /// Security group code
+    pub security_group: Option<String>,
+
+    /// Unit of measure (e.g., "BBL", "BU")
+    pub unit_of_measure: Option<String>,
+
+    /// Underlying symbol (text)
+    pub underlying: Option<String>,
+
+    /// Maturity year
+    pub maturity_year: Option<i16>,
+
+    /// Maturity month
+    pub maturity_month: Option<i16>,
+
+    /// Maturity day
+    pub maturity_day: Option<i16>,
+
+    /// High limit price
+    pub high_limit_price: Option<i64>,
+
+    /// Low limit price
+    pub low_limit_price: Option<i64>,
+
+    /// Databento channel ID
+    pub channel_id: Option<i16>,
+
     /// Full InstrumentDefMsg as JSONB
     pub raw_definition: JsonValue,
 
@@ -108,7 +151,11 @@ pub struct DatabentoInstrumentRow {
 }
 
 /// Input for upserting an instrument definition.
-#[derive(Debug, Clone)]
+///
+/// This struct should be populated from the original Databento `InstrumentDefMsg`.
+/// The `raw_definition` field MUST contain the complete original message for
+/// full data preservation.
+#[derive(Debug, Clone, Default)]
 pub struct DatabentoInstrumentInput {
     /// Databento's canonical instrument_id
     pub instrument_id: i64,
@@ -161,7 +208,53 @@ pub struct DatabentoInstrumentInput {
     /// CFI code (ISO 10962)
     pub cfi_code: Option<String>,
 
+    // =========================================================================
+    // Additional metadata fields from InstrumentDefMsg
+    // =========================================================================
+
+    /// Timestamp when Databento received the definition (nanoseconds since epoch)
+    pub ts_recv: Option<i64>,
+
+    /// Currency for price fields (e.g., "USD")
+    pub currency: Option<String>,
+
+    /// Settlement currency if different
+    pub settl_currency: Option<String>,
+
+    /// Underlying asset/product code (e.g., "ES", "CL", "GC")
+    /// Critical for continuous contract construction
+    pub asset: Option<String>,
+
+    /// Security group code
+    pub security_group: Option<String>,
+
+    /// Unit of measure (e.g., "BBL" for barrels)
+    pub unit_of_measure: Option<String>,
+
+    /// Underlying symbol (text)
+    pub underlying: Option<String>,
+
+    /// Maturity year
+    pub maturity_year: Option<i16>,
+
+    /// Maturity month
+    pub maturity_month: Option<i16>,
+
+    /// Maturity day
+    pub maturity_day: Option<i16>,
+
+    /// High limit price
+    pub high_limit_price: Option<i64>,
+
+    /// Low limit price
+    pub low_limit_price: Option<i64>,
+
+    /// Databento channel ID
+    pub channel_id: Option<i16>,
+
     /// Full InstrumentDefMsg as JSONB
+    /// IMPORTANT: This must be the ORIGINAL InstrumentDefMsg from Databento,
+    /// not a derivative struct. This ensures all 70+ fields are preserved.
     pub raw_definition: JsonValue,
 }
 
@@ -191,9 +284,14 @@ impl DatabentoInstrumentRepository {
                 security_type, instrument_class, expiration, activation,
                 underlying_id, strike_price, min_price_increment, display_factor,
                 min_lot_size_round_lot, price_precision, contract_multiplier,
-                cfi_code, raw_definition, first_seen, last_updated
+                cfi_code, ts_recv, currency, settl_currency, asset, security_group,
+                unit_of_measure, underlying, maturity_year, maturity_month,
+                maturity_day, high_limit_price, low_limit_price, channel_id,
+                raw_definition, first_seen, last_updated
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW()
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+                $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31,
+                NOW(), NOW()
             )
             ON CONFLICT (instrument_id) DO UPDATE SET
                 raw_symbol = EXCLUDED.raw_symbol,
@@ -212,6 +310,19 @@ impl DatabentoInstrumentRepository {
                 price_precision = EXCLUDED.price_precision,
                 contract_multiplier = EXCLUDED.contract_multiplier,
                 cfi_code = EXCLUDED.cfi_code,
+                ts_recv = EXCLUDED.ts_recv,
+                currency = EXCLUDED.currency,
+                settl_currency = EXCLUDED.settl_currency,
+                asset = EXCLUDED.asset,
+                security_group = EXCLUDED.security_group,
+                unit_of_measure = EXCLUDED.unit_of_measure,
+                underlying = EXCLUDED.underlying,
+                maturity_year = EXCLUDED.maturity_year,
+                maturity_month = EXCLUDED.maturity_month,
+                maturity_day = EXCLUDED.maturity_day,
+                high_limit_price = EXCLUDED.high_limit_price,
+                low_limit_price = EXCLUDED.low_limit_price,
+                channel_id = EXCLUDED.channel_id,
                 raw_definition = EXCLUDED.raw_definition,
                 last_updated = NOW()
             "#,
@@ -233,6 +344,19 @@ impl DatabentoInstrumentRepository {
         .bind(input.price_precision)
         .bind(input.contract_multiplier)
         .bind(&input.cfi_code)
+        .bind(input.ts_recv)
+        .bind(&input.currency)
+        .bind(&input.settl_currency)
+        .bind(&input.asset)
+        .bind(&input.security_group)
+        .bind(&input.unit_of_measure)
+        .bind(&input.underlying)
+        .bind(input.maturity_year)
+        .bind(input.maturity_month)
+        .bind(input.maturity_day)
+        .bind(input.high_limit_price)
+        .bind(input.low_limit_price)
+        .bind(input.channel_id)
         .bind(&input.raw_definition)
         .execute(&self.pool)
         .await?;
@@ -353,6 +477,102 @@ impl DatabentoInstrumentRepository {
         .await?;
 
         Ok(rows)
+    }
+
+    /// Get all contracts for a specific asset/product code (e.g., "ES", "CL", "GC").
+    ///
+    /// This is essential for continuous contract construction and roll logic.
+    /// Returns contracts ordered by expiration date.
+    pub async fn list_by_asset(
+        &self,
+        asset: &str,
+        dataset: &str,
+    ) -> RepositoryResult<Vec<DatabentoInstrumentRow>> {
+        let rows = sqlx::query_as::<_, DatabentoInstrumentRow>(
+            r#"
+            SELECT * FROM databento_instruments
+            WHERE asset = $1 AND dataset = $2
+            ORDER BY expiration NULLS LAST, raw_symbol
+            "#,
+        )
+        .bind(asset)
+        .bind(dataset)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    /// Get active contracts for a specific asset/product code.
+    ///
+    /// Returns only non-expired contracts, ordered by expiration.
+    /// Use this for building continuous contract chains.
+    pub async fn list_active_by_asset(
+        &self,
+        asset: &str,
+        dataset: &str,
+    ) -> RepositoryResult<Vec<DatabentoInstrumentRow>> {
+        let rows = sqlx::query_as::<_, DatabentoInstrumentRow>(
+            r#"
+            SELECT * FROM databento_instruments
+            WHERE asset = $1
+              AND dataset = $2
+              AND security_type = 'FUT'
+              AND (expiration IS NULL OR expiration > NOW())
+            ORDER BY expiration NULLS FIRST
+            "#,
+        )
+        .bind(asset)
+        .bind(dataset)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    /// Get the front-month contract for an asset.
+    ///
+    /// Returns the active contract with the nearest expiration.
+    pub async fn get_front_month(
+        &self,
+        asset: &str,
+        dataset: &str,
+    ) -> RepositoryResult<Option<DatabentoInstrumentRow>> {
+        let row = sqlx::query_as::<_, DatabentoInstrumentRow>(
+            r#"
+            SELECT * FROM databento_instruments
+            WHERE asset = $1
+              AND dataset = $2
+              AND security_type = 'FUT'
+              AND (expiration IS NULL OR expiration > NOW())
+            ORDER BY expiration NULLS LAST
+            LIMIT 1
+            "#,
+        )
+        .bind(asset)
+        .bind(dataset)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row)
+    }
+
+    /// List all unique asset codes in a dataset.
+    ///
+    /// Useful for discovering available products.
+    pub async fn list_assets(&self, dataset: &str) -> RepositoryResult<Vec<String>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT DISTINCT asset FROM databento_instruments
+            WHERE dataset = $1 AND asset IS NOT NULL
+            ORDER BY asset
+            "#,
+        )
+        .bind(dataset)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.iter().map(|r| r.get("asset")).collect())
     }
 
     /// Get instruments expiring within a time range.
@@ -575,11 +795,58 @@ mod tests {
             price_precision: 9,
             contract_multiplier: Some(50),
             cfi_code: Some("FXXXXX".to_string()),
-            raw_definition: serde_json::json!({}),
+            // New fields
+            ts_recv: Some(1712100000000000000),
+            currency: Some("USD".to_string()),
+            settl_currency: None,
+            asset: Some("ES".to_string()),
+            security_group: Some("ES".to_string()),
+            unit_of_measure: None,
+            underlying: None,
+            maturity_year: Some(2026),
+            maturity_month: Some(3),
+            maturity_day: None,
+            high_limit_price: Some(6000_000_000_000), // 6000.0
+            low_limit_price: Some(4000_000_000_000),  // 4000.0
+            channel_id: Some(0),
+            raw_definition: serde_json::json!({
+                "instrument_id": 102341,
+                "raw_symbol": "ESH6",
+                "ts_recv": 1712100000000000000_i64,
+                "min_price_increment": 2500000000_i64,
+                "display_factor": 1000000000_i64,
+                "expiration": 1742515200000000000_i64,
+                "asset": "ES",
+                "currency": "USD",
+                "contract_multiplier": 50,
+                "security_type": "FUT",
+                "instrument_class": "F"
+            }),
         };
 
         assert_eq!(input.instrument_id, 102341);
         assert_eq!(input.raw_symbol, "ESH6");
         assert_eq!(input.dataset, "GLBX.MDP3");
+        assert_eq!(input.asset, Some("ES".to_string()));
+        assert_eq!(input.currency, Some("USD".to_string()));
+    }
+
+    #[test]
+    fn test_instrument_input_default() {
+        // Test that Default works for partial initialization
+        let input = DatabentoInstrumentInput {
+            instrument_id: 999,
+            raw_symbol: "AAPL".to_string(),
+            dataset: "XNAS.ITCH".to_string(),
+            exchange: "XNAS".to_string(),
+            security_type: Some("STK".to_string()),
+            raw_definition: serde_json::json!({}),
+            ..Default::default()
+        };
+
+        assert_eq!(input.instrument_id, 999);
+        assert_eq!(input.raw_symbol, "AAPL");
+        assert!(input.asset.is_none()); // Equities don't have product codes
+        assert!(input.expiration.is_none()); // Equities don't expire
     }
 }

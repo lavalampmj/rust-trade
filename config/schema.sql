@@ -677,8 +677,48 @@ CREATE TABLE IF NOT EXISTS databento_instruments (
     -- CFI code (ISO 10962 Classification of Financial Instruments)
     cfi_code VARCHAR(10),
 
+    -- =========================================================================
+    -- Additional metadata fields from InstrumentDefMsg
+    -- =========================================================================
+
+    -- Timestamp when Databento received the definition (nanoseconds since epoch)
+    -- Critical for tracking instrument lifecycle and definition updates
+    ts_recv BIGINT,
+
+    -- Currency for price fields (e.g., "USD", "EUR", "GBP")
+    currency VARCHAR(4),
+
+    -- Settlement currency if different from price currency
+    settl_currency VARCHAR(4),
+
+    -- Underlying asset/product code (e.g., "ES", "CL", "GC", "ZN")
+    -- Critical for continuous contract construction and roll logic
+    asset VARCHAR(11),
+
+    -- Security group code (exchange-assigned grouping)
+    security_group VARCHAR(21),
+
+    -- Unit of measure for contract size (e.g., "BBL" for barrels, "BU" for bushels)
+    unit_of_measure VARCHAR(31),
+
+    -- Underlying symbol (text, different from underlying_id)
+    underlying VARCHAR(21),
+
+    -- Maturity date components (for filtering/sorting by expiration)
+    maturity_year SMALLINT,
+    maturity_month SMALLINT,
+    maturity_day SMALLINT,
+
+    -- Price limit fields (for risk management and order validation)
+    high_limit_price BIGINT,
+    low_limit_price BIGINT,
+
+    -- Databento channel ID (for data routing)
+    channel_id SMALLINT,
+
     -- Full InstrumentDefMsg as JSONB for complete data access
     -- Contains all 70+ fields from Databento's definition schema
+    -- IMPORTANT: This must store the ORIGINAL InstrumentDefMsg, not a derivative
     raw_definition JSONB NOT NULL,
 
     -- Timestamps for cache management
@@ -727,6 +767,28 @@ WHERE underlying_id IS NOT NULL;
 -- (e.g., all futures in GLBX.MDP3)
 CREATE INDEX IF NOT EXISTS idx_dbt_instruments_dataset_type
 ON databento_instruments (dataset, security_type);
+
+-- Lookup by asset/product code (e.g., all ES contracts, all CL contracts)
+-- Critical for continuous contract construction
+CREATE INDEX IF NOT EXISTS idx_dbt_instruments_asset
+ON databento_instruments (asset)
+WHERE asset IS NOT NULL;
+
+-- Lookup by currency
+CREATE INDEX IF NOT EXISTS idx_dbt_instruments_currency
+ON databento_instruments (currency)
+WHERE currency IS NOT NULL;
+
+-- Lookup by maturity (for finding contracts expiring in specific year/month)
+CREATE INDEX IF NOT EXISTS idx_dbt_instruments_maturity
+ON databento_instruments (maturity_year, maturity_month)
+WHERE maturity_year IS NOT NULL;
+
+-- Composite index for continuous contract queries
+-- (e.g., all ES futures in GLBX.MDP3 ordered by expiration)
+CREATE INDEX IF NOT EXISTS idx_dbt_instruments_asset_expiry
+ON databento_instruments (dataset, asset, expiration)
+WHERE asset IS NOT NULL;
 
 -- =============================================================================
 -- Verification

@@ -258,6 +258,76 @@ impl TimescaleOperations {
         .execute(&self.pool)
         .await?;
 
+        // Add new columns to databento_instruments (safe to run multiple times)
+        // These columns were added to capture more of the InstrumentDefMsg fields
+        let new_columns = [
+            ("ts_recv", "BIGINT"),
+            ("currency", "VARCHAR(4)"),
+            ("settl_currency", "VARCHAR(4)"),
+            ("asset", "VARCHAR(11)"),
+            ("security_group", "VARCHAR(21)"),
+            ("unit_of_measure", "VARCHAR(31)"),
+            ("underlying", "VARCHAR(21)"),
+            ("maturity_year", "SMALLINT"),
+            ("maturity_month", "SMALLINT"),
+            ("maturity_day", "SMALLINT"),
+            ("high_limit_price", "BIGINT"),
+            ("low_limit_price", "BIGINT"),
+            ("channel_id", "SMALLINT"),
+        ];
+
+        for (column, col_type) in &new_columns {
+            let query = format!(
+                "ALTER TABLE databento_instruments ADD COLUMN IF NOT EXISTS {} {}",
+                column, col_type
+            );
+            if let Err(e) = sqlx::query(&query).execute(&self.pool).await {
+                // Ignore errors for already existing columns
+                debug!("Column {} may already exist: {}", column, e);
+            }
+        }
+
+        // Create indexes for the new columns
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_dbt_instruments_asset
+            ON databento_instruments (asset)
+            WHERE asset IS NOT NULL
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_dbt_instruments_currency
+            ON databento_instruments (currency)
+            WHERE currency IS NOT NULL
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_dbt_instruments_maturity
+            ON databento_instruments (maturity_year, maturity_month)
+            WHERE maturity_year IS NOT NULL
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_dbt_instruments_asset_expiry
+            ON databento_instruments (dataset, asset, expiration)
+            WHERE asset IS NOT NULL
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         info!("TimescaleDB migrations completed");
         Ok(())
     }

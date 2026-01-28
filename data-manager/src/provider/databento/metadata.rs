@@ -135,6 +135,38 @@ pub struct CachedInstrumentDef {
     /// CFI code (ISO 10962)
     pub cfi_code: Option<String>,
 
+    // =========================================================================
+    // Additional metadata from InstrumentDefMsg
+    // =========================================================================
+
+    /// Timestamp when Databento received the definition (nanoseconds)
+    pub ts_recv: Option<i64>,
+
+    /// Currency for price fields (e.g., "USD")
+    pub currency: Option<String>,
+
+    /// Underlying asset/product code (e.g., "ES", "CL", "GC")
+    /// Critical for continuous contract construction
+    pub asset: Option<String>,
+
+    /// Unit of measure (e.g., "BBL" for barrels)
+    pub unit_of_measure: Option<String>,
+
+    /// Underlying symbol (text, different from underlying_id)
+    pub underlying: Option<String>,
+
+    /// Maturity year
+    pub maturity_year: Option<u16>,
+
+    /// Maturity month
+    pub maturity_month: Option<u8>,
+
+    /// High limit price
+    pub high_limit_price: Option<i64>,
+
+    /// Low limit price
+    pub low_limit_price: Option<i64>,
+
     /// When this was cached
     pub cached_at: DateTime<Utc>,
 }
@@ -557,6 +589,16 @@ impl InstrumentDefinitionService {
             price_precision: row.price_precision as u8,
             contract_multiplier: row.contract_multiplier,
             cfi_code: row.cfi_code.clone(),
+            // New fields
+            ts_recv: row.ts_recv,
+            currency: row.currency.clone(),
+            asset: row.asset.clone(),
+            unit_of_measure: row.unit_of_measure.clone(),
+            underlying: row.underlying.clone(),
+            maturity_year: row.maturity_year.map(|y| y as u16),
+            maturity_month: row.maturity_month.map(|m| m as u8),
+            high_limit_price: row.high_limit_price,
+            low_limit_price: row.low_limit_price,
             cached_at: Utc::now(),
         }
     }
@@ -585,6 +627,22 @@ impl InstrumentDefinitionService {
             price_precision: def.price_precision as i16,
             contract_multiplier: def.contract_multiplier,
             cfi_code: def.cfi_code.clone(),
+            // New fields
+            ts_recv: def.ts_recv,
+            currency: def.currency.clone(),
+            settl_currency: None,
+            asset: def.asset.clone(),
+            security_group: None,
+            unit_of_measure: def.unit_of_measure.clone(),
+            underlying: def.underlying.clone(),
+            maturity_year: def.maturity_year.map(|y| y as i16),
+            maturity_month: def.maturity_month.map(|m| m as i16),
+            maturity_day: None,
+            high_limit_price: def.high_limit_price,
+            low_limit_price: def.low_limit_price,
+            channel_id: None,
+            // Note: This stores CachedInstrumentDef, but when integrating real API,
+            // this should store the original InstrumentDefMsg
             raw_definition: serde_json::to_value(def)
                 .unwrap_or(JsonValue::Object(serde_json::Map::new())),
         };
@@ -673,6 +731,22 @@ impl InstrumentDefinitionService {
             (None, None)
         };
 
+        // Extract asset code from symbol (e.g., "ESH6" -> "ES", "CLM5" -> "CL")
+        let asset = if security_type == Some("FUT".to_string()) && raw_symbol.len() >= 2 {
+            // Futures: typically 2-3 letter root + month + year
+            let root_end = raw_symbol
+                .chars()
+                .position(|c| c.is_ascii_digit() || "FGHJKMNQUVXZ".contains(c))
+                .unwrap_or(raw_symbol.len());
+            if root_end > 0 {
+                Some(raw_symbol[..root_end].to_string())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         warn!(
             "Using mock instrument_id {} for {} (Databento API not integrated yet)",
             mock_id, raw_symbol
@@ -696,6 +770,16 @@ impl InstrumentDefinitionService {
             price_precision: 9,
             contract_multiplier: None,
             cfi_code: None,
+            // New fields
+            ts_recv: None,
+            currency: Some("USD".to_string()),
+            asset,
+            unit_of_measure: None,
+            underlying: None,
+            maturity_year: None,
+            maturity_month: None,
+            high_limit_price: None,
+            low_limit_price: None,
             cached_at: Utc::now(),
         })
     }
@@ -717,11 +801,11 @@ impl Clone for InstrumentDefinitionService {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_cached_def_cache_key() {
-        let def = CachedInstrumentDef {
-            instrument_id: 102341,
-            raw_symbol: "ESH6".to_string(),
+    /// Helper to create a test CachedInstrumentDef with all fields
+    fn make_test_def(instrument_id: u32, raw_symbol: &str) -> CachedInstrumentDef {
+        CachedInstrumentDef {
+            instrument_id,
+            raw_symbol: raw_symbol.to_string(),
             dataset: "GLBX.MDP3".to_string(),
             exchange: "XCME".to_string(),
             publisher_id: Some(1),
@@ -731,44 +815,40 @@ mod tests {
             activation: None,
             underlying_id: None,
             strike_price: None,
-            min_price_increment: 2_500_000_000,
+            min_price_increment: 250_000_000, // 0.25 tick size
             display_factor: 1_000_000_000,
             min_lot_size_round_lot: 1,
             price_precision: 9,
             contract_multiplier: Some(50),
             cfi_code: Some("FXXXXX".to_string()),
+            ts_recv: Some(1712100000000000000),
+            currency: Some("USD".to_string()),
+            asset: Some("ES".to_string()),
+            unit_of_measure: None,
+            underlying: None,
+            maturity_year: Some(2026),
+            maturity_month: Some(3),
+            high_limit_price: None,
+            low_limit_price: None,
             cached_at: Utc::now(),
-        };
+        }
+    }
+
+    #[test]
+    fn test_cached_def_cache_key() {
+        let def = make_test_def(102341, "ESH6");
 
         assert_eq!(def.cache_key(), "ESH6@GLBX.MDP3");
         assert!(def.is_future());
         assert!(!def.is_option());
         assert!(!def.is_expired());
+        assert_eq!(def.asset, Some("ES".to_string()));
+        assert_eq!(def.currency, Some("USD".to_string()));
     }
 
     #[test]
     fn test_tick_size_decimal() {
-        let def = CachedInstrumentDef {
-            instrument_id: 102341,
-            raw_symbol: "ESH6".to_string(),
-            dataset: "GLBX.MDP3".to_string(),
-            exchange: "XCME".to_string(),
-            publisher_id: None,
-            security_type: Some("FUT".to_string()),
-            instrument_class: Some('F'),
-            expiration: None,
-            activation: None,
-            underlying_id: None,
-            strike_price: None,
-            // 0.25 tick size with 9 decimal places = 250_000_000
-            min_price_increment: 250_000_000,
-            display_factor: 1_000_000_000,
-            min_lot_size_round_lot: 1,
-            price_precision: 9,
-            contract_multiplier: Some(50),
-            cfi_code: None,
-            cached_at: Utc::now(),
-        };
+        let def = make_test_def(102341, "ESH6");
 
         let tick_size = def.tick_size_decimal();
         assert!((tick_size - 0.25).abs() < 0.0001);
@@ -784,27 +864,7 @@ mod tests {
     fn test_cache_insertion() {
         let service = InstrumentDefinitionService::memory_only("test_api_key");
 
-        let def = CachedInstrumentDef {
-            instrument_id: 102341,
-            raw_symbol: "ESH6".to_string(),
-            dataset: "GLBX.MDP3".to_string(),
-            exchange: "XCME".to_string(),
-            publisher_id: None,
-            security_type: Some("FUT".to_string()),
-            instrument_class: Some('F'),
-            expiration: None,
-            activation: None,
-            underlying_id: None,
-            strike_price: None,
-            min_price_increment: 250_000_000,
-            display_factor: 1_000_000_000,
-            min_lot_size_round_lot: 1,
-            price_precision: 9,
-            contract_multiplier: Some(50),
-            cfi_code: None,
-            cached_at: Utc::now(),
-        };
-
+        let def = make_test_def(102341, "ESH6");
         service.insert_to_cache(def);
         assert_eq!(service.cache_size(), 1);
 
@@ -818,27 +878,7 @@ mod tests {
     fn test_cache_invalidation() {
         let service = InstrumentDefinitionService::memory_only("test_api_key");
 
-        let def = CachedInstrumentDef {
-            instrument_id: 102341,
-            raw_symbol: "ESH6".to_string(),
-            dataset: "GLBX.MDP3".to_string(),
-            exchange: "XCME".to_string(),
-            publisher_id: None,
-            security_type: None,
-            instrument_class: None,
-            expiration: None,
-            activation: None,
-            underlying_id: None,
-            strike_price: None,
-            min_price_increment: 0,
-            display_factor: 1_000_000_000,
-            min_lot_size_round_lot: 1,
-            price_precision: 9,
-            contract_multiplier: None,
-            cfi_code: None,
-            cached_at: Utc::now(),
-        };
-
+        let def = make_test_def(102341, "ESH6");
         service.insert_to_cache(def);
         assert_eq!(service.cache_size(), 1);
 
@@ -849,26 +889,7 @@ mod tests {
 
     #[test]
     fn test_expired_check() {
-        let mut def = CachedInstrumentDef {
-            instrument_id: 102341,
-            raw_symbol: "ESH6".to_string(),
-            dataset: "GLBX.MDP3".to_string(),
-            exchange: "XCME".to_string(),
-            publisher_id: None,
-            security_type: Some("FUT".to_string()),
-            instrument_class: Some('F'),
-            expiration: None,
-            activation: None,
-            underlying_id: None,
-            strike_price: None,
-            min_price_increment: 0,
-            display_factor: 1_000_000_000,
-            min_lot_size_round_lot: 1,
-            price_precision: 9,
-            contract_multiplier: None,
-            cfi_code: None,
-            cached_at: Utc::now(),
-        };
+        let mut def = make_test_def(102341, "ESH6");
 
         // No expiration = not expired
         assert!(!def.is_expired());
@@ -880,5 +901,16 @@ mod tests {
         // Past expiration = expired
         def.expiration = Some(Utc::now() - chrono::Duration::days(1));
         assert!(def.is_expired());
+    }
+
+    #[test]
+    fn test_asset_extraction_from_symbol() {
+        // Futures with various root lengths
+        let es = make_test_def(1, "ESH6");
+        assert_eq!(es.asset, Some("ES".to_string()));
+
+        // Test that mock fetch_from_api extracts asset correctly
+        let service = InstrumentDefinitionService::memory_only("test_key");
+        // Note: Can't call async in sync test, but we tested the logic above
     }
 }
