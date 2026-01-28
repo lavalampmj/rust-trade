@@ -6,10 +6,12 @@ Centralized market data infrastructure: loading, streaming, persistence, and IPC
 
 ```
 data-manager/src/
-├── cli/             # CLI commands (serve, fetch, backfill, db, symbol)
+├── cli/             # CLI commands (serve, fetch, backfill, db, symbol, import)
 ├── config/          # Settings, routing configuration
 ├── instruments/     # InstrumentRegistry for persistent IDs
 ├── provider/        # Data providers (binance, kraken, databento)
+│   └── kraken/
+│       └── csv_parser.rs  # Kraken T&S CSV import with Lee-Ready side inference
 ├── storage/         # Database persistence
 └── transport/       # IPC shared memory transport
 ```
@@ -45,6 +47,14 @@ cargo run db compress
 # Backfill
 cargo run backfill estimate --symbols ESH5 --exchange CME --start 2024-01-01 --end 2024-01-31
 cargo run backfill fetch --symbols ESH5 --exchange CME --asset-type futures --start 2024-01-01 --end 2024-01-31
+
+# Import historical data from files
+cargo run import kraken --zip data/Kraken_Trading_History.zip --list          # List symbols
+cargo run import kraken --zip data/history.zip --symbols BTCUSD --dry-run     # Dry run
+cargo run import kraken --zip data/history.zip --symbols BTCUSD,ETHUSD        # Import specific
+cargo run import kraken --zip data/history.zip --all --start 2023-01-01       # Import all with date filter
+cargo run import kraken --input XBTUSD.csv --infer-side true                  # Single file
+cargo run import csv --input trades.csv --exchange KRAKEN --symbol BTCUSD     # Generic CSV
 ```
 
 ## Provider Trait Hierarchy (provider/traits.rs)
@@ -205,11 +215,50 @@ realtime = "kraken"
 3. Add settings in `src/config/settings.rs`
 4. Add dispatch in `src/cli/serve.rs`
 
+## Kraken CSV Import (cli/import/kraken.rs, provider/kraken/csv_parser.rs)
+
+Import historical trade data from Kraken Time & Sales ZIP archives.
+
+**Features**:
+- Parse Kraken T&S ZIP archives (1000+ symbols)
+- Lee-Ready tick rule for side inference
+- Symbol conversion: `XBTUSD` → `BTCUSD` (DBT canonical)
+- Scientific notation support for small volumes
+- Batch database inserts (10,000 per batch)
+- Progress bar, date filtering, dry-run mode
+
+**Lee-Ready Tick Rule** (side inference for historical data without side info):
+```
+Price > previous → Buy
+Price < previous → Sell
+Price == previous → Inherit previous side
+First trade → Default to Buy
+```
+
+**TradeSide enum** (`trading-common/src/data/types.rs`):
+```rust
+pub enum TradeSide {
+    Buy,
+    Sell,
+    #[default]
+    Unknown,  // For historical data before side inference
+}
+```
+
+**CSV Parser** (`provider/kraken/csv_parser.rs`):
+- `CsvTradeIterator`: Streaming iterator over CSV lines
+- `SideInferrer`: Stateful Lee-Ready side inference
+- `parse_filename()`: Extract symbol from Kraken filenames (XBTUSD.csv → BTCUSD)
+- `parse_decimal_with_scientific()`: Handle volumes like `7.314e-05`
+
 ## Key Files
 
 - `provider/traits.rs` - Trait definitions
 - `provider/binance/normalizer.rs` - Binance implementation
 - `provider/kraken/normalizer.rs` - Kraken implementation
+- `provider/kraken/csv_parser.rs` - Kraken T&S CSV parser with Lee-Ready inference
+- `cli/import/kraken.rs` - Kraken import CLI command
+- `cli/import/mod.rs` - Import subcommands (csv, kraken)
 - `instruments/registry.rs` - InstrumentRegistry
 - `transport/ipc/shared_memory.rs` - IPC transport
 - `transport/ipc/registry.rs` - Service registry
