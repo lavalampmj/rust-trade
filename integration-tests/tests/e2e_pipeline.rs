@@ -9,7 +9,9 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::time::timeout;
 
-use data_manager::provider::{DataProvider, LiveStreamProvider, LiveSubscription, StreamEvent};
+use data_manager::provider::{
+    LiveStreamProvider, LiveSubscription, StreamEvent, VenueConnection,
+};
 use integration_tests::{
     generate_report, DataGenConfig, DbVerifier, DbWriter, DbWriterConfig, EmulatorConfig,
     IntegrationTestConfig, MetricsCollector, MetricsConfig, ReportFormat, StrategyConfig,

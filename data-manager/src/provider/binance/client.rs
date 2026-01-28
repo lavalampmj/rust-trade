@@ -28,7 +28,8 @@ use tracing::{debug, error, info, warn};
 use crate::instruments::InstrumentRegistry;
 use crate::provider::{
     ConnectionStatus, DataProvider, DataType, LiveStreamProvider, LiveSubscription, ProviderError,
-    ProviderInfo, ProviderResult, StreamCallback, StreamEvent, SubscriptionStatus,
+    ProviderResult, StreamCallback, StreamEvent, SubscriptionStatus, VenueCapabilities,
+    VenueConnection, VenueConnectionStatus, VenueInfo,
 };
 use crate::symbol::SymbolSpec;
 
@@ -71,8 +72,8 @@ impl Default for BinanceSettings {
 
 /// Binance data provider
 pub struct BinanceProvider {
-    /// Provider information
-    info: ProviderInfo,
+    /// Venue information
+    info: VenueInfo,
     /// WebSocket URL
     ws_url: String,
     /// Connection status
@@ -101,15 +102,16 @@ impl BinanceProvider {
 
     /// Create a new Binance provider with custom settings
     pub fn with_settings(settings: BinanceSettings) -> Self {
-        let info = ProviderInfo {
-            name: "binance".to_string(),
-            display_name: "Binance".to_string(),
-            version: "1.0".to_string(),
-            supported_exchanges: vec!["BINANCE".to_string()],
-            supported_data_types: vec![DataType::Trades],
-            supports_historical: false,
-            supports_live: true,
-        };
+        let info = VenueInfo::data_provider("binance", "Binance")
+            .with_version("1.0")
+            .with_exchanges(vec!["BINANCE".to_string()])
+            .with_capabilities(VenueCapabilities {
+                supports_live_streaming: true,
+                supports_historical: false,
+                supports_quotes: false, // Only trades for now
+                supports_orderbook: false,
+                ..VenueCapabilities::default()
+            });
 
         let quota = Quota::per_minute(
             NonZeroU32::new(settings.rate_limit_attempts).expect("rate_limit_attempts must be > 0"),
@@ -401,19 +403,20 @@ impl Default for BinanceProvider {
 }
 
 #[async_trait]
-impl DataProvider for BinanceProvider {
-    fn info(&self) -> &ProviderInfo {
+#[async_trait]
+impl VenueConnection for BinanceProvider {
+    fn info(&self) -> &VenueInfo {
         &self.info
     }
 
-    async fn connect(&mut self) -> ProviderResult<()> {
+    async fn connect(&mut self) -> trading_common::venue::VenueResult<()> {
         // Connection happens lazily during subscribe
         // This just marks us as "ready to connect"
         info!("Binance provider initialized");
         Ok(())
     }
 
-    async fn disconnect(&mut self) -> ProviderResult<()> {
+    async fn disconnect(&mut self) -> trading_common::venue::VenueResult<()> {
         self.connected.store(false, Ordering::Release);
         self.subscription_status.connection = ConnectionStatus::Disconnected;
         info!("Binance provider disconnected");
@@ -424,6 +427,17 @@ impl DataProvider for BinanceProvider {
         self.connected.load(Ordering::Acquire)
     }
 
+    fn connection_status(&self) -> VenueConnectionStatus {
+        if self.connected.load(Ordering::Acquire) {
+            VenueConnectionStatus::Connected
+        } else {
+            VenueConnectionStatus::Disconnected
+        }
+    }
+}
+
+#[async_trait]
+impl DataProvider for BinanceProvider {
     async fn discover_symbols(&self, _exchange: Option<&str>) -> ProviderResult<Vec<SymbolSpec>> {
         // Binance has many symbols - return common crypto pairs in canonical (DBT) format
         Ok(vec![

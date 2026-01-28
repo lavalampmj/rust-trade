@@ -22,7 +22,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::provider::{
     ConnectionStatus, DataProvider, DataType, LiveStreamProvider, LiveSubscription, ProviderError,
-    ProviderInfo, ProviderResult, StreamCallback, StreamEvent, SubscriptionStatus,
+    ProviderResult, StreamCallback, StreamEvent, SubscriptionStatus, VenueCapabilities,
+    VenueConnection, VenueConnectionStatus, VenueInfo,
 };
 use crate::symbol::SymbolSpec;
 
@@ -133,8 +134,8 @@ impl KrakenSettings {
 
 /// Kraken data provider
 pub struct KrakenProvider {
-    /// Provider information
-    info: ProviderInfo,
+    /// Venue information
+    info: VenueInfo,
     /// Market type
     market_type: KrakenMarketType,
     /// Use demo endpoints (Futures only)
@@ -186,15 +187,16 @@ impl KrakenProvider {
 
         let exchange = get_exchange_name(settings.market_type == KrakenMarketType::Futures);
 
-        let info = ProviderInfo {
-            name: name.to_string(),
-            display_name: display_name.to_string(),
-            version: "1.0".to_string(),
-            supported_exchanges: vec![exchange.to_string()],
-            supported_data_types: vec![DataType::Trades, DataType::Quotes, DataType::OrderBook],
-            supports_historical: false,
-            supports_live: true,
-        };
+        let info = VenueInfo::data_provider(name, display_name)
+            .with_version("1.0")
+            .with_exchanges(vec![exchange.to_string()])
+            .with_capabilities(VenueCapabilities {
+                supports_live_streaming: true,
+                supports_historical: false,
+                supports_quotes: true,
+                supports_orderbook: true,
+                ..VenueCapabilities::default()
+            });
 
         let normalizer = match settings.market_type {
             KrakenMarketType::Spot => KrakenNormalizer::spot(),
@@ -725,12 +727,12 @@ impl Default for KrakenProvider {
 }
 
 #[async_trait]
-impl DataProvider for KrakenProvider {
-    fn info(&self) -> &ProviderInfo {
+impl VenueConnection for KrakenProvider {
+    fn info(&self) -> &VenueInfo {
         &self.info
     }
 
-    async fn connect(&mut self) -> ProviderResult<()> {
+    async fn connect(&mut self) -> trading_common::venue::VenueResult<()> {
         // Connection happens lazily during subscribe
         info!(
             "Kraken {} provider initialized (demo: {})",
@@ -740,7 +742,7 @@ impl DataProvider for KrakenProvider {
         Ok(())
     }
 
-    async fn disconnect(&mut self) -> ProviderResult<()> {
+    async fn disconnect(&mut self) -> trading_common::venue::VenueResult<()> {
         self.connected.store(false, Ordering::Release);
         self.subscription_status.connection = ConnectionStatus::Disconnected;
         info!("Kraken {} provider disconnected", self.market_type.as_str());
@@ -751,6 +753,17 @@ impl DataProvider for KrakenProvider {
         self.connected.load(Ordering::Acquire)
     }
 
+    fn connection_status(&self) -> VenueConnectionStatus {
+        if self.connected.load(Ordering::Acquire) {
+            VenueConnectionStatus::Connected
+        } else {
+            VenueConnectionStatus::Disconnected
+        }
+    }
+}
+
+#[async_trait]
+impl DataProvider for KrakenProvider {
     async fn discover_symbols(&self, _exchange: Option<&str>) -> ProviderResult<Vec<SymbolSpec>> {
         let exchange = get_exchange_name(self.market_type == KrakenMarketType::Futures);
 

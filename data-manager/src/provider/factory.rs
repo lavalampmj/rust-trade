@@ -8,7 +8,7 @@ use crate::config::{
 };
 use crate::provider::databento::DatabentoClient;
 use crate::provider::kraken::KrakenProvider;
-use crate::provider::{DataProvider, HistoricalDataProvider, LiveStreamProvider, ProviderError};
+use crate::provider::{HistoricalDataProvider, LiveStreamProvider, ProviderError, VenueConnection};
 use crate::symbol::SymbolSpec;
 
 /// Provider factory for creating providers based on routing decisions.

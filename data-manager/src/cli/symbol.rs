@@ -7,7 +7,7 @@ use tracing::{error, info};
 use crate::config::Settings;
 use crate::provider::databento::DatabentoClient;
 use crate::provider::kraken::KrakenProvider;
-use crate::provider::DataProvider;
+use crate::provider::{DataProvider, VenueConnection};
 use crate::storage::MarketDataRepository;
 use crate::symbol::{SymbolRegistry, SymbolSpec};
 

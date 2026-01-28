@@ -43,8 +43,9 @@ use tracing::{debug, info, warn};
 use crate::config::DatabentoSettings;
 use crate::provider::{
     ConnectionStatus, DataAvailability, DataProvider, DataType, HistoricalDataProvider,
-    HistoricalRequest, LiveStreamProvider, LiveSubscription, ProviderError, ProviderInfo,
-    ProviderResult, StreamCallback, StreamEvent, SubscriptionStatus,
+    HistoricalRequest, LiveStreamProvider, LiveSubscription, ProviderError, ProviderResult,
+    StreamCallback, StreamEvent, SubscriptionStatus, VenueCapabilities, VenueConnection,
+    VenueConnectionStatus, VenueInfo,
 };
 use crate::schema::NormalizedOHLC;
 use crate::symbol::SymbolSpec;
@@ -59,8 +60,8 @@ use super::{CachedInstrumentDef, CacheStats, InstrumentDefinitionService, Instru
 /// Integrates with [`InstrumentDefinitionService`] for canonical symbol resolution.
 #[allow(dead_code)] // Fields used for future implementation
 pub struct DatabentoClient {
-    /// Provider information
-    info: ProviderInfo,
+    /// Venue information
+    info: VenueInfo,
     /// Databento API key
     api_key: String,
     /// Default dataset
@@ -78,11 +79,9 @@ pub struct DatabentoClient {
 impl DatabentoClient {
     /// Create a new Databento client
     pub fn new(settings: &DatabentoSettings) -> Self {
-        let info = ProviderInfo {
-            name: "databento".to_string(),
-            display_name: "Databento".to_string(),
-            version: "0.18".to_string(),
-            supported_exchanges: vec![
+        let info = VenueInfo::data_provider("databento", "Databento")
+            .with_version("0.18")
+            .with_exchanges(vec![
                 "CME".to_string(),
                 "CBOT".to_string(),
                 "COMEX".to_string(),
@@ -91,16 +90,15 @@ impl DatabentoClient {
                 "NASDAQ".to_string(),
                 "BATS".to_string(),
                 "IEX".to_string(),
-            ],
-            supported_data_types: vec![
-                DataType::Trades,
-                DataType::Quotes,
-                DataType::OrderBook,
-                DataType::OHLC,
-            ],
-            supports_historical: true,
-            supports_live: true,
-        };
+            ])
+            .with_capabilities(VenueCapabilities {
+                supports_live_streaming: true,
+                supports_historical: true,
+                supports_quotes: true,
+                supports_orderbook: true,
+                supports_mbo: true,
+                ..VenueCapabilities::default()
+            });
 
         // Initialize instrument service without database (memory-only)
         let instrument_service = InstrumentDefinitionService::memory_only(&settings.api_key);
@@ -262,12 +260,13 @@ impl DatabentoClient {
 }
 
 #[async_trait]
-impl DataProvider for DatabentoClient {
-    fn info(&self) -> &ProviderInfo {
+#[async_trait]
+impl VenueConnection for DatabentoClient {
+    fn info(&self) -> &VenueInfo {
         &self.info
     }
 
-    async fn connect(&mut self) -> ProviderResult<()> {
+    async fn connect(&mut self) -> trading_common::venue::VenueResult<()> {
         if self.connected {
             return Ok(());
         }
@@ -275,7 +274,7 @@ impl DataProvider for DatabentoClient {
         // Validate API key by making a simple request
         // In production, we'd make an actual validation call to Databento
         if self.api_key.is_empty() {
-            return Err(ProviderError::Authentication(
+            return Err(trading_common::venue::VenueError::Authentication(
                 "Databento API key not configured".to_string(),
             ));
         }
@@ -286,7 +285,7 @@ impl DataProvider for DatabentoClient {
         Ok(())
     }
 
-    async fn disconnect(&mut self) -> ProviderResult<()> {
+    async fn disconnect(&mut self) -> trading_common::venue::VenueResult<()> {
         self.connected = false;
         self.subscription_status.connection = ConnectionStatus::Disconnected;
         info!("Disconnected from Databento");
@@ -297,6 +296,17 @@ impl DataProvider for DatabentoClient {
         self.connected
     }
 
+    fn connection_status(&self) -> VenueConnectionStatus {
+        if self.connected {
+            VenueConnectionStatus::Connected
+        } else {
+            VenueConnectionStatus::Disconnected
+        }
+    }
+}
+
+#[async_trait]
+impl DataProvider for DatabentoClient {
     async fn discover_symbols(&self, exchange: Option<&str>) -> ProviderResult<Vec<SymbolSpec>> {
         if !self.connected {
             return Err(ProviderError::NotConnected);

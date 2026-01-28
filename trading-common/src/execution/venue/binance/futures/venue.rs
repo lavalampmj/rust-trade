@@ -21,8 +21,8 @@ use crate::execution::venue::http::{HttpClient, RateLimiter};
 use crate::execution::venue::traits::{
     AccountQueryVenue, ExecutionCallback, ExecutionStreamVenue, OrderSubmissionVenue,
 };
-use crate::execution::venue::types::{BalanceInfo, OrderQueryResponse, VenueInfo};
-use crate::venue::{ConnectionStatus, VenueConnection};
+use crate::execution::venue::types::{BalanceInfo, OrderQueryResponse};
+use crate::venue::{ConnectionStatus, VenueCapabilities, VenueConnection, VenueInfo};
 use crate::orders::{ClientOrderId, Order, OrderType, PositionSide, TimeInForce, VenueOrderId};
 
 use super::normalizer::FuturesExecutionNormalizer;
@@ -145,6 +145,7 @@ impl BinanceFuturesVenue {
 
         let info = VenueInfo::new(&venue_id, &display_name)
             .with_name("BINANCE_FUTURES")
+            .with_exchanges(vec!["BINANCE".to_string()])
             .with_order_types(vec![
                 OrderType::Market,
                 OrderType::Limit,
@@ -154,9 +155,15 @@ impl BinanceFuturesVenue {
                 OrderType::LimitIfTouched, // Maps to TakeProfit
             ])
             .with_tif(vec![TimeInForce::GTC, TimeInForce::IOC, TimeInForce::FOK])
-            .with_batch_support(5)
-            .with_stop_orders()
-            .with_trailing_stop();
+            .with_capabilities(VenueCapabilities {
+                supports_orders: true,
+                supports_batch: true,
+                max_orders_per_batch: 5,
+                supports_stop_orders: true,
+                supports_trailing_stop: true,
+                supports_execution_stream: true,
+                ..VenueCapabilities::default()
+            });
 
         let normalizer = FuturesExecutionNormalizer::new(&info.name);
 
@@ -603,9 +610,9 @@ mod tests {
         assert!(info.supported_tif.contains(&TimeInForce::FOK));
 
         // Check futures-specific capabilities
-        assert!(info.supports_stop_orders);
-        assert!(info.supports_trailing_stop);
-        assert!(info.max_orders_per_batch > 0);
+        assert!(info.supports_stop_orders());
+        assert!(info.supports_trailing_stop());
+        assert!(info.max_orders_per_batch() > 0);
     }
 
     #[test]

@@ -12,7 +12,7 @@ use crate::cli::control_handler::{ControlHandler, ControlHandlerState};
 use crate::config::Settings;
 use crate::provider::binance::{BinanceProvider, BinanceSettings as BinanceProviderSettings};
 use crate::provider::kraken::{KrakenMarketType, KrakenProvider, KrakenSettings as KrakenProviderSettings};
-use crate::provider::{DataProvider, LiveStreamProvider, LiveSubscription, StreamEvent};
+use crate::provider::{LiveStreamProvider, LiveSubscription, StreamEvent, VenueConnection};
 use crate::storage::{MarketDataRepository, TimescaleOperations};
 use crate::symbol::SymbolSpec;
 use crate::transport::ipc::{

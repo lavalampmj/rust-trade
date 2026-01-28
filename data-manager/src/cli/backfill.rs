@@ -18,7 +18,7 @@ use tracing::{error, info, warn};
 use crate::backfill::{BackfillExecutor, BackfillRequest, BackfillService, BackfillSource};
 use crate::config::{AssetType, Settings};
 use crate::provider::databento::DatabentoClient;
-use crate::provider::{infer_asset_type, DataProvider, ProviderFactory};
+use crate::provider::{infer_asset_type, ProviderFactory, VenueConnection};
 use crate::scheduler::JobQueue;
 use crate::storage::MarketDataRepository;
 use crate::symbol::SymbolSpec;

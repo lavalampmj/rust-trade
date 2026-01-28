@@ -21,6 +21,9 @@ use trading_common::data::{BboMsg, MboMsg, Mbp10Msg, TradeMsg};
 
 use trading_common::error::{ErrorCategory, ErrorClassification};
 
+// Re-export unified venue types for use by providers
+pub use trading_common::venue::{VenueCapabilities, VenueInfo};
+
 /// Provider error types
 #[derive(Error, Debug)]
 #[non_exhaustive]
@@ -271,12 +274,43 @@ pub enum StreamEvent {
     Error(String),
 }
 
-/// Connection status for live streams
+/// Connection status for live streams.
+///
+/// # Migration Note
+///
+/// This enum is being unified with [`trading_common::venue::ConnectionStatus`].
+/// Use `VenueConnectionStatus` (the trading-common version) for new code.
+/// This local type is retained for backward compatibility with `StreamEvent`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionStatus {
     Connected,
     Disconnected,
     Reconnecting,
+}
+
+/// Re-export unified ConnectionStatus from trading-common for VenueConnection
+pub use trading_common::venue::ConnectionStatus as VenueConnectionStatus;
+
+impl From<ConnectionStatus> for VenueConnectionStatus {
+    fn from(status: ConnectionStatus) -> Self {
+        match status {
+            ConnectionStatus::Connected => VenueConnectionStatus::Connected,
+            ConnectionStatus::Disconnected => VenueConnectionStatus::Disconnected,
+            ConnectionStatus::Reconnecting => VenueConnectionStatus::Reconnecting,
+        }
+    }
+}
+
+impl From<VenueConnectionStatus> for ConnectionStatus {
+    fn from(status: VenueConnectionStatus) -> Self {
+        match status {
+            VenueConnectionStatus::Connected => ConnectionStatus::Connected,
+            VenueConnectionStatus::Disconnected => ConnectionStatus::Disconnected,
+            VenueConnectionStatus::Reconnecting => ConnectionStatus::Reconnecting,
+            VenueConnectionStatus::Connecting => ConnectionStatus::Disconnected,
+            VenueConnectionStatus::Error => ConnectionStatus::Disconnected,
+        }
+    }
 }
 
 // =============================================================================
@@ -419,23 +453,71 @@ impl StreamEventDbn {
     }
 }
 
-/// Base trait for all data providers
+// Re-export VenueConnection for convenience
+pub use trading_common::venue::VenueConnection;
+
+/// Base trait for all data providers.
+///
+/// This trait extends [`VenueConnection`] to provide data-specific functionality.
+/// Providers implementing this trait inherit connection lifecycle methods from
+/// `VenueConnection` and add data discovery capabilities.
+///
+/// # Trait Hierarchy
+///
+/// ```text
+/// VenueConnection (trading-common)
+///       │
+///       ▼
+/// DataProvider (data-manager)
+///       │
+///   ┌───┴───┐
+///   ▼       ▼
+/// LiveStreamProvider   HistoricalDataProvider
+/// ```
+///
+/// # Migration from ProviderInfo
+///
+/// Previously, `DataProvider::info()` returned `&ProviderInfo`. Now it returns
+/// `&VenueInfo` from `VenueConnection`. The mapping is:
+///
+/// | ProviderInfo | VenueInfo |
+/// |--------------|-----------|
+/// | `name` | `name` |
+/// | `display_name` | `display_name` |
+/// | `version` | `version` |
+/// | `supported_exchanges` | `supported_exchanges` |
+/// | `supports_historical` | `capabilities.supports_historical` |
+/// | `supports_live` | `capabilities.supports_live_streaming` |
 #[async_trait]
-pub trait DataProvider: Send + Sync {
-    /// Get provider information
-    fn info(&self) -> &ProviderInfo;
-
-    /// Connect to the provider
-    async fn connect(&mut self) -> ProviderResult<()>;
-
-    /// Disconnect from the provider
-    async fn disconnect(&mut self) -> ProviderResult<()>;
-
-    /// Check if connected
-    fn is_connected(&self) -> bool;
-
-    /// Discover available symbols from the provider
+pub trait DataProvider: VenueConnection {
+    /// Discover available symbols from the provider.
+    ///
+    /// # Arguments
+    ///
+    /// * `exchange` - Optional exchange filter (e.g., "KRAKEN", "BINANCE")
+    ///
+    /// # Returns
+    ///
+    /// List of available symbols that can be subscribed to.
     async fn discover_symbols(&self, exchange: Option<&str>) -> ProviderResult<Vec<SymbolSpec>>;
+
+    /// Get the provider info in legacy format.
+    ///
+    /// This method provides backward compatibility with code expecting `ProviderInfo`.
+    /// New code should use `VenueConnection::info()` directly.
+    #[deprecated(since = "0.2.0", note = "Use VenueConnection::info() instead")]
+    fn provider_info(&self) -> ProviderInfo {
+        let info = self.info();
+        ProviderInfo {
+            name: info.name.clone(),
+            display_name: info.display_name.clone(),
+            version: info.version.clone(),
+            supported_exchanges: info.supported_exchanges.clone(),
+            supported_data_types: Vec::new(), // Would need to derive from capabilities
+            supports_historical: info.capabilities.supports_historical,
+            supports_live: info.capabilities.supports_live_streaming,
+        }
+    }
 }
 
 /// Trait for historical data providers

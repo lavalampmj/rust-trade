@@ -25,7 +25,8 @@ use crate::execution::venue::kraken::endpoints::KrakenEndpoints;
 use crate::execution::venue::traits::{
     AccountQueryVenue, ExecutionCallback, ExecutionStreamVenue, OrderSubmissionVenue,
 };
-use crate::execution::venue::types::{BalanceInfo, OrderQueryResponse, VenueInfo};
+use crate::execution::venue::types::{BalanceInfo, OrderQueryResponse};
+use crate::venue::{VenueCapabilities, VenueInfo};
 use crate::venue::{ConnectionStatus, VenueConnection};
 use crate::orders::{ClientOrderId, Order, OrderType, TimeInForce, VenueOrderId};
 
@@ -108,6 +109,7 @@ impl KrakenSpotVenue {
 
         let info = VenueInfo::new(&venue_id, &display_name)
             .with_name("KRAKEN")
+            .with_exchanges(vec!["KRAKEN".to_string()])
             .with_order_types(vec![
                 OrderType::Market,
                 OrderType::Limit,
@@ -121,8 +123,14 @@ impl KrakenSpotVenue {
                 TimeInForce::IOC,
                 TimeInForce::GTD,
             ])
-            .with_batch_support(15) // Kraken supports 2-15 orders in batch
-            .with_stop_orders();
+            .with_capabilities(VenueCapabilities {
+                supports_orders: true,
+                supports_batch: true,
+                max_orders_per_batch: 15, // Kraken supports 2-15 orders in batch
+                supports_stop_orders: true,
+                supports_execution_stream: true,
+                ..VenueCapabilities::default()
+            });
 
         let normalizer = SpotExecutionNormalizer::new(&info.name);
 
@@ -551,8 +559,8 @@ mod tests {
         assert!(info.supported_tif.contains(&TimeInForce::IOC));
 
         // Check capabilities
-        assert!(info.supports_stop_orders);
-        assert!(info.max_orders_per_batch > 0);
+        assert!(info.supports_stop_orders());
+        assert!(info.max_orders_per_batch() > 0);
     }
 
     #[test]

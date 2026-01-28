@@ -14,7 +14,8 @@ use crate::execution::venue::traits::{
     AccountQueryVenue, ExecutionCallback, ExecutionStreamVenue, FullExecutionVenue,
     OrderSubmissionVenue,
 };
-use crate::execution::venue::types::{BalanceInfo, OrderQueryResponse, VenueInfo};
+use crate::execution::venue::types::{BalanceInfo, OrderQueryResponse};
+use crate::venue::{VenueCapabilities, VenueInfo};
 use crate::venue::{ConnectionStatus, VenueConnection};
 use crate::orders::{ClientOrderId, Order, OrderEventAny, OrderType, TimeInForce, VenueOrderId};
 use rust_decimal::Decimal;
@@ -91,6 +92,7 @@ impl VenueRouter {
             .with_name("ROUTER")
             .with_order_types(vec![OrderType::Market, OrderType::Limit])
             .with_tif(vec![TimeInForce::GTC, TimeInForce::IOC, TimeInForce::FOK])
+            .with_capabilities(VenueCapabilities::default())
     }
 
     /// Register a venue with the router.
@@ -215,26 +217,24 @@ impl VenueRouter {
                 }
             }
 
-            supports_modify |= info.supports_modify;
-            supports_batch |= info.supports_batch;
-            supports_stop |= info.supports_stop_orders;
-            max_batch = max_batch.max(info.max_orders_per_batch);
+            supports_modify |= info.supports_modify();
+            supports_batch |= info.supports_batch();
+            supports_stop |= info.supports_stop_orders();
+            max_batch = max_batch.max(info.max_orders_per_batch());
         }
 
-        let mut info = VenueInfo::new("venue_router", "Venue Router")
+        let info = VenueInfo::new("venue_router", "Venue Router")
             .with_name("ROUTER")
             .with_order_types(order_types)
-            .with_tif(tif);
-
-        if supports_stop {
-            info = info.with_stop_orders();
-        }
-        if supports_modify {
-            info = info.with_modify_support();
-        }
-        if supports_batch {
-            info = info.with_batch_support(max_batch);
-        }
+            .with_tif(tif)
+            .with_capabilities(VenueCapabilities {
+                supports_orders: true,
+                supports_stop_orders: supports_stop,
+                supports_modify: supports_modify,
+                supports_batch: supports_batch,
+                max_orders_per_batch: max_batch,
+                ..VenueCapabilities::default()
+            });
 
         *self.aggregated_info.write() = info;
     }

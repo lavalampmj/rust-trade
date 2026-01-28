@@ -24,7 +24,8 @@ use tokio::time::{sleep, Duration};
 
 use data_manager::provider::{
     ConnectionStatus, DataProvider, DataType, LiveStreamProvider, LiveSubscription, ProviderError,
-    ProviderInfo, ProviderResult, StreamCallback, StreamEvent, SubscriptionStatus,
+    ProviderResult, StreamCallback, StreamEvent, SubscriptionStatus, VenueCapabilities,
+    VenueConnection, VenueConnectionStatus, VenueInfo,
 };
 use data_manager::schema::{NormalizedTick, TradeSide};
 use data_manager::symbol::SymbolSpec;
@@ -79,8 +80,8 @@ pub struct TestDataEmulator {
     bundle: TestDataBundle,
     /// Configuration for the emulator
     config: EmulatorConfig,
-    /// Provider info
-    info: ProviderInfo,
+    /// Venue info
+    info: VenueInfo,
     /// Connection status
     connected: AtomicBool,
     /// Metrics collection
@@ -104,15 +105,14 @@ impl TestDataEmulator {
             instrument_to_symbol.insert(instrument_id, symbol.clone());
         }
 
-        let info = ProviderInfo {
-            name: "test_emulator".to_string(),
-            display_name: "Test Data Emulator".to_string(),
-            version: "1.0.0".to_string(),
-            supported_exchanges: vec![bundle.metadata.exchange.clone()],
-            supported_data_types: vec![DataType::Trades],
-            supports_historical: false,
-            supports_live: true,
-        };
+        let info = VenueInfo::data_provider("test_emulator", "Test Data Emulator")
+            .with_version("1.0.0")
+            .with_exchanges(vec![bundle.metadata.exchange.clone()])
+            .with_capabilities(VenueCapabilities {
+                supports_live_streaming: true,
+                supports_historical: false,
+                ..VenueCapabilities::default()
+            });
 
         Self {
             exchange: bundle.metadata.exchange.clone(),
@@ -271,18 +271,19 @@ impl TestDataEmulator {
 }
 
 #[async_trait]
-impl DataProvider for TestDataEmulator {
-    fn info(&self) -> &ProviderInfo {
+#[async_trait]
+impl VenueConnection for TestDataEmulator {
+    fn info(&self) -> &VenueInfo {
         &self.info
     }
 
-    async fn connect(&mut self) -> ProviderResult<()> {
+    async fn connect(&mut self) -> trading_common::venue::VenueResult<()> {
         self.connected.store(true, Ordering::SeqCst);
         tracing::info!("Test emulator connected");
         Ok(())
     }
 
-    async fn disconnect(&mut self) -> ProviderResult<()> {
+    async fn disconnect(&mut self) -> trading_common::venue::VenueResult<()> {
         self.connected.store(false, Ordering::SeqCst);
         tracing::info!("Test emulator disconnected");
         Ok(())
@@ -292,6 +293,17 @@ impl DataProvider for TestDataEmulator {
         self.connected.load(Ordering::SeqCst)
     }
 
+    fn connection_status(&self) -> VenueConnectionStatus {
+        if self.connected.load(Ordering::SeqCst) {
+            VenueConnectionStatus::Connected
+        } else {
+            VenueConnectionStatus::Disconnected
+        }
+    }
+}
+
+#[async_trait]
+impl DataProvider for TestDataEmulator {
     async fn discover_symbols(&self, _exchange: Option<&str>) -> ProviderResult<Vec<SymbolSpec>> {
         Ok(self
             .bundle

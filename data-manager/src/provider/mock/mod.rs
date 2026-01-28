@@ -10,8 +10,9 @@ use tokio::sync::broadcast;
 
 use crate::provider::{
     ConnectionStatus, DataAvailability, DataProvider, DataType, HistoricalDataProvider,
-    HistoricalRequest, LiveStreamProvider, LiveSubscription, ProviderError, ProviderInfo,
-    ProviderResult, StreamCallback, StreamEvent, SubscriptionStatus,
+    HistoricalRequest, LiveStreamProvider, LiveSubscription, ProviderError, ProviderResult,
+    StreamCallback, StreamEvent, SubscriptionStatus, VenueCapabilities, VenueConnection,
+    VenueConnectionStatus, VenueInfo,
 };
 use crate::schema::NormalizedOHLC;
 use crate::symbol::SymbolSpec;
@@ -19,7 +20,7 @@ use trading_common::data::types::{TickData, TradeSide};
 
 /// Mock data provider for testing
 pub struct MockProvider {
-    info: ProviderInfo,
+    info: VenueInfo,
     connected: bool,
     subscription_status: SubscriptionStatus,
     /// Number of ticks to generate for historical requests
@@ -34,15 +35,16 @@ impl MockProvider {
     /// Create a new mock provider
     pub fn new() -> Self {
         Self {
-            info: ProviderInfo {
-                name: "mock".to_string(),
-                display_name: "Mock Provider".to_string(),
-                version: "1.0.0".to_string(),
-                supported_exchanges: vec!["MOCK".to_string()],
-                supported_data_types: vec![DataType::Trades, DataType::OHLC],
-                supports_historical: true,
-                supports_live: true,
-            },
+            info: VenueInfo::data_provider("mock", "Mock Provider")
+                .with_version("1.0.0")
+                .with_exchanges(vec!["MOCK".to_string()])
+                .with_capabilities(VenueCapabilities {
+                    supports_live_streaming: true,
+                    supports_historical: true,
+                    supports_quotes: false,
+                    supports_orderbook: false,
+                    ..VenueCapabilities::default()
+                }),
             connected: false,
             subscription_status: SubscriptionStatus::default(),
             ticks_per_symbol: 1000,
@@ -110,18 +112,18 @@ impl Default for MockProvider {
 }
 
 #[async_trait]
-impl DataProvider for MockProvider {
-    fn info(&self) -> &ProviderInfo {
+impl VenueConnection for MockProvider {
+    fn info(&self) -> &VenueInfo {
         &self.info
     }
 
-    async fn connect(&mut self) -> ProviderResult<()> {
+    async fn connect(&mut self) -> trading_common::venue::VenueResult<()> {
         self.connected = true;
         self.subscription_status.connection = ConnectionStatus::Connected;
         Ok(())
     }
 
-    async fn disconnect(&mut self) -> ProviderResult<()> {
+    async fn disconnect(&mut self) -> trading_common::venue::VenueResult<()> {
         self.connected = false;
         self.subscription_status.connection = ConnectionStatus::Disconnected;
         Ok(())
@@ -131,6 +133,17 @@ impl DataProvider for MockProvider {
         self.connected
     }
 
+    fn connection_status(&self) -> VenueConnectionStatus {
+        if self.connected {
+            VenueConnectionStatus::Connected
+        } else {
+            VenueConnectionStatus::Disconnected
+        }
+    }
+}
+
+#[async_trait]
+impl DataProvider for MockProvider {
     async fn discover_symbols(&self, _exchange: Option<&str>) -> ProviderResult<Vec<SymbolSpec>> {
         if !self.connected {
             return Err(ProviderError::NotConnected);

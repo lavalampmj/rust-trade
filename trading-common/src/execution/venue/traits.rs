@@ -36,12 +36,11 @@ use rust_decimal::Decimal;
 use tokio::sync::broadcast;
 
 use crate::orders::{ClientOrderId, Order, OrderEventAny, VenueOrderId};
-use crate::venue::VenueConnection;
+use crate::venue::{VenueConnection, VenueInfo};
 
 use super::error::VenueResult;
 use super::types::{
     BalanceInfo, BatchCancelResult, BatchOrderResult, CancelRequest, OrderQueryResponse,
-    VenueInfo,
 };
 
 /// Callback for execution reports from WebSocket streams.

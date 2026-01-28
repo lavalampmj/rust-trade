@@ -102,6 +102,10 @@ pub struct VenueInfo {
     pub display_name: String,
     /// Short name for logging/display (e.g., "BINANCE_US")
     pub name: String,
+    /// Version string (e.g., "1.0.0")
+    pub version: String,
+    /// Supported exchanges/markets (e.g., ["KRAKEN", "KRAKEN_FUTURES"])
+    pub supported_exchanges: Vec<String>,
     /// Venue capabilities
     pub capabilities: VenueCapabilities,
     /// Supported order types (for execution venues)
@@ -117,15 +121,44 @@ impl VenueInfo {
             venue_id: venue_id.into(),
             display_name: display_name.into(),
             name: String::new(),
+            version: String::new(),
+            supported_exchanges: Vec::new(),
             capabilities: VenueCapabilities::default(),
             supported_order_types: vec![OrderType::Market, OrderType::Limit],
             supported_tif: vec![TimeInForce::GTC, TimeInForce::IOC, TimeInForce::FOK],
         }
     }
 
+    /// Create a VenueInfo for a data provider (no order types/TIF).
+    pub fn data_provider(name: impl Into<String>, display_name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            venue_id: name.to_lowercase(),
+            display_name: display_name.into(),
+            name,
+            version: String::new(),
+            supported_exchanges: Vec::new(),
+            capabilities: VenueCapabilities::data_only(),
+            supported_order_types: Vec::new(),
+            supported_tif: Vec::new(),
+        }
+    }
+
     /// Set the venue name.
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
+        self
+    }
+
+    /// Set the version string.
+    pub fn with_version(mut self, version: impl Into<String>) -> Self {
+        self.version = version.into();
+        self
+    }
+
+    /// Set the supported exchanges.
+    pub fn with_exchanges(mut self, exchanges: Vec<String>) -> Self {
+        self.supported_exchanges = exchanges;
         self
     }
 
@@ -203,6 +236,8 @@ mod tests {
     fn test_venue_info_builder() {
         let info = VenueInfo::new("binance_us_spot", "Binance.US Spot")
             .with_name("BINANCE_US")
+            .with_version("1.0.0")
+            .with_exchanges(vec!["BINANCE".into()])
             .with_capabilities(VenueCapabilities {
                 supports_modify: true,
                 supports_batch: true,
@@ -213,11 +248,25 @@ mod tests {
             .with_order_types(vec![OrderType::Market, OrderType::Limit, OrderType::Stop]);
 
         assert_eq!(info.venue_id, "binance_us_spot");
+        assert_eq!(info.version, "1.0.0");
         assert!(info.supports_modify());
         assert!(info.supports_batch());
         assert_eq!(info.max_orders_per_batch(), 10);
         assert!(info.supports_order_type(&OrderType::Stop));
         assert!(!info.supports_order_type(&OrderType::TrailingStop));
+    }
+
+    #[test]
+    fn test_data_provider_builder() {
+        let info = VenueInfo::data_provider("kraken", "Kraken")
+            .with_version("2.0")
+            .with_exchanges(vec!["KRAKEN".into(), "KRAKEN_FUTURES".into()]);
+
+        assert_eq!(info.name, "kraken");
+        assert_eq!(info.venue_id, "kraken");
+        assert!(info.capabilities.supports_live_streaming);
+        assert!(!info.capabilities.supports_orders);
+        assert!(info.supported_order_types.is_empty());
     }
 
     #[test]
