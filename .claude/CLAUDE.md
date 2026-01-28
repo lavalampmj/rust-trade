@@ -205,6 +205,35 @@ Venue Response      →  Normalizer        →  Internal (DBT)
 - `data-manager/src/provider/kraken/symbol.rs` - Kraken spot/futures conversion
 - `data-manager/src/provider/binance/symbol.rs` - Binance conversion
 - `data-manager/src/provider/databento/` - Native DBT (no conversion needed)
+- `data-manager/src/provider/traits.rs` - `SymbolNormalizer` trait (enforces conversion)
+
+#### Instrument ID Registry
+
+The `InstrumentRegistry` provides persistent, deterministic `instrument_id` assignment for all symbols:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     InstrumentRegistry                          │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────┐ │
+│  │  L1 Cache   │───>│  L2 Cache   │───>│  ID Generation      │ │
+│  │  (DashMap)  │    │  (Postgres) │    │  (deterministic)    │ │
+│  └─────────────┘    └─────────────┘    └─────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**ID generation**: For non-Databento sources, IDs are generated via `hash(symbol + exchange) >> 32` for deterministic, collision-resistant u32 IDs.
+
+**Usage pattern**:
+```rust
+// During subscription, pre-register symbols
+let registry = InstrumentRegistry::new(pool).await?;
+let id = registry.get_or_create("BTCUSD", "BINANCE").await?;
+// Returns same ID on subsequent calls (cached + persisted)
+```
+
+**Key files**:
+- `data-manager/src/instruments/registry.rs` - Registry implementation
+- `data-manager/src/provider/*/normalizer.rs` - Registry integration in normalizers
 
 #### DBN Data Types
 
@@ -805,16 +834,90 @@ shutdown_tx.send(()).ok();
    - `mod.rs` - Public exports
    - `client.rs` - Implement `DataProvider` + `LiveStreamProvider` traits
    - `types.rs` - WebSocket message structs
-   - `normalizer.rs` - Convert venue messages to `TickData`, `QuoteTick`, `OrderBook`
-   - `symbol.rs` - Symbol format conversion (optional)
+   - `normalizer.rs` - Implement `SymbolNormalizer` trait + convert venue messages to `TickData`, `QuoteTick`, `OrderBook`
+   - `symbol.rs` - Symbol format conversion functions (`to_canonical()`, `to_venue()`)
 2. Register in `data-manager/src/provider/mod.rs`
 3. Add provider settings in `data-manager/src/config/settings.rs`
 4. Add provider dispatch in `data-manager/src/cli/serve.rs`
+
+**Required trait implementations**:
+- `DataProvider` - Base connectivity (connect, disconnect, discover_symbols)
+- `LiveStreamProvider` - Real-time streaming (subscribe, unsubscribe)
+- `SymbolNormalizer` - DBT symbology conversion (to_canonical, to_venue, register_symbols)
 
 **Existing providers**:
 - Binance: trades (live)
 - Kraken Spot/Futures: trades, L1 quotes, L2 orderbook (live)
 - Databento: trades, L1 quotes (BBO), L2 orderbook (MBP), L3 full book (MBO), OHLC (historical + live)
+
+### Provider Trait Hierarchy
+
+The framework enforces consistent interfaces via traits in `data-manager/src/provider/traits.rs`:
+
+```
+DataProvider (base - required for all providers)
+├── connect(), disconnect(), is_connected()
+├── discover_symbols()
+└── info()
+
+├── LiveStreamProvider (for real-time data)
+│   ├── subscribe(), unsubscribe()
+│   └── subscription_status()
+
+├── HistoricalDataProvider (for backfill)
+│   ├── fetch_ticks(), fetch_ohlc()
+│   └── check_availability()
+
+└── SymbolNormalizer (for non-DBT native providers)
+    ├── to_canonical()      # Venue → DBT (BTCUSDT → BTCUSD)
+    ├── to_venue()          # DBT → Venue (BTCUSD → BTCUSDT)
+    ├── exchange_name()     # "BINANCE", "KRAKEN", etc.
+    └── register_symbols()  # InstrumentRegistry integration
+```
+
+**SymbolNormalizer trait** enforces DBT canonical symbology at compile-time:
+
+```rust
+#[async_trait]
+pub trait SymbolNormalizer: Send + Sync {
+    /// Convert venue symbol to DBT canonical (BTCUSDT → BTCUSD)
+    fn to_canonical(&self, venue_symbol: &str) -> Result<String, ProviderError>;
+
+    /// Convert DBT canonical to venue format (BTCUSD → BTCUSDT)
+    fn to_venue(&self, canonical_symbol: &str) -> Result<String, ProviderError>;
+
+    /// Exchange identifier for registry lookups
+    fn exchange_name(&self) -> &str;
+
+    /// Pre-register symbols with InstrumentRegistry (default impl provided)
+    async fn register_symbols(&self, symbols: &[String], registry: &Arc<InstrumentRegistry>)
+        -> Result<HashMap<String, u32>, ProviderError>;
+}
+```
+
+**For DBT-native providers** (like Databento), implement the marker trait instead:
+
+```rust
+pub trait NativeDbProvider: Send + Sync {
+    fn exchange_name(&self) -> &str;
+}
+// Auto-implements SymbolNormalizer with no-op conversions
+```
+
+**Current implementations**:
+
+| Provider | Trait | Conversions |
+|----------|-------|-------------|
+| `BinanceNormalizer` | `SymbolNormalizer` | BTCUSDT ↔ BTCUSD |
+| `KrakenNormalizer` (Spot) | `SymbolNormalizer` | BTC/USD ↔ BTCUSD |
+| `KrakenNormalizer` (Futures) | `SymbolNormalizer` | PI_XBTUSD ↔ BTCUSD |
+| Databento | `NativeDbProvider` | No conversion needed |
+
+**Key files**:
+- `data-manager/src/provider/traits.rs` - Trait definitions
+- `data-manager/src/provider/binance/normalizer.rs` - Binance implementation
+- `data-manager/src/provider/kraken/normalizer.rs` - Kraken implementation
+- `data-manager/src/instruments/registry.rs` - InstrumentRegistry for persistent IDs
 
 ### Adding a New Trading Strategy
 
