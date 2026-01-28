@@ -1007,9 +1007,12 @@ mod tests {
         let provider = KrakenProvider::spot();
         let symbols = provider.discover_symbols(None).await.unwrap();
         assert!(!symbols.is_empty());
-        // Discover returns raw Kraken symbols which may use XBT
-        // The conversion to BTC happens in to_kraken_spot()
-        assert!(symbols.iter().any(|s| s.symbol == "XBT/USD" || s.symbol == "BTC/USD"));
+        // Discover returns DBT canonical format (XBT/USD → BTCUSD)
+        assert!(
+            symbols.iter().any(|s| s.symbol == "BTCUSD"),
+            "Expected to find BTCUSD in {:?}",
+            symbols.iter().map(|s| &s.symbol).take(10).collect::<Vec<_>>()
+        );
     }
 
     #[tokio::test]
@@ -1017,7 +1020,12 @@ mod tests {
         let provider = KrakenProvider::futures(false);
         let symbols = provider.discover_symbols(None).await.unwrap();
         assert!(!symbols.is_empty());
-        assert!(symbols.iter().any(|s| s.symbol == "PI_XBTUSD"));
+        // to_canonical converts PI_XBTUSD → BTCUSD (strips prefix and normalizes XBT → BTC)
+        assert!(
+            symbols.iter().any(|s| s.symbol == "BTCUSD"),
+            "Expected to find BTCUSD in {:?}",
+            symbols.iter().map(|s| &s.symbol).take(10).collect::<Vec<_>>()
+        );
     }
 
     #[test]

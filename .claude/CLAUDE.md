@@ -47,11 +47,18 @@ cargo run serve --live --ipc --persist
 # Start with custom config file
 cargo run serve -c ../config/development.toml --live --ipc
 
-# Fetch historical data from Databento (futures/equities only)
-cargo run fetch --symbols ESH5 --dataset GLBX.MDP3 --start 2024-01-01 --end 2024-01-31
+# Fetch historical data with automatic routing (futures/equities via Databento)
+# Provider and dataset are automatically resolved from asset type and exchange
+cargo run fetch --symbols ESH5 --exchange CME --start 2024-01-01 --end 2024-01-31
 
-# Dry run to see what would be fetched
-cargo run fetch --symbols ESH5 --dataset GLBX.MDP3 --start 2024-01-01 --end 2024-01-31 --dry-run
+# Explicit asset type for better routing
+cargo run fetch --symbols AAPL --exchange NASDAQ --asset-type equity --start 2024-01-01 --end 2024-01-31
+
+# Dry run to see routing resolution without fetching
+cargo run fetch --symbols ESH5 --exchange CME --start 2024-01-01 --end 2024-01-31 --dry-run --verbose
+
+# Override provider/dataset when needed
+cargo run fetch --symbols ESH5 --exchange CME --provider databento --dataset GLBX.MDP3 --start 2024-01-01 --end 2024-01-31
 
 # Symbol management
 cargo run symbol list                         # List registered symbols
@@ -65,11 +72,18 @@ cargo run db migrate                            # Run database migrations
 cargo run db stats                              # Show database statistics
 cargo run db compress                           # Compress old data
 
-# Backfill with cost tracking (Databento - futures/equities only)
-cargo run backfill estimate --symbols ESH5 --start 2024-01-01 --end 2024-01-31
-cargo run backfill fetch --symbols ESH5 --start 2024-01-01 --end 2024-01-31
-cargo run backfill fill-gaps --symbols ESH5   # Detect and fill data gaps
-cargo run backfill status                     # Show backfill status
+# Backfill with cost tracking (auto-routes to Databento for futures/equities)
+cargo run backfill estimate --symbols ESH5 --exchange CME --start 2024-01-01 --end 2024-01-31
+
+# Fetch with asset type for better routing
+cargo run backfill fetch --symbols ESH5 --exchange CME --asset-type futures --start 2024-01-01 --end 2024-01-31
+
+# Verbose mode shows routing resolution details
+cargo run backfill estimate --symbols AAPL --exchange NASDAQ --asset-type equity --start 2024-01-01 --end 2024-01-31 --verbose
+
+# Fill gaps and check status
+cargo run backfill fill-gaps --symbols ESH5 --exchange CME   # Detect and fill data gaps
+cargo run backfill status --detailed          # Show status with routing config
 cargo run backfill cost-report                # Show cost report
 
 # Show help
@@ -225,6 +239,56 @@ Different providers support different asset classes:
 ```
 
 **Note**: Crypto historical data is not yet supported via Databento. Use live streaming from Kraken/Binance and persist with `--persist` flag.
+
+#### Provider Routing System
+
+The framework includes an automatic **provider routing system** that selects the appropriate data provider based on asset type and exchange. This eliminates the need to manually specify `--provider` for most operations.
+
+**Three-tier resolution strategy**:
+1. **Symbol-specific routing** (highest priority): Exact match on symbol+exchange
+2. **Asset type + exchange fallback**: Match on asset class (futures, equity, crypto)
+3. **Global default**: Falls back to `databento`
+
+**CLI usage with automatic routing**:
+```bash
+# Futures - automatically routes to databento
+cargo run fetch --symbols ESH5 --exchange CME --start 2024-01-01 --end 2024-01-31
+# → Resolves: provider=databento, dataset=GLBX.MDP3
+
+# Equities - automatically routes to databento
+cargo run fetch --symbols AAPL --exchange NASDAQ --start 2024-01-01 --end 2024-01-31
+# → Resolves: provider=databento, dataset=XNAS.ITCH
+
+# Crypto - infers asset type, routes appropriately
+cargo run fetch --symbols BTCUSD --exchange KRAKEN --asset-type crypto --dry-run
+# → Resolves: provider=databento for historical (realtime would use kraken)
+
+# Explicit override when needed
+cargo run fetch --symbols ESH5 --exchange CME --provider databento --dataset GLBX.MDP3
+```
+
+**Configuration** (in `config/development.toml`):
+```toml
+[routing]
+default_provider = "databento"
+
+[routing.databento.datasets]
+"futures@CME" = "GLBX.MDP3"
+"equity@NASDAQ" = "XNAS.ITCH"
+
+[routing.asset_types.futures]
+historical = "databento"
+realtime = "databento"
+
+[routing.asset_types.crypto]
+historical = "databento"
+realtime = "kraken"
+```
+
+**Key files**:
+- `data-manager/src/config/routing.rs` - Routing configuration types
+- `data-manager/src/config/router.rs` - `ProviderRouter` implementation
+- `data-manager/src/provider/factory.rs` - `ProviderFactory` for creating providers
 
 ### Key Architectural Patterns
 

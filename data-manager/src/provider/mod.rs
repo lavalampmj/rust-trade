@@ -5,8 +5,10 @@
 
 pub mod binance;
 pub mod databento;
+pub mod factory;
 pub mod kraken;
 pub mod mock;
 mod traits;
 
+pub use factory::{infer_asset_type, ProviderFactory};
 pub use traits::*;

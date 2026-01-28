@@ -517,3 +517,76 @@ event_channel_capacity = 256
 # contract_size = "50"
 # expiration = "2026-03-21"
 # session_schedule = "cme_globex"
+
+# =================================================================
+# Provider Routing Configuration
+# =================================================================
+# Automatic provider selection based on asset type and exchange.
+# Three-tier resolution: symbol-specific → asset-type → global default
+
+[routing]
+# Default provider when no routing rules match
+default_provider = "databento"
+
+# Databento-specific routing configuration
+[routing.databento]
+# Default dataset when no specific mapping exists
+default_dataset = "GLBX.MDP3"
+
+# Dataset mappings: "asset_type@exchange" -> dataset name
+[routing.databento.datasets]
+"futures@CME" = "GLBX.MDP3"
+"futures@CBOT" = "GLBX.MDP3"
+"futures@NYMEX" = "GLBX.MDP3"
+"futures@COMEX" = "GLBX.MDP3"
+"equity@NASDAQ" = "XNAS.ITCH"
+"equity@NYSE" = "XNYS.TRADES"
+
+# Asset type routing rules (fallback tier)
+# Each asset type can have different providers for historical vs realtime
+
+[routing.asset_types.futures]
+historical = "databento"
+realtime = "databento"
+default_exchange = "CME"
+
+[routing.asset_types.equity]
+historical = "databento"
+realtime = "databento"
+default_exchange = "NASDAQ"
+
+[routing.asset_types.crypto]
+historical = "databento"    # Databento for historical (if available)
+realtime = "kraken"         # Kraken for live streaming
+default_exchange = "KRAKEN"
+
+[routing.asset_types.fx]
+historical = "databento"
+realtime = "databento"
+
+# Symbol-specific routing rules (highest priority)
+# Uncomment and customize for specific symbols that need special handling
+
+# [[routing.symbols]]
+# symbol = "ES"
+# exchange = "CME"
+# asset_type = "futures"
+# [routing.symbols.historical]
+# provider = "databento"
+# dataset = "GLBX.MDP3"
+# [routing.symbols.realtime]
+# provider = "databento"
+# dataset = "GLBX.MDP3"
+# [routing.symbols.provider_symbols]
+# databento = "ES.FUT"
+
+# [[routing.symbols]]
+# symbol = "BTCUSD"
+# exchange = "KRAKEN"
+# asset_type = "crypto"
+# [routing.symbols.historical]
+# provider = "databento"
+# [routing.symbols.realtime]
+# provider = "kraken"
+# [routing.symbols.provider_symbols]
+# kraken = "XBT/USD"

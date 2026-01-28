@@ -5,6 +5,9 @@
 //! - `fetch` - Fetch data with cost confirmation
 //! - `fill-gaps` - Detect and fill data gaps
 //! - `status` - Show job status and spend tracking
+//!
+//! Uses the routing system to automatically select the appropriate provider
+//! based on asset type and exchange.
 
 use anyhow::Result;
 use chrono::{DateTime, NaiveDate, Utc};
@@ -13,11 +16,12 @@ use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use crate::backfill::{BackfillExecutor, BackfillRequest, BackfillService, BackfillSource};
-use crate::config::Settings;
+use crate::config::{AssetType, Settings};
 use crate::provider::databento::DatabentoClient;
-use crate::provider::DataProvider;
+use crate::provider::{infer_asset_type, DataProvider, ProviderFactory};
 use crate::scheduler::JobQueue;
 use crate::storage::MarketDataRepository;
+use crate::symbol::SymbolSpec;
 
 /// Backfill subcommands
 #[derive(Subcommand)]
@@ -37,9 +41,18 @@ pub enum BackfillCommands {
 /// Arguments for estimate command
 #[derive(Args)]
 pub struct EstimateArgs {
-    /// Symbols to estimate (comma-separated)
+    /// Symbols to estimate (comma-separated, DBT canonical format)
     #[arg(long, short, value_delimiter = ',')]
     pub symbols: Vec<String>,
+
+    /// Exchange for the symbols (e.g., CME, NASDAQ)
+    #[arg(long, short)]
+    pub exchange: Option<String>,
+
+    /// Asset type for routing (futures, equity, crypto, fx)
+    /// If not specified, will be inferred from symbol/exchange
+    #[arg(long, short)]
+    pub asset_type: Option<String>,
 
     /// Start date (YYYY-MM-DD)
     #[arg(long)]
@@ -49,17 +62,30 @@ pub struct EstimateArgs {
     #[arg(long)]
     pub end: String,
 
-    /// Dataset to use (default: GLBX.MDP3)
+    /// Dataset override (default: auto-resolved from routing)
     #[arg(long)]
     pub dataset: Option<String>,
+
+    /// Show routing resolution details
+    #[arg(long)]
+    pub verbose: bool,
 }
 
 /// Arguments for fetch command
 #[derive(Args)]
 pub struct FetchBackfillArgs {
-    /// Symbols to fetch (comma-separated)
+    /// Symbols to fetch (comma-separated, DBT canonical format)
     #[arg(long, short, value_delimiter = ',')]
     pub symbols: Vec<String>,
+
+    /// Exchange for the symbols (e.g., CME, NASDAQ)
+    #[arg(long, short)]
+    pub exchange: Option<String>,
+
+    /// Asset type for routing (futures, equity, crypto, fx)
+    /// If not specified, will be inferred from symbol/exchange
+    #[arg(long, short)]
+    pub asset_type: Option<String>,
 
     /// Start date (YYYY-MM-DD)
     #[arg(long)]
@@ -69,7 +95,7 @@ pub struct FetchBackfillArgs {
     #[arg(long)]
     pub end: String,
 
-    /// Dataset to use (default: GLBX.MDP3)
+    /// Dataset override (default: auto-resolved from routing)
     #[arg(long)]
     pub dataset: Option<String>,
 
@@ -84,6 +110,10 @@ pub struct FetchBackfillArgs {
     /// Dry run - show what would be done without executing
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Show routing resolution details
+    #[arg(long)]
+    pub verbose: bool,
 }
 
 /// Arguments for fill-gaps command
@@ -92,6 +122,14 @@ pub struct FillGapsArgs {
     /// Symbols to check for gaps (comma-separated)
     #[arg(long, short, value_delimiter = ',')]
     pub symbols: Vec<String>,
+
+    /// Exchange for the symbols
+    #[arg(long, short)]
+    pub exchange: Option<String>,
+
+    /// Asset type for routing (futures, equity, crypto, fx)
+    #[arg(long, short)]
+    pub asset_type: Option<String>,
 
     /// Lookback period in days
     #[arg(long, default_value = "7")]
@@ -145,6 +183,65 @@ pub async fn execute(cmd: BackfillCommands) -> Result<()> {
     }
 }
 
+/// Parse asset type from string or infer from symbol/exchange
+fn resolve_asset_type(
+    asset_type_str: Option<&str>,
+    symbol: Option<&str>,
+    exchange: Option<&str>,
+) -> Option<AssetType> {
+    // First try explicit asset type
+    if let Some(at) = asset_type_str {
+        if let Ok(parsed) = at.parse::<AssetType>() {
+            return Some(parsed);
+        }
+    }
+
+    // Then try to infer from symbol and exchange
+    if let (Some(sym), Some(exch)) = (symbol, exchange) {
+        return infer_asset_type(sym, exch);
+    }
+
+    None
+}
+
+/// Display routing information
+fn display_routing_info(
+    settings: &Settings,
+    symbols: &[String],
+    exchange: Option<&str>,
+    asset_type: Option<AssetType>,
+    dataset: Option<&str>,
+    verbose: bool,
+) {
+    let factory = ProviderFactory::with_routing(settings.routing.clone());
+
+    // Use first symbol for routing resolution display
+    if let Some(first_symbol) = symbols.first() {
+        let exchange = exchange.unwrap_or("UNKNOWN");
+        let symbol_spec = SymbolSpec::new(first_symbol, exchange);
+        let route = factory.resolve_historical(&symbol_spec, asset_type);
+
+        info!("=== Routing Resolution ===");
+        info!(
+            "Asset Type:   {}",
+            asset_type
+                .map(|a| a.to_string())
+                .unwrap_or_else(|| "auto-detected".to_string())
+        );
+        info!("Provider:     {}", route.provider);
+        info!(
+            "Dataset:      {}",
+            dataset.unwrap_or_else(|| route.dataset.as_deref().unwrap_or("default"))
+        );
+        info!("Resolution:   {}", route.resolution_source);
+
+        if verbose {
+            info!("Provider Symbol: {}", route.provider_symbol);
+        }
+        info!("");
+    }
+}
+
 /// Execute estimate command
 async fn execute_estimate(args: EstimateArgs) -> Result<()> {
     // Parse dates
@@ -153,6 +250,13 @@ async fn execute_estimate(args: EstimateArgs) -> Result<()> {
 
     let start: DateTime<Utc> = start_date.and_hms_opt(0, 0, 0).unwrap().and_utc();
     let end: DateTime<Utc> = end_date.and_hms_opt(23, 59, 59).unwrap().and_utc();
+
+    // Resolve asset type
+    let asset_type = resolve_asset_type(
+        args.asset_type.as_deref(),
+        args.symbols.first().map(|s| s.as_str()),
+        args.exchange.as_deref(),
+    );
 
     // Load settings and create executor
     let settings = Settings::load().unwrap_or_else(|_| Settings::default_settings());
@@ -163,7 +267,17 @@ async fn execute_estimate(args: EstimateArgs) -> Result<()> {
         return Ok(());
     }
 
-    // Create provider
+    // Display routing info
+    display_routing_info(
+        &settings,
+        &args.symbols,
+        args.exchange.as_deref(),
+        asset_type,
+        args.dataset.as_deref(),
+        args.verbose,
+    );
+
+    // Create provider (currently only databento for historical)
     let api_key = std::env::var("DATABENTO_API_KEY")
         .map_err(|_| anyhow::anyhow!("DATABENTO_API_KEY environment variable not set"))?;
     let mut provider = DatabentoClient::from_api_key(api_key);
@@ -189,6 +303,9 @@ async fn execute_estimate(args: EstimateArgs) -> Result<()> {
     println!("=== Backfill Cost Estimate ===");
     println!();
     println!("Symbols:          {:?}", args.symbols);
+    if let Some(ref exch) = args.exchange {
+        println!("Exchange:         {}", exch);
+    }
     println!(
         "Time Range:       {} to {} ({} days)",
         args.start,
@@ -240,6 +357,13 @@ async fn execute_fetch(args: FetchBackfillArgs) -> Result<()> {
     let start: DateTime<Utc> = start_date.and_hms_opt(0, 0, 0).unwrap().and_utc();
     let end: DateTime<Utc> = end_date.and_hms_opt(23, 59, 59).unwrap().and_utc();
 
+    // Resolve asset type
+    let asset_type = resolve_asset_type(
+        args.asset_type.as_deref(),
+        args.symbols.first().map(|s| s.as_str()),
+        args.exchange.as_deref(),
+    );
+
     // Load settings
     let settings = Settings::load().unwrap_or_else(|_| Settings::default_settings());
 
@@ -248,6 +372,16 @@ async fn execute_fetch(args: FetchBackfillArgs) -> Result<()> {
         error!("To enable, set backfill.enabled = true in config/development.toml");
         return Ok(());
     }
+
+    // Display routing info
+    display_routing_info(
+        &settings,
+        &args.symbols,
+        args.exchange.as_deref(),
+        asset_type,
+        args.dataset.as_deref(),
+        args.verbose,
+    );
 
     // Create provider
     let api_key = std::env::var("DATABENTO_API_KEY")
@@ -274,6 +408,9 @@ async fn execute_fetch(args: FetchBackfillArgs) -> Result<()> {
     println!("=== Backfill Cost Estimate ===");
     println!();
     println!("Symbols:          {:?}", args.symbols);
+    if let Some(ref exch) = args.exchange {
+        println!("Exchange:         {}", exch);
+    }
     println!(
         "Time Range:       {} to {} ({} days)",
         args.start,
@@ -338,6 +475,13 @@ async fn execute_fill_gaps(args: FillGapsArgs) -> Result<()> {
     let end = Utc::now();
     let start = end - chrono::Duration::days(args.lookback_days as i64);
 
+    // Resolve asset type
+    let asset_type = resolve_asset_type(
+        args.asset_type.as_deref(),
+        args.symbols.first().map(|s| s.as_str()),
+        args.exchange.as_deref(),
+    );
+
     // Load settings
     let settings = Settings::load().unwrap_or_else(|_| Settings::default_settings());
 
@@ -346,6 +490,16 @@ async fn execute_fill_gaps(args: FillGapsArgs) -> Result<()> {
         error!("To enable, set backfill.enabled = true in config/development.toml");
         return Ok(());
     }
+
+    // Display routing info
+    display_routing_info(
+        &settings,
+        &args.symbols,
+        args.exchange.as_deref(),
+        asset_type,
+        None,
+        false,
+    );
 
     // Create provider
     let api_key = std::env::var("DATABENTO_API_KEY")
@@ -466,6 +620,15 @@ async fn execute_status(args: StatusArgs) -> Result<()> {
     println!("Mode: {}", settings.backfill.mode);
     println!();
 
+    // Display routing configuration
+    println!("Routing Configuration:");
+    println!("  Default Provider: {}", settings.routing.default_provider);
+    println!(
+        "  Databento Dataset: {}",
+        settings.routing.databento.default_dataset
+    );
+    println!();
+
     println!("Cost Limits:");
     println!(
         "  Per-request max: ${:.2}",
@@ -514,6 +677,16 @@ async fn execute_status(args: StatusArgs) -> Result<()> {
             "  Max concurrent: {}",
             settings.backfill.provider.max_concurrent_jobs
         );
+        println!();
+
+        // Display asset type routing
+        println!("Asset Type Routing:");
+        for (asset_type, routing) in &settings.routing.asset_types {
+            println!(
+                "  {}: historical={}, realtime={}",
+                asset_type, routing.historical, routing.realtime
+            );
+        }
         println!();
     }
 

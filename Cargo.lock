@@ -1065,6 +1065,7 @@ dependencies = [
  "libc",
  "memmap2",
  "parking_lot",
+ "reqwest",
  "ringbuf",
  "rust_decimal",
  "rust_decimal_macros",
