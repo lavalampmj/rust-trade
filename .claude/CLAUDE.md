@@ -47,29 +47,30 @@ cargo run serve --live --ipc --persist
 # Start with custom config file
 cargo run serve -c ../config/development.toml --live --ipc
 
-# Fetch historical data from Databento
-cargo run fetch --symbols BTCUSD --exchange binance --provider databento --start 2024-01-01 --end 2024-01-31
+# Fetch historical data from Databento (futures/equities only)
+cargo run fetch --symbols ESH5 --dataset GLBX.MDP3 --start 2024-01-01 --end 2024-01-31
 
 # Dry run to see what would be fetched
-cargo run fetch --symbols BTCUSD --exchange binance --start 2024-01-01 --end 2024-01-31 --dry-run
+cargo run fetch --symbols ESH5 --dataset GLBX.MDP3 --start 2024-01-01 --end 2024-01-31 --dry-run
 
 # Symbol management
 cargo run symbol list                         # List registered symbols
 cargo run symbol add --symbols BTCUSD,ETHUSD  # Add symbols (DBT canonical format)
-cargo run symbol remove --symbols DOGEUSDT      # Remove symbols
-cargo run symbol discover --provider binance    # Discover available symbols
+cargo run symbol remove --symbols DOGEUSD     # Remove symbols
+cargo run symbol discover --provider kraken   # Discover crypto symbols
+cargo run symbol discover --provider databento # Discover futures/equities
 
 # Database operations
 cargo run db migrate                            # Run database migrations
 cargo run db stats                              # Show database statistics
 cargo run db compress                           # Compress old data
 
-# Backfill with cost tracking
-cargo run backfill estimate --symbols BTCUSD --start 2024-01-01 --end 2024-01-31
-cargo run backfill fetch --symbols BTCUSD --start 2024-01-01 --end 2024-01-31
-cargo run backfill fill-gaps --symbols BTCUSD  # Detect and fill data gaps
-cargo run backfill status                       # Show backfill status
-cargo run backfill cost-report                  # Show cost report
+# Backfill with cost tracking (Databento - futures/equities only)
+cargo run backfill estimate --symbols ESH5 --start 2024-01-01 --end 2024-01-31
+cargo run backfill fetch --symbols ESH5 --start 2024-01-01 --end 2024-01-31
+cargo run backfill fill-gaps --symbols ESH5   # Detect and fill data gaps
+cargo run backfill status                     # Show backfill status
+cargo run backfill cost-report                # Show cost report
 
 # Show help
 cargo run -- --help
@@ -199,6 +200,31 @@ For market data, the framework uses DBN (Databento Binary) types internally:
 **Extension traits** in `trading-common/src/data/dbn_types.rs`:
 - `TradeMsgExt` - Helper methods for TradeMsg
 - `create_trade_msg_from_decimals()` - Construct from Decimal prices
+
+#### Data Providers by Asset Class
+
+Different providers support different asset classes:
+
+| Provider | Asset Classes | Data Types | Use Case |
+|----------|---------------|------------|----------|
+| **Kraken** | Crypto | Live streaming | `--provider kraken` for BTC, ETH, SOL, etc. |
+| **Kraken Futures** | Crypto Perpetuals | Live streaming | `--provider kraken_futures` for PI_XBTUSD |
+| **Binance** | Crypto | Live streaming | `--provider binance` for crypto pairs |
+| **Databento** | Equities, Futures | Historical + Live | Backfill ES, CL, AAPL, etc. |
+
+**Symbol examples by provider**:
+```bash
+# Crypto (live streaming)
+--provider kraken --symbols BTCUSD,ETHUSD,SOLUSD
+--provider binance --symbols BTCUSD,ETHUSD
+
+# Futures/Equities (historical backfill via Databento)
+--symbols ESH5 --dataset GLBX.MDP3    # E-mini S&P 500 March 2025
+--symbols CLH5 --dataset GLBX.MDP3    # Crude Oil March 2025
+--symbols AAPL --dataset XNAS.ITCH    # Apple on NASDAQ
+```
+
+**Note**: Crypto historical data is not yet supported via Databento. Use live streaming from Kraken/Binance and persist with `--persist` flag.
 
 ### Key Architectural Patterns
 
