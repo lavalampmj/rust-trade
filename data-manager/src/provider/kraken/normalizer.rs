@@ -1,16 +1,32 @@
 //! Kraken message normalizer
 //!
-//! Converts Kraken-specific message formats to TickData, QuoteTick, and OrderBook
-//! for both Spot and Futures markets.
+//! Converts Kraken-specific message formats to TickData, QuoteTick, OrderBook,
+//! and DBN-native types (TradeMsg, BboMsg) for both Spot and Futures markets.
+//!
+//! # DBN-Native Methods
+//!
+//! This normalizer provides DBN-native output methods that produce `dbn::TradeMsg`
+//! and `dbn::BboMsg` directly, avoiding intermediate type conversions:
+//!
+//! - `normalize_spot_to_dbn()` - Spot trade → TradeMsg
+//! - `normalize_futures_to_dbn()` - Futures trade → TradeMsg
+//! - `normalize_spot_ticker_to_dbn()` - Spot ticker → BboMsg
+//! - `normalize_futures_ticker_to_dbn()` - Futures ticker → BboMsg
 
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 
 use crate::provider::ProviderError;
-use trading_common::data::orderbook::{BookSide, OrderBook, OrderBookDelta, BookAction};
+use trading_common::data::orderbook::{BookAction, BookSide, OrderBook, OrderBookDelta};
 use trading_common::data::quotes::QuoteTick;
 use trading_common::data::types::{TickData, TradeSide};
 use trading_common::data::SequenceGenerator;
+
+// DBN types for native output
+use trading_common::data::{
+    create_bbo_msg_from_decimals, create_trade_msg_from_decimals, datetime_to_nanos, BboMsg,
+    TradeMsg, TradeSideCompat,
+};
 
 use super::symbol::{get_exchange_name, to_canonical};
 use super::types::{
@@ -261,6 +277,230 @@ impl KrakenNormalizer {
     }
 
     // ========================================================================
+    // DBN-Native Trade Normalization
+    // ========================================================================
+
+    /// Normalize a Kraken Spot trade to DBN TradeMsg
+    ///
+    /// This produces a native `dbn::TradeMsg` without intermediate TickData conversion,
+    /// which is more efficient for DBN-native pipelines.
+    pub fn normalize_spot_to_dbn(&self, trade: KrakenSpotTrade) -> Result<TradeMsg, ProviderError> {
+        // Parse timestamp (RFC3339 format)
+        let ts_event = DateTime::parse_from_rfc3339(&trade.timestamp)
+            .map_err(|e| {
+                ProviderError::Parse(format!(
+                    "Invalid timestamp '{}': {}",
+                    trade.timestamp, e
+                ))
+            })?
+            .with_timezone(&Utc);
+
+        // Convert price and quantity
+        let price = Decimal::try_from(trade.price).map_err(|e| {
+            ProviderError::Parse(format!("Invalid price '{}': {}", trade.price, e))
+        })?;
+        let quantity = Decimal::try_from(trade.qty).map_err(|e| {
+            ProviderError::Parse(format!("Invalid quantity '{}': {}", trade.qty, e))
+        })?;
+
+        // Validate values
+        if price <= Decimal::ZERO {
+            return Err(ProviderError::Parse("Price must be positive".to_string()));
+        }
+        if quantity <= Decimal::ZERO {
+            return Err(ProviderError::Parse(
+                "Quantity must be positive".to_string(),
+            ));
+        }
+
+        // Determine trade side
+        let side = parse_side_dbn(&trade.side)?;
+
+        // Convert symbol to canonical format
+        let canonical_symbol = to_canonical(&trade.symbol)?;
+        let exchange = get_exchange_name(false);
+
+        // Get next sequence number
+        let sequence = self.sequence.next();
+
+        let ts_nanos = datetime_to_nanos(ts_event);
+        let ts_recv_nanos = datetime_to_nanos(Utc::now());
+
+        Ok(create_trade_msg_from_decimals(
+            ts_nanos,
+            ts_recv_nanos,
+            &canonical_symbol,
+            exchange,
+            price,
+            quantity,
+            side,
+            sequence as u32,
+        ))
+    }
+
+    /// Normalize a Kraken Futures trade to DBN TradeMsg
+    ///
+    /// This produces a native `dbn::TradeMsg` without intermediate TickData conversion.
+    pub fn normalize_futures_to_dbn(
+        &self,
+        trade: KrakenFuturesTradeMessage,
+    ) -> Result<TradeMsg, ProviderError> {
+        // Parse timestamp (Unix milliseconds)
+        let ts_event = DateTime::from_timestamp_millis(trade.time).ok_or_else(|| {
+            ProviderError::Parse(format!("Invalid timestamp: {}", trade.time))
+        })?;
+
+        // Convert price and quantity
+        let price = Decimal::try_from(trade.price).map_err(|e| {
+            ProviderError::Parse(format!("Invalid price '{}': {}", trade.price, e))
+        })?;
+        let quantity = Decimal::try_from(trade.qty).map_err(|e| {
+            ProviderError::Parse(format!("Invalid quantity '{}': {}", trade.qty, e))
+        })?;
+
+        // Validate values
+        if price <= Decimal::ZERO {
+            return Err(ProviderError::Parse("Price must be positive".to_string()));
+        }
+        if quantity <= Decimal::ZERO {
+            return Err(ProviderError::Parse(
+                "Quantity must be positive".to_string(),
+            ));
+        }
+
+        // Determine trade side
+        let side = parse_side_dbn(&trade.side)?;
+
+        // Convert symbol to canonical format
+        let canonical_symbol = to_canonical(&trade.product_id)?;
+        let exchange = get_exchange_name(true);
+
+        let ts_nanos = datetime_to_nanos(ts_event);
+        let ts_recv_nanos = datetime_to_nanos(Utc::now());
+
+        Ok(create_trade_msg_from_decimals(
+            ts_nanos,
+            ts_recv_nanos,
+            &canonical_symbol,
+            exchange,
+            price,
+            quantity,
+            side,
+            trade.seq as u32, // Use Kraken sequence as DBN sequence
+        ))
+    }
+
+    // ========================================================================
+    // DBN-Native Quote (Ticker) Normalization
+    // ========================================================================
+
+    /// Normalize a Kraken Spot ticker to DBN BboMsg
+    ///
+    /// This produces a native `dbn::BboMsg` without intermediate QuoteTick conversion.
+    pub fn normalize_spot_ticker_to_dbn(
+        &self,
+        ticker: KrakenSpotTicker,
+        ts_event: Option<DateTime<Utc>>,
+    ) -> Result<BboMsg, ProviderError> {
+        let ts = ts_event.unwrap_or_else(Utc::now);
+
+        // Convert prices
+        let bid_price = Decimal::try_from(ticker.bid).map_err(|e| {
+            ProviderError::Parse(format!("Invalid bid price '{}': {}", ticker.bid, e))
+        })?;
+        let ask_price = Decimal::try_from(ticker.ask).map_err(|e| {
+            ProviderError::Parse(format!("Invalid ask price '{}': {}", ticker.ask, e))
+        })?;
+        let bid_size = Decimal::try_from(ticker.bid_qty).map_err(|e| {
+            ProviderError::Parse(format!("Invalid bid qty '{}': {}", ticker.bid_qty, e))
+        })?;
+        let ask_size = Decimal::try_from(ticker.ask_qty).map_err(|e| {
+            ProviderError::Parse(format!("Invalid ask qty '{}': {}", ticker.ask_qty, e))
+        })?;
+
+        // Validate prices
+        if bid_price <= Decimal::ZERO || ask_price <= Decimal::ZERO {
+            return Err(ProviderError::Parse(
+                "Bid and ask prices must be positive".to_string(),
+            ));
+        }
+
+        // Convert symbol to canonical format
+        let canonical_symbol = to_canonical(&ticker.symbol)?;
+        let exchange = get_exchange_name(false);
+        let sequence = self.sequence.next();
+
+        let ts_nanos = datetime_to_nanos(ts);
+        let ts_recv_nanos = datetime_to_nanos(Utc::now());
+
+        Ok(create_bbo_msg_from_decimals(
+            ts_nanos,
+            ts_recv_nanos,
+            &canonical_symbol,
+            exchange,
+            bid_price,
+            ask_price,
+            bid_size,
+            ask_size,
+            sequence as u32,
+        ))
+    }
+
+    /// Normalize a Kraken Futures ticker to DBN BboMsg
+    ///
+    /// This produces a native `dbn::BboMsg` without intermediate QuoteTick conversion.
+    pub fn normalize_futures_ticker_to_dbn(
+        &self,
+        ticker: KrakenFuturesTickerMessage,
+    ) -> Result<BboMsg, ProviderError> {
+        // Parse timestamp (Unix milliseconds)
+        let ts_event = DateTime::from_timestamp_millis(ticker.time).ok_or_else(|| {
+            ProviderError::Parse(format!("Invalid timestamp: {}", ticker.time))
+        })?;
+
+        // Convert prices
+        let bid_price = Decimal::try_from(ticker.bid).map_err(|e| {
+            ProviderError::Parse(format!("Invalid bid price '{}': {}", ticker.bid, e))
+        })?;
+        let ask_price = Decimal::try_from(ticker.ask).map_err(|e| {
+            ProviderError::Parse(format!("Invalid ask price '{}': {}", ticker.ask, e))
+        })?;
+        let bid_size = Decimal::try_from(ticker.bid_size).map_err(|e| {
+            ProviderError::Parse(format!("Invalid bid size '{}': {}", ticker.bid_size, e))
+        })?;
+        let ask_size = Decimal::try_from(ticker.ask_size).map_err(|e| {
+            ProviderError::Parse(format!("Invalid ask size '{}': {}", ticker.ask_size, e))
+        })?;
+
+        // Validate prices
+        if bid_price <= Decimal::ZERO || ask_price <= Decimal::ZERO {
+            return Err(ProviderError::Parse(
+                "Bid and ask prices must be positive".to_string(),
+            ));
+        }
+
+        // Convert symbol to canonical format
+        let canonical_symbol = to_canonical(&ticker.product_id)?;
+        let exchange = get_exchange_name(true);
+        let sequence = self.sequence.next();
+
+        let ts_nanos = datetime_to_nanos(ts_event);
+        let ts_recv_nanos = datetime_to_nanos(Utc::now());
+
+        Ok(create_bbo_msg_from_decimals(
+            ts_nanos,
+            ts_recv_nanos,
+            &canonical_symbol,
+            exchange,
+            bid_price,
+            ask_price,
+            bid_size,
+            ask_size,
+            sequence as u32,
+        ))
+    }
+
+    // ========================================================================
     // L2 Order Book Normalization
     // ========================================================================
 
@@ -483,6 +723,15 @@ fn parse_side(side: &str) -> Result<TradeSide, ProviderError> {
     match side.to_lowercase().as_str() {
         "buy" | "b" => Ok(TradeSide::Buy),
         "sell" | "s" => Ok(TradeSide::Sell),
+        _ => Err(ProviderError::Parse(format!("Unknown trade side: {}", side))),
+    }
+}
+
+/// Parse trade side from Kraken string format to DBN-compatible TradeSideCompat
+fn parse_side_dbn(side: &str) -> Result<TradeSideCompat, ProviderError> {
+    match side.to_lowercase().as_str() {
+        "buy" | "b" => Ok(TradeSideCompat::Buy),
+        "sell" | "s" => Ok(TradeSideCompat::Sell),
         _ => Err(ProviderError::Parse(format!("Unknown trade side: {}", side))),
     }
 }
@@ -858,5 +1107,149 @@ mod tests {
 
         assert_eq!(delta.side, BookSide::Ask);
         assert_eq!(delta.action, BookAction::Delete);
+    }
+
+    // ========================================================================
+    // DBN-Native Trade Tests
+    // ========================================================================
+
+    #[test]
+    fn test_normalize_spot_to_dbn() {
+        use trading_common::data::TradeMsgExt;
+
+        let normalizer = KrakenNormalizer::spot();
+
+        let trade = KrakenSpotTrade {
+            symbol: "XBT/USD".to_string(),
+            side: "buy".to_string(),
+            price: 50000.0,
+            qty: 0.001,
+            ord_type: "market".to_string(),
+            trade_id: 12345,
+            timestamp: "2024-01-15T10:30:00.123456Z".to_string(),
+        };
+
+        let msg = normalizer.normalize_spot_to_dbn(trade).unwrap();
+
+        // Verify price conversion (50000.0 -> 50000 * 1e9)
+        assert_eq!(msg.price_decimal(), dec!(50000));
+        assert!(msg.is_buy());
+        assert!(msg.hd.ts_event > 0);
+        assert!(msg.ts_recv > 0);
+    }
+
+    #[test]
+    fn test_normalize_futures_to_dbn() {
+        use trading_common::data::TradeMsgExt;
+
+        let normalizer = KrakenNormalizer::futures();
+
+        let trade = KrakenFuturesTradeMessage {
+            feed: "trade".to_string(),
+            product_id: "PI_XBTUSD".to_string(),
+            side: "sell".to_string(),
+            price: 50100.5,
+            qty: 1.0,
+            seq: 123456,
+            time: 1705315800123,
+            trade_type: Some("fill".to_string()),
+        };
+
+        let msg = normalizer.normalize_futures_to_dbn(trade).unwrap();
+
+        assert_eq!(msg.price_decimal(), dec!(50100.5));
+        assert!(msg.is_sell());
+        assert_eq!(msg.sequence, 123456);
+    }
+
+    // ========================================================================
+    // DBN-Native Quote Tests
+    // ========================================================================
+
+    #[test]
+    fn test_normalize_spot_ticker_to_dbn() {
+        use trading_common::data::BboMsgExt;
+
+        let normalizer = KrakenNormalizer::spot();
+
+        let ticker = KrakenSpotTicker {
+            symbol: "XBT/USD".to_string(),
+            bid: 50000.0,
+            bid_qty: 1.5,
+            ask: 50001.0,
+            ask_qty: 2.0,
+            last: 50000.5,
+            volume: 1000.0,
+            vwap: 49500.0,
+            low: 49000.0,
+            high: 51000.0,
+            change: 500.0,
+            change_pct: 1.0,
+        };
+
+        let msg = normalizer.normalize_spot_ticker_to_dbn(ticker, None).unwrap();
+
+        assert_eq!(msg.bid_price(), dec!(50000));
+        assert_eq!(msg.ask_price(), dec!(50001));
+        assert_eq!(msg.spread(), dec!(1)); // 50001 - 50000
+        assert_eq!(msg.mid_price(), dec!(50000.5));
+    }
+
+    #[test]
+    fn test_normalize_futures_ticker_to_dbn() {
+        use trading_common::data::BboMsgExt;
+
+        let normalizer = KrakenNormalizer::futures();
+
+        let ticker = KrakenFuturesTickerMessage {
+            feed: "ticker".to_string(),
+            product_id: "PI_XBTUSD".to_string(),
+            bid: 50000.0,
+            ask: 50001.0,
+            bid_size: 100.0,
+            ask_size: 150.0,
+            last: 50000.5,
+            last_size: 10.0,
+            volume: 50000.0,
+            open_interest: 100000.0,
+            mark_price: 50000.25,
+            time: 1705315800123,
+        };
+
+        let msg = normalizer.normalize_futures_ticker_to_dbn(ticker).unwrap();
+
+        assert_eq!(msg.bid_price(), dec!(50000));
+        assert_eq!(msg.ask_price(), dec!(50001));
+        assert_eq!(msg.bid_size(), dec!(100));
+        assert_eq!(msg.ask_size(), dec!(150));
+    }
+
+    #[test]
+    fn test_dbn_parity_with_tick_data() {
+        use trading_common::data::TradeMsgExt;
+
+        let normalizer = KrakenNormalizer::spot();
+        normalizer.reset_sequence();
+
+        let trade = KrakenSpotTrade {
+            symbol: "XBT/USD".to_string(),
+            side: "buy".to_string(),
+            price: 50000.0,
+            qty: 0.001,
+            ord_type: "market".to_string(),
+            trade_id: 12345,
+            timestamp: "2024-01-15T10:30:00.123456Z".to_string(),
+        };
+
+        // Normalize to TickData
+        let tick = normalizer.normalize_spot(trade.clone()).unwrap();
+
+        // Reset and normalize to DBN
+        normalizer.reset_sequence();
+        let msg = normalizer.normalize_spot_to_dbn(trade).unwrap();
+
+        // Verify parity: same price, size, side
+        assert_eq!(tick.price, msg.price_decimal());
+        assert_eq!(tick.side == TradeSide::Buy, msg.is_buy());
     }
 }

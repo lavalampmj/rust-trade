@@ -16,6 +16,9 @@ use trading_common::data::orderbook::{OrderBook, OrderBookDelta};
 use trading_common::data::quotes::QuoteTick;
 use trading_common::data::types::TickData;
 
+// DBN types for native streaming
+use trading_common::data::{BboMsg, MboMsg, Mbp10Msg, TradeMsg};
+
 use trading_common::error::{ErrorCategory, ErrorClassification};
 
 /// Provider error types
@@ -250,6 +253,146 @@ pub enum ConnectionStatus {
     Connected,
     Disconnected,
     Reconnecting,
+}
+
+// =============================================================================
+// DBN-Native Stream Events
+// =============================================================================
+
+/// DBN-native stream event callback for live data
+///
+/// Use this for DBN-native pipelines that avoid intermediate type conversions.
+pub type StreamCallbackDbn = Arc<dyn Fn(StreamEventDbn) + Send + Sync>;
+
+/// DBN-native events from a live data stream
+///
+/// This enum provides DBN-native variants for efficient processing without
+/// intermediate type conversions. Use `StreamEventDbn` for new code when
+/// DBN compatibility is desired.
+///
+/// # Type Mapping
+///
+/// | Variant | DBN Type | Description |
+/// |---------|----------|-------------|
+/// | `Trade` | `TradeMsg` | Individual trade execution |
+/// | `TradeBatch` | `Vec<TradeMsg>` | Batch of trades |
+/// | `Quote` | `BboMsg` | Best bid/offer (L1) |
+/// | `QuoteBatch` | `Vec<BboMsg>` | Batch of quotes |
+/// | `BookSnapshot` | `Mbp10Msg` | 10-level order book snapshot |
+/// | `BookUpdate` | `MboMsg` | L3 order book update |
+/// | `Status` | `ConnectionStatus` | Connection status change |
+/// | `Error` | `String` | Error message |
+#[derive(Debug, Clone)]
+pub enum StreamEventDbn {
+    /// Individual trade execution (DBN TradeMsg)
+    Trade(TradeMsg),
+
+    /// Batch of trades for efficient processing
+    TradeBatch(Vec<TradeMsg>),
+
+    /// Best bid/offer quote (DBN BboMsg, L1)
+    Quote(BboMsg),
+
+    /// Batch of BBO quotes
+    QuoteBatch(Vec<BboMsg>),
+
+    /// 10-level order book snapshot (DBN Mbp10Msg, L2)
+    ///
+    /// Note: This uses Mbp10Msg for snapshots which provides 10 levels.
+    /// For different depth requirements, convert from the raw levels.
+    BookSnapshot(Mbp10Msg),
+
+    /// L3 order book update (DBN MboMsg)
+    ///
+    /// Individual order-level updates for maintaining order book state.
+    BookUpdate(MboMsg),
+
+    /// Connection status change
+    Status(ConnectionStatus),
+
+    /// Error occurred during streaming
+    Error(String),
+}
+
+impl StreamEventDbn {
+    /// Check if this is a trade event
+    pub fn is_trade(&self) -> bool {
+        matches!(self, StreamEventDbn::Trade(_) | StreamEventDbn::TradeBatch(_))
+    }
+
+    /// Check if this is a quote event
+    pub fn is_quote(&self) -> bool {
+        matches!(self, StreamEventDbn::Quote(_) | StreamEventDbn::QuoteBatch(_))
+    }
+
+    /// Check if this is a book event
+    pub fn is_book(&self) -> bool {
+        matches!(
+            self,
+            StreamEventDbn::BookSnapshot(_) | StreamEventDbn::BookUpdate(_)
+        )
+    }
+
+    /// Check if this is a status or error event
+    pub fn is_control(&self) -> bool {
+        matches!(self, StreamEventDbn::Status(_) | StreamEventDbn::Error(_))
+    }
+
+    /// Get the instrument_id if this is a data event
+    pub fn instrument_id(&self) -> Option<u32> {
+        match self {
+            StreamEventDbn::Trade(msg) => Some(msg.hd.instrument_id),
+            StreamEventDbn::TradeBatch(msgs) => msgs.first().map(|m| m.hd.instrument_id),
+            StreamEventDbn::Quote(msg) => Some(msg.hd.instrument_id),
+            StreamEventDbn::QuoteBatch(msgs) => msgs.first().map(|m| m.hd.instrument_id),
+            StreamEventDbn::BookSnapshot(msg) => Some(msg.hd.instrument_id),
+            StreamEventDbn::BookUpdate(msg) => Some(msg.hd.instrument_id),
+            StreamEventDbn::Status(_) | StreamEventDbn::Error(_) => None,
+        }
+    }
+}
+
+/// Convert StreamEventDbn to legacy StreamEvent
+///
+/// This allows gradual migration from TickData-based code to DBN-native code.
+/// Requires an InstrumentRegistry to resolve instrument_id to symbol.
+impl StreamEventDbn {
+    /// Convert to legacy StreamEvent using the provided symbol resolver
+    ///
+    /// # Arguments
+    /// * `symbol_resolver` - Function that resolves instrument_id to (symbol, exchange)
+    ///
+    /// Returns None for control events that don't need symbol resolution.
+    pub fn to_stream_event<F>(&self, symbol_resolver: F) -> Option<StreamEvent>
+    where
+        F: Fn(u32) -> Option<(String, String)>,
+    {
+        match self {
+            StreamEventDbn::Trade(msg) => {
+                let (symbol, _exchange) = symbol_resolver(msg.hd.instrument_id)?;
+                let tick = TickData::from_trade_msg(msg, symbol);
+                Some(StreamEvent::Tick(tick))
+            }
+            StreamEventDbn::TradeBatch(msgs) => {
+                let ticks: Vec<_> = msgs
+                    .iter()
+                    .filter_map(|msg| {
+                        let (symbol, _exchange) = symbol_resolver(msg.hd.instrument_id)?;
+                        Some(TickData::from_trade_msg(msg, symbol))
+                    })
+                    .collect();
+                if ticks.is_empty() {
+                    None
+                } else {
+                    Some(StreamEvent::TickBatch(ticks))
+                }
+            }
+            StreamEventDbn::Status(status) => Some(StreamEvent::Status(*status)),
+            StreamEventDbn::Error(msg) => Some(StreamEvent::Error(msg.clone())),
+            // Quote and book conversions would require QuoteTick/OrderBook adapters
+            _ => None,
+        }
+    }
 }
 
 /// Base trait for all data providers

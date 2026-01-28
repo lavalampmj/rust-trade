@@ -1,6 +1,12 @@
 //! Binance message normalizer
 //!
-//! Converts Binance-specific message formats to TickData.
+//! Converts Binance-specific message formats to TickData and DBN-native types.
+//!
+//! # DBN-Native Methods
+//!
+//! This normalizer provides DBN-native output methods for efficient processing:
+//!
+//! - `normalize_to_dbn()` - Trade → TradeMsg
 
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
@@ -10,6 +16,11 @@ use crate::provider::ProviderError;
 use trading_common::data::types::{TickData, TradeSide};
 use trading_common::data::SequenceGenerator;
 use trading_common::validation::SymbolValidator;
+
+// DBN types for native output
+use trading_common::data::{
+    create_trade_msg_from_decimals, datetime_to_nanos, TradeMsg, TradeSideCompat,
+};
 
 use super::types::BinanceTradeMessage;
 
@@ -87,6 +98,65 @@ impl BinanceNormalizer {
     #[cfg(test)]
     pub fn reset_sequence(&self) {
         self.sequence.reset();
+    }
+
+    // ========================================================================
+    // DBN-Native Trade Normalization
+    // ========================================================================
+
+    /// Normalize a Binance trade message to DBN TradeMsg
+    ///
+    /// This produces a native `dbn::TradeMsg` without intermediate TickData conversion,
+    /// which is more efficient for DBN-native pipelines.
+    pub fn normalize_to_dbn(&self, msg: BinanceTradeMessage) -> Result<TradeMsg, ProviderError> {
+        // Parse timestamp
+        let ts_event = DateTime::from_timestamp_millis(msg.trade_time as i64)
+            .ok_or_else(|| ProviderError::Parse("Invalid timestamp".to_string()))?;
+
+        // Parse price
+        let price = Decimal::from_str(&msg.price)
+            .map_err(|e| ProviderError::Parse(format!("Invalid price '{}': {}", msg.price, e)))?;
+
+        // Parse quantity
+        let quantity = Decimal::from_str(&msg.quantity).map_err(|e| {
+            ProviderError::Parse(format!("Invalid quantity '{}': {}", msg.quantity, e))
+        })?;
+
+        // Validate values
+        if price <= Decimal::ZERO {
+            return Err(ProviderError::Parse("Price must be positive".to_string()));
+        }
+        if quantity <= Decimal::ZERO {
+            return Err(ProviderError::Parse(
+                "Quantity must be positive".to_string(),
+            ));
+        }
+
+        // Determine trade side
+        // If buyer is maker, seller is taker (SELL)
+        // If buyer is not maker, buyer is taker (BUY)
+        let side = if msg.is_buyer_maker {
+            TradeSideCompat::Sell
+        } else {
+            TradeSideCompat::Buy
+        };
+
+        // Get next sequence number
+        let sequence = self.sequence.next();
+
+        let ts_nanos = datetime_to_nanos(ts_event);
+        let ts_recv_nanos = datetime_to_nanos(Utc::now());
+
+        Ok(create_trade_msg_from_decimals(
+            ts_nanos,
+            ts_recv_nanos,
+            &msg.symbol,
+            "BINANCE",
+            price,
+            quantity,
+            side,
+            sequence as u32,
+        ))
     }
 }
 
@@ -224,5 +294,79 @@ mod tests {
         };
 
         assert!(normalizer.normalize(msg).is_err());
+    }
+
+    // ========================================================================
+    // DBN-Native Trade Tests
+    // ========================================================================
+
+    #[test]
+    fn test_normalize_to_dbn() {
+        use trading_common::data::TradeMsgExt;
+
+        let normalizer = BinanceNormalizer::new();
+
+        let msg = BinanceTradeMessage {
+            symbol: "BTCUSDT".to_string(),
+            trade_id: 12345,
+            price: "50000.00".to_string(),
+            quantity: "0.001".to_string(),
+            trade_time: 1672515782136,
+            is_buyer_maker: false,
+        };
+
+        let trade_msg = normalizer.normalize_to_dbn(msg).unwrap();
+
+        assert_eq!(trade_msg.price_decimal(), dec!(50000.00));
+        assert!(trade_msg.is_buy());
+        assert!(trade_msg.hd.ts_event > 0);
+    }
+
+    #[test]
+    fn test_normalize_to_dbn_sell() {
+        use trading_common::data::TradeMsgExt;
+
+        let normalizer = BinanceNormalizer::new();
+
+        let msg = BinanceTradeMessage {
+            symbol: "ETHUSDT".to_string(),
+            trade_id: 67890,
+            price: "3000.50".to_string(),
+            quantity: "0.1".to_string(),
+            trade_time: 1672515782136,
+            is_buyer_maker: true, // Buyer is maker = Sell
+        };
+
+        let trade_msg = normalizer.normalize_to_dbn(msg).unwrap();
+
+        assert!(trade_msg.is_sell());
+        assert_eq!(trade_msg.price_decimal(), dec!(3000.50));
+    }
+
+    #[test]
+    fn test_dbn_parity_with_tick_data() {
+        use trading_common::data::TradeMsgExt;
+
+        let normalizer = BinanceNormalizer::new();
+
+        let msg = BinanceTradeMessage {
+            symbol: "BTCUSDT".to_string(),
+            trade_id: 12345,
+            price: "50000.00".to_string(),
+            quantity: "0.001".to_string(),
+            trade_time: 1672515782136,
+            is_buyer_maker: false,
+        };
+
+        // Normalize to TickData
+        let tick = normalizer.normalize(msg.clone()).unwrap();
+
+        // Reset and normalize to DBN
+        normalizer.reset_sequence();
+        let trade_msg = normalizer.normalize_to_dbn(msg).unwrap();
+
+        // Verify parity: same price, side
+        assert_eq!(tick.price, trade_msg.price_decimal());
+        assert_eq!(tick.side == TradeSide::Buy, trade_msg.is_buy());
     }
 }
