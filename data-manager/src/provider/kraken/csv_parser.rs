@@ -13,6 +13,21 @@ use trading_common::data::types::TradeSide;
 
 use super::symbol::{to_canonical, QUOTE_CURRENCIES};
 
+/// Parse a decimal string that may contain scientific notation (e.g., "7.314e-05")
+fn parse_decimal_with_scientific(s: &str) -> Result<Decimal, String> {
+    // First try direct Decimal parsing (handles most cases)
+    if let Ok(d) = Decimal::from_str(s) {
+        return Ok(d);
+    }
+
+    // If that fails, try parsing as f64 first (handles scientific notation)
+    let f: f64 = s.parse().map_err(|e: std::num::ParseFloatError| e.to_string())?;
+
+    // Convert f64 to Decimal
+    // Use from_f64_retain to preserve precision
+    Decimal::try_from(f).map_err(|e| e.to_string())
+}
+
 /// Errors during CSV parsing
 #[derive(Error, Debug)]
 pub enum CsvParseError {
@@ -181,15 +196,13 @@ pub fn parse_line(line: &str, inferrer: &mut Option<SideInferrer>) -> Result<Kra
             )
         })?;
 
-    // Parse price
-    let price = Decimal::from_str(fields[1]).map_err(|e| {
-        CsvParseError::InvalidPrice(fields[1].to_string(), e.to_string())
-    })?;
+    // Parse price (may contain scientific notation)
+    let price = parse_decimal_with_scientific(fields[1])
+        .map_err(|e| CsvParseError::InvalidPrice(fields[1].to_string(), e))?;
 
-    // Parse volume
-    let volume = Decimal::from_str(fields[2]).map_err(|e| {
-        CsvParseError::InvalidVolume(fields[2].to_string(), e.to_string())
-    })?;
+    // Parse volume (may contain scientific notation like "7.314e-05")
+    let volume = parse_decimal_with_scientific(fields[2])
+        .map_err(|e| CsvParseError::InvalidVolume(fields[2].to_string(), e))?;
 
     // Infer side using Lee-Ready rule (if inferrer provided)
     let side = match inferrer {
@@ -387,5 +400,25 @@ mod tests {
 
         assert_eq!(trades[2].price, dec!(123.9));
         assert_eq!(trades[2].side, TradeSide::Buy); // Price up
+    }
+
+    #[test]
+    fn test_scientific_notation() {
+        let mut inferrer = Some(SideInferrer::new());
+
+        // Test volume with scientific notation (common in Kraken T&S data)
+        let trade = parse_line("1381095255,122.5,7.314e-05", &mut inferrer).unwrap();
+        assert_eq!(trade.price, dec!(122.5));
+        // 7.314e-05 = 0.00007314
+        assert!(trade.volume > Decimal::ZERO);
+        assert!(trade.volume < dec!(0.0001));
+
+        // Test price with scientific notation (less common but should work)
+        let trade = parse_line("1381095256,1.5e2,0.1", &mut inferrer).unwrap();
+        assert_eq!(trade.price, dec!(150)); // 1.5e2 = 150
+
+        // Test very small volumes
+        let trade = parse_line("1381095257,100.0,1e-08", &mut inferrer).unwrap();
+        assert!(trade.volume > Decimal::ZERO);
     }
 }
