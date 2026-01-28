@@ -80,6 +80,8 @@ bytemuck = { version = "1.14", features = ["derive"] }
 # Synchronization
 parking_lot = "0.12"
 dashmap = "6.0"
+indicatif = "0.18.3"
+zip = { version = "7.2.0", default-features = false, features = ["deflate", "time"] }
 
 [dev-dependencies]
 tempfile = "3.10"

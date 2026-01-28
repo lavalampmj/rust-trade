@@ -31,7 +31,8 @@ pub enum Commands {
     /// Fetch historical data on-demand
     Fetch(fetch::FetchArgs),
     /// Import data from third-party files
-    Import(import::ImportArgs),
+    #[command(subcommand)]
+    Import(import::ImportCommands),
     /// Symbol management commands
     #[command(subcommand)]
     Symbol(symbol::SymbolCommands),

@@ -36,11 +36,13 @@
 //! Note: Kraken uses "XBT" instead of "BTC" for Bitcoin.
 
 mod client;
+pub mod csv_parser;
 mod normalizer;
 pub mod symbol;
 mod types;
 
 pub use client::{KrakenMarketType, KrakenProvider, KrakenSettings};
+pub use csv_parser::{CsvParseError, CsvTradeIterator, KrakenCsvTrade, SideInferrer};
 pub use normalizer::KrakenNormalizer;
 pub use types::{
     KrakenFuturesSubscribeMessage, KrakenFuturesTradeMessage, KrakenSpotSubscribeMessage,

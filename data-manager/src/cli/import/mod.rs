@@ -1,8 +1,12 @@
 //! Import command - import data from third-party files
+//!
+//! Supports multiple import formats:
+//! - `csv`: Generic CSV format with configurable columns
+//! - `kraken`: Kraken Time & Sales CSV format (from ZIP archive)
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use clap::Args;
+use clap::{Args, Subcommand};
 use rust_decimal::Decimal;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -14,16 +18,31 @@ use crate::config::Settings;
 use crate::storage::MarketDataRepository;
 use trading_common::data::types::{TickData, TradeSide};
 
-/// Arguments for the import command
+pub mod kraken;
+
+/// Import commands
+#[derive(Subcommand)]
+pub enum ImportCommands {
+    /// Import generic CSV file
+    Csv(CsvImportArgs),
+    /// Import Kraken Time & Sales data
+    Kraken(kraken::KrakenImportArgs),
+}
+
+/// Execute import subcommand
+pub async fn execute(cmd: ImportCommands) -> Result<()> {
+    match cmd {
+        ImportCommands::Csv(args) => execute_csv(args).await,
+        ImportCommands::Kraken(args) => kraken::execute(args).await,
+    }
+}
+
+/// Arguments for the generic CSV import command
 #[derive(Args)]
-pub struct ImportArgs {
+pub struct CsvImportArgs {
     /// Input file path
     #[arg(long, short)]
     pub input: PathBuf,
-
-    /// Input format
-    #[arg(long, short, default_value = "csv")]
-    pub format: String,
 
     /// Exchange for the data
     #[arg(long, short)]
@@ -46,11 +65,10 @@ pub struct ImportArgs {
     pub dry_run: bool,
 }
 
-/// Execute the import command
-pub async fn execute(args: ImportArgs) -> Result<()> {
-    info!("Import request:");
+/// Execute the generic CSV import command
+async fn execute_csv(args: CsvImportArgs) -> Result<()> {
+    info!("CSV Import request:");
     info!("  Input: {:?}", args.input);
-    info!("  Format: {}", args.format);
     info!("  Exchange: {}", args.exchange);
     if let Some(ref symbol) = args.symbol {
         info!("  Symbol: {}", symbol);
@@ -71,21 +89,15 @@ pub async fn execute(args: ImportArgs) -> Result<()> {
         None
     };
 
-    // Parse file
-    match args.format.as_str() {
-        "csv" => import_csv(&args, repository.as_ref()).await?,
-        _ => {
-            error!("Unknown format: {}. Supported: csv", args.format);
-            return Ok(());
-        }
-    }
+    // Import CSV
+    import_csv_file(&args, repository.as_ref()).await?;
 
     info!("Import completed");
     Ok(())
 }
 
 /// Import from CSV file
-async fn import_csv(args: &ImportArgs, repository: Option<&MarketDataRepository>) -> Result<()> {
+async fn import_csv_file(args: &CsvImportArgs, repository: Option<&MarketDataRepository>) -> Result<()> {
     let file = File::open(&args.input)?;
     let reader = BufReader::new(file);
 

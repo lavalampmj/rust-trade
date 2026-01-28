@@ -28,7 +28,11 @@ static FROM_KRAKEN: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::ne
 });
 
 /// Common quote currencies for Kraken
-static QUOTE_CURRENCIES: &[&str] = &["USD", "EUR", "GBP", "CAD", "JPY", "AUD", "USDT", "USDC"];
+/// Common quote currencies for Kraken pairs
+/// Includes XBT (Kraken's old name for BTC) and BTC for cross-pairs in historical data
+pub static QUOTE_CURRENCIES: &[&str] = &[
+    "USD", "EUR", "GBP", "CAD", "JPY", "AUD", "USDT", "USDC", "XBT", "BTC", "ETH",
+];
 
 /// Convert a canonical symbol to Kraken Spot V2 WebSocket format.
 ///
