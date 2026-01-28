@@ -42,4 +42,5 @@ impl ErrorClassification for ServiceError {
 }
 
 /// Result type for service operations
+#[allow(dead_code)]
 pub type ServiceResult<T> = Result<T, ServiceError>;

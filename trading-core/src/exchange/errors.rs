@@ -7,6 +7,7 @@ use trading_common::error::{ErrorCategory, ErrorClassification};
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum ExchangeError {
+    #[allow(dead_code)]
     #[error("Network error: {0}")]
     Network(String),
 

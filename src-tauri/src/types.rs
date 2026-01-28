@@ -126,6 +126,7 @@ pub struct ConfigResponse {
 }
 
 /// Request to update a configuration section.
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UpdateConfigSectionRequest {
     /// Section path (e.g., "symbols", "accounts.default")
@@ -135,6 +136,7 @@ pub struct UpdateConfigSectionRequest {
 }
 
 /// Request to add an item to an array section.
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AddConfigItemRequest {
     /// Section path (e.g., "symbols", "accounts.simulation")
@@ -144,6 +146,7 @@ pub struct AddConfigItemRequest {
 }
 
 /// Request to update an item in an array section.
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UpdateConfigItemRequest {
     /// Section path
@@ -155,6 +158,7 @@ pub struct UpdateConfigItemRequest {
 }
 
 /// Request to remove an item from an array section.
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RemoveConfigItemRequest {
     /// Section path

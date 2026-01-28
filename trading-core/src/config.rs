@@ -1,3 +1,10 @@
+//! Configuration types for trading-core.
+//!
+//! These structs are deserialized from TOML config files.
+//! Fields may not be directly read but are needed for config parsing.
+
+#![allow(dead_code)]
+
 use config::{Config, ConfigError, File};
 use rust_decimal::Decimal;
 use serde::Deserialize;

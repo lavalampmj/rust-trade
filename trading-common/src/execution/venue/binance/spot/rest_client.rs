@@ -226,8 +226,6 @@ impl SpotRestClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orders::Order;
-    use rust_decimal_macros::dec;
 
     #[test]
     fn test_order_type_string() {

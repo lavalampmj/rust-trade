@@ -106,6 +106,7 @@ impl PaperTradingProcessor {
     /// let processor = PaperTradingProcessor::new(strategy, repo, capital)
     ///     .with_state_tracking("BTCUSDT")?;
     /// ```
+    #[allow(dead_code)]
     pub fn with_state_tracking(mut self, symbol: &str) -> Result<Self, String> {
         let coordinator = Arc::new(StateCoordinator::default());
 
@@ -161,6 +162,7 @@ impl PaperTradingProcessor {
     }
 
     /// Get the state tracker for the strategy (if state tracking is enabled).
+    #[allow(dead_code)]
     pub fn state_tracker(&self) -> Option<StrategyStateTracker> {
         match (&self.coordinator, &self.strategy_component_id) {
             (Some(coord), Some(id)) => coord.get_tracker(id),
@@ -169,6 +171,7 @@ impl PaperTradingProcessor {
     }
 
     /// Get the current state of the strategy (if state tracking is enabled).
+    #[allow(dead_code)]
     pub fn strategy_state(&self) -> Option<ComponentState> {
         match (&self.coordinator, &self.strategy_component_id) {
             (Some(coord), Some(id)) => coord.get_state(id),
@@ -177,11 +180,13 @@ impl PaperTradingProcessor {
     }
 
     /// Check if strategy has entered realtime mode.
+    #[allow(dead_code)]
     pub fn is_realtime(&self) -> bool {
         self.strategy_state() == Some(ComponentState::Realtime)
     }
 
     /// Helper to transition state and notify strategy.
+    #[allow(dead_code)]
     fn transition_state(&mut self, target: ComponentState, reason: Option<String>) {
         if let (Some(coord), Some(id)) = (&self.coordinator, &self.strategy_component_id) {
             if let Err(e) = coord.transition_and_notify(id, self.strategy.as_mut(), target, reason)

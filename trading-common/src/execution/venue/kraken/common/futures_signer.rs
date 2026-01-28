@@ -191,7 +191,8 @@ mod tests {
     #[test]
     fn test_nonce_generation() {
         let nonce1 = KrakenFuturesSigner::generate_nonce();
-        std::thread::sleep(std::time::Duration::from_micros(1));
+        // Futures uses millisecond nonces, so sleep at least 2ms to guarantee increase
+        std::thread::sleep(std::time::Duration::from_millis(2));
         let nonce2 = KrakenFuturesSigner::generate_nonce();
 
         // Nonces should be strictly increasing
