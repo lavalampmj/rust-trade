@@ -6,6 +6,7 @@ use tracing::{error, info};
 
 use crate::config::Settings;
 use crate::provider::databento::DatabentoClient;
+use crate::provider::kraken::KrakenProvider;
 use crate::provider::DataProvider;
 use crate::storage::MarketDataRepository;
 use crate::symbol::{SymbolRegistry, SymbolSpec};
@@ -154,26 +155,37 @@ async fn execute_remove(args: RemoveArgs) -> Result<()> {
 }
 
 async fn execute_discover(args: DiscoverArgs) -> Result<()> {
-    if args.provider != "databento" {
-        error!(
-            "Unknown provider: {}. Only 'databento' is currently supported.",
-            args.provider
-        );
-        return Ok(());
-    }
-
-    let api_key = std::env::var("DATABENTO_API_KEY")
-        .map_err(|_| anyhow::anyhow!("DATABENTO_API_KEY environment variable not set"))?;
-
-    let mut provider = DatabentoClient::from_api_key(api_key);
-    provider.connect().await?;
-
     info!("Discovering symbols from {}...", args.provider);
-    let symbols = provider.discover_symbols(args.exchange.as_deref()).await?;
+
+    let symbols: Vec<SymbolSpec> = match args.provider.as_str() {
+        "databento" => {
+            let api_key = std::env::var("DATABENTO_API_KEY")
+                .map_err(|_| anyhow::anyhow!("DATABENTO_API_KEY environment variable not set"))?;
+
+            let mut provider = DatabentoClient::from_api_key(api_key);
+            provider.connect().await?;
+            provider.discover_symbols(args.exchange.as_deref()).await?
+        }
+        "kraken" => {
+            let provider = KrakenProvider::spot();
+            provider.discover_symbols(args.exchange.as_deref()).await?
+        }
+        "kraken_futures" => {
+            let provider = KrakenProvider::futures(false); // production
+            provider.discover_symbols(args.exchange.as_deref()).await?
+        }
+        _ => {
+            error!(
+                "Unknown provider: {}. Supported: databento, kraken, kraken_futures",
+                args.provider
+            );
+            return Ok(());
+        }
+    };
 
     info!("Discovered {} symbols:", symbols.len());
     for symbol in &symbols {
-        info!("  {}", symbol);
+        info!("  {} ({})", symbol.symbol, symbol.exchange);
     }
 
     if args.auto_add && !symbols.is_empty() {
