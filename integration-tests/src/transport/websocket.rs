@@ -601,6 +601,13 @@ impl TickTransport for WebSocketTransport {
                     .send_async(TransportMessage::Batch(batch))
                     .await?;
             }
+            // L1/L2 events not yet supported via WebSocket transport
+            StreamEvent::Quote(_)
+            | StreamEvent::QuoteBatch(_)
+            | StreamEvent::OrderBookSnapshot(_)
+            | StreamEvent::OrderBookUpdate(_) => {
+                // TODO: Implement quote/orderbook transport when needed
+            }
         }
 
         Ok(())

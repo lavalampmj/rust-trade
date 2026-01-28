@@ -587,6 +587,11 @@ pub struct OrderBookDelta {
     /// Flags (venue-specific)
     #[serde(default)]
     pub flags: u8,
+
+    /// Order ID for L3 (MBO) data
+    /// Present when delta represents an individual order action
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order_id: Option<u64>,
 }
 
 impl OrderBookDelta {
@@ -611,6 +616,7 @@ impl OrderBookDelta {
             order_count: 0,
             sequence: 0,
             flags: 0,
+            order_id: None,
         }
     }
 

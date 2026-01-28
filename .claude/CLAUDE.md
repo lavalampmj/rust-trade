@@ -591,7 +591,10 @@ shutdown_tx.send(()).ok();
 3. Add provider settings in `data-manager/src/config/settings.rs`
 4. Add provider dispatch in `data-manager/src/cli/serve.rs`
 
-**Existing providers**: Binance (trades), Kraken Spot/Futures (trades, L1 quotes, L2 orderbook), Databento (historical)
+**Existing providers**:
+- Binance: trades (live)
+- Kraken Spot/Futures: trades, L1 quotes, L2 orderbook (live)
+- Databento: trades, L1 quotes (BBO), L2 orderbook (MBP), L3 full book (MBO), OHLC (historical + live)
 
 ### Adding a New Trading Strategy
 
