@@ -489,15 +489,18 @@ event_channel_capacity = 256
 # =================================================================
 # Define symbols directly in config (useful for development/testing)
 # These will be merged with database definitions
+#
+# NOTE: Use canonical DBT format (BTCUSD, not BTCUSDT) for all symbols.
+# Venue-specific conversions happen automatically at the edges.
 
 # Example crypto spot symbol definition
 # [[symbol_definitions]]
-# symbol = "BTCUSDT"
+# symbol = "BTCUSD"  # Canonical DBT format (converted to BTCUSDT for Binance)
 # venue = "BINANCE"
 # asset_class = "CRYPTO"
 # instrument_class = "SPOT"
 # base_currency = "BTC"
-# quote_currency = "USDT"
+# quote_currency = "USD"  # Canonical uses USD (mapped to USDT/BUSD at venue)
 # tick_size = "0.01"
 # lot_size = "0.00001"
 # min_notional = "10.0"

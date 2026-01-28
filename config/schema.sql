@@ -25,11 +25,12 @@ CREATE TABLE IF NOT EXISTS tick_data (
     -- 3. Time zone info avoids issues like daylight saving time
     timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
 
-    -- 【Trading Pair】e.g., 'BTCUSDT', 'ETHUSDT'
+    -- 【Trading Pair】Uses canonical DBT format, e.g., 'BTCUSD', 'ETHUSD'
     -- Why use VARCHAR(20):
-    -- 1. Cryptocurrency trading pairs are typically 8-15 characters
+    -- 1. Cryptocurrency trading pairs are typically 6-15 characters
     -- 2. Reserved space for future new trading pairs
     -- 3. Fixed length storage offers better performance
+    -- Note: Venue-specific formats (BTCUSDT, BTC/USD) are converted to canonical at ingestion
     symbol VARCHAR(20) NOT NULL,
 
     -- 【Trade Price】Use DECIMAL to ensure precision
@@ -99,8 +100,8 @@ END $$;
 
 -- 【Index 1】Real-time trading query index
 -- Use cases:
--- - Fetch the latest price for a trading pair: WHERE symbol = 'BTCUSDT' ORDER BY timestamp DESC LIMIT 1
--- - Get recent N minutes data of a trading pair: WHERE symbol = 'BTCUSDT' AND timestamp >= NOW() - INTERVAL '5 minutes'
+-- - Fetch the latest price for a trading pair: WHERE symbol = 'BTCUSD' ORDER BY timestamp DESC LIMIT 1
+-- - Get recent N minutes data of a trading pair: WHERE symbol = 'BTCUSD' AND timestamp >= NOW() - INTERVAL '5 minutes'
 -- - Real-time price push, risk control checks, and other high-frequency operations
 -- Design notes:
 -- - Composite index (symbol, timestamp DESC): group by symbol first, then order by time descending
@@ -391,7 +392,7 @@ CREATE TABLE IF NOT EXISTS quote_data (
     -- Event timestamp from exchange
     timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
 
-    -- Trading pair (e.g., 'BTCUSDT')
+    -- Trading pair in canonical DBT format (e.g., 'BTCUSD')
     symbol VARCHAR(20) NOT NULL,
 
     -- Exchange identifier (e.g., 'KRAKEN', 'BINANCE')
@@ -475,7 +476,7 @@ CREATE TABLE IF NOT EXISTS orderbook_levels (
     -- Event timestamp from exchange
     timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
 
-    -- Trading pair (e.g., 'BTCUSDT')
+    -- Trading pair in canonical DBT format (e.g., 'BTCUSD')
     symbol VARCHAR(20) NOT NULL,
 
     -- Exchange identifier
@@ -583,7 +584,8 @@ CREATE TABLE IF NOT EXISTS instrument_mappings (
     -- DBN instrument_id (hash-based, deterministic)
     instrument_id BIGINT PRIMARY KEY,
 
-    -- Symbol as used by the exchange (e.g., 'BTCUSDT', 'XBT/USD')
+    -- Symbol in canonical DBT format (e.g., 'BTCUSD', 'ETHUSD')
+    -- Note: This stores the normalized canonical symbol, not venue-specific formats
     symbol VARCHAR(50) NOT NULL,
 
     -- Exchange/venue identifier (e.g., 'BINANCE', 'KRAKEN')

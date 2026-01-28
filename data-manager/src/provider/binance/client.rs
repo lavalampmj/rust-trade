@@ -25,7 +25,8 @@ use crate::provider::{
 };
 use crate::symbol::SymbolSpec;
 
-use super::normalizer::{build_trade_streams, BinanceNormalizer};
+use super::normalizer::BinanceNormalizer;
+use super::symbol::to_binance;
 use super::types::{BinanceStreamMessage, BinanceSubscribeMessage, BinanceTradeMessage};
 
 /// Default Binance US WebSocket URL
@@ -146,6 +147,27 @@ impl BinanceProvider {
         )))
     }
 
+    /// Build WebSocket subscription streams for Binance
+    ///
+    /// Converts canonical symbols (e.g., `BTCUSD`) to Binance format (e.g., `btcusdt@trade`)
+    fn build_trade_streams(symbols: &[String]) -> Result<Vec<String>, ProviderError> {
+        if symbols.is_empty() {
+            return Err(ProviderError::Configuration(
+                "No symbols provided".to_string(),
+            ));
+        }
+
+        let mut streams = Vec::with_capacity(symbols.len());
+
+        for symbol in symbols {
+            // Convert canonical symbol to Binance format
+            let binance_symbol = to_binance(symbol)?;
+            streams.push(format!("{}@trade", binance_symbol.to_lowercase()));
+        }
+
+        Ok(streams)
+    }
+
     /// Handle WebSocket connection with reconnection logic
     async fn handle_websocket_connection(
         &self,
@@ -154,7 +176,7 @@ impl BinanceProvider {
         mut shutdown_rx: broadcast::Receiver<()>,
     ) -> ProviderResult<()> {
         let symbol_names: Vec<String> = symbols.iter().map(|s| s.symbol.clone()).collect();
-        let streams = build_trade_streams(&symbol_names)?;
+        let streams = Self::build_trade_streams(&symbol_names)?;
 
         info!(
             "Connecting to Binance WebSocket with {} streams",
@@ -374,18 +396,18 @@ impl DataProvider for BinanceProvider {
     }
 
     async fn discover_symbols(&self, _exchange: Option<&str>) -> ProviderResult<Vec<SymbolSpec>> {
-        // Binance has many symbols - return common crypto pairs
+        // Binance has many symbols - return common crypto pairs in canonical (DBT) format
         Ok(vec![
-            SymbolSpec::new("BTCUSDT", "BINANCE"),
-            SymbolSpec::new("ETHUSDT", "BINANCE"),
-            SymbolSpec::new("SOLUSDT", "BINANCE"),
-            SymbolSpec::new("BNBUSDT", "BINANCE"),
-            SymbolSpec::new("XRPUSDT", "BINANCE"),
-            SymbolSpec::new("ADAUSDT", "BINANCE"),
-            SymbolSpec::new("DOGEUSDT", "BINANCE"),
-            SymbolSpec::new("AVAXUSDT", "BINANCE"),
-            SymbolSpec::new("DOTUSDT", "BINANCE"),
-            SymbolSpec::new("MATICUSDT", "BINANCE"),
+            SymbolSpec::new("BTCUSD", "BINANCE"),
+            SymbolSpec::new("ETHUSD", "BINANCE"),
+            SymbolSpec::new("SOLUSD", "BINANCE"),
+            SymbolSpec::new("BNBUSD", "BINANCE"),
+            SymbolSpec::new("XRPUSD", "BINANCE"),
+            SymbolSpec::new("ADAUSD", "BINANCE"),
+            SymbolSpec::new("DOGEUSD", "BINANCE"),
+            SymbolSpec::new("AVAXUSD", "BINANCE"),
+            SymbolSpec::new("DOTUSD", "BINANCE"),
+            SymbolSpec::new("MATICUSD", "BINANCE"),
         ])
     }
 }
@@ -477,6 +499,30 @@ mod tests {
         let provider = BinanceProvider::new();
         let symbols = provider.discover_symbols(None).await.unwrap();
         assert!(!symbols.is_empty());
-        assert!(symbols.iter().any(|s| s.symbol == "BTCUSDT"));
+        // Should return canonical symbols (BTCUSD, not BTCUSDT)
+        assert!(symbols.iter().any(|s| s.symbol == "BTCUSD"));
+        assert!(!symbols.iter().any(|s| s.symbol == "BTCUSDT"));
+    }
+
+    #[test]
+    fn test_build_trade_streams() {
+        // Canonical symbols should be converted to Binance format for WebSocket
+        let symbols = vec!["BTCUSD".to_string(), "ETHUSD".to_string()];
+        let streams = BinanceProvider::build_trade_streams(&symbols).unwrap();
+
+        assert_eq!(streams.len(), 2);
+        assert_eq!(streams[0], "btcusdt@trade");
+        assert_eq!(streams[1], "ethusdt@trade");
+    }
+
+    #[test]
+    fn test_build_trade_streams_passthrough() {
+        // Already in Binance format should also work
+        let symbols = vec!["BTCUSDT".to_string(), "ETHBUSD".to_string()];
+        let streams = BinanceProvider::build_trade_streams(&symbols).unwrap();
+
+        assert_eq!(streams.len(), 2);
+        assert_eq!(streams[0], "btcusdt@trade");
+        assert_eq!(streams[1], "ethbusd@trade");
     }
 }

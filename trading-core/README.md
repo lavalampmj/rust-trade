@@ -99,7 +99,7 @@ Database → Repository → Backtest Engine → Strategy → Portfolio → Metri
 4. **Symbol configuration**
    ```toml
    # config/development.toml
-   symbols = ["BTCUSDT", "ETHUSDT", "ADAUSDT"]
+   symbols = ["BTCUSD", "ETHUSD", "ADAUSD"]
    ```
 
 ### **Running the Application**
@@ -107,7 +107,7 @@ Database → Repository → Backtest Engine → Strategy → Portfolio → Metri
 #### **Live Data Collection**
 ```bash
 # First, start data-manager (in a separate terminal)
-cd ../data-manager && cargo run serve --live --ipc --symbols BTCUSDT,ETHUSDT
+cd ../data-manager && cargo run serve --live --ipc --symbols BTCUSD,ETHUSD
 
 # Then start trading-core to receive data via IPC
 cargo run
@@ -237,17 +237,17 @@ Select strategy (1-2): 1
 ✅ Selected Strategy: Simple Moving Average
 
 📊 Symbol Selection:
-  1) BTCUSDT (456,789 records)
-  2) ETHUSDT (234,567 records)
+  1) BTCUSD (456,789 records)
+  2) ETHUSD (234,567 records)
   ...
 
 Select symbol: 1
-✅ Selected Symbol: BTCUSDT
+✅ Selected Symbol: BTCUSD
 
 Enter initial capital (default: $10000): $50000
 Enter commission rate % (default: 0.1%): 0.1
 
-🔍 Loading historical data: BTCUSDT latest 10000 records...
+🔍 Loading historical data: BTCUSD latest 10000 records...
 ✅ Loaded 10000 data points
 
 Starting backtest...

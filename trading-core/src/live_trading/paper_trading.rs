@@ -59,12 +59,13 @@ impl PaperTradingProcessor {
         // For OnEachTick, we still need the generator to track OHLC state
         let ohlc_generator = {
             // Extract symbol from strategy - for now use a default, could be configured
-            let symbol = "BTCUSDT".to_string(); // TODO: Make configurable
+            // Uses canonical DBT format (BTCUSD, not BTCUSDT)
+            let symbol = "BTCUSD".to_string(); // TODO: Make configurable
             Some(RealtimeOHLCGenerator::new(symbol.clone(), bar_type))
         };
 
-        // Initialize BarsContext with strategy's max lookback
-        let bars_context = BarsContext::with_lookback("BTCUSDT", max_lookback);
+        // Initialize BarsContext with strategy's max lookback (canonical DBT format)
+        let bars_context = BarsContext::with_lookback("BTCUSD", max_lookback);
 
         println!("📊 Paper Trading initialized:");
         println!("   Strategy: {}", strategy.name());
@@ -105,12 +106,12 @@ impl PaperTradingProcessor {
     /// - Transition to Realtime when warmup completes (unlike backtest)
     ///
     /// # Arguments
-    /// - `symbol`: The trading symbol for this session (e.g., "BTCUSDT")
+    /// - `symbol`: The trading symbol for this session in canonical DBT format (e.g., "BTCUSD")
     ///
     /// # Example
     /// ```ignore
     /// let processor = PaperTradingProcessor::new(strategy, repo, capital)
-    ///     .with_state_tracking("BTCUSDT")?;
+    ///     .with_state_tracking("BTCUSD")?;
     /// ```
     #[allow(dead_code)]
     pub fn with_state_tracking(mut self, symbol: &str) -> Result<Self, String> {

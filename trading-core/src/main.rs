@@ -436,7 +436,8 @@ async fn run_backtest_interactive(
             return Ok(());
         }
     } else if input.is_empty() {
-        "BTCUSDT".to_string()
+        // Default to canonical DBT format symbol
+        "BTCUSD".to_string()
     } else {
         input.to_uppercase()
     };

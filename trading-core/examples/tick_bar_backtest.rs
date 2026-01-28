@@ -69,7 +69,7 @@ async fn main() -> Result<(), String> {
         .symbol_info
         .first()
         .map(|s| s.symbol.clone())
-        .unwrap_or_else(|| "BTCUSDT".to_string());
+        .unwrap_or_else(|| "BTCUSD".to_string()); // Canonical DBT format
 
     println!("Using symbol: {}", symbol);
 

@@ -2,6 +2,12 @@
 //!
 //! Converts Binance-specific message formats to TickData and DBN-native types.
 //!
+//! # Symbol Conversion
+//!
+//! Binance symbols (e.g., `BTCUSDT`) are automatically converted to canonical
+//! DBT format (e.g., `BTCUSD`) during normalization. This ensures all internal
+//! data uses the canonical symbology.
+//!
 //! # DBN-Native Methods
 //!
 //! This normalizer provides DBN-native output methods for efficient processing:
@@ -22,6 +28,7 @@ use trading_common::data::{
     create_trade_msg_from_decimals, datetime_to_nanos, TradeMsg, TradeSideCompat,
 };
 
+use super::symbol::to_canonical;
 use super::types::BinanceTradeMessage;
 
 /// Shared symbol validator for Binance (3-20 chars, alphanumeric)
@@ -43,6 +50,9 @@ impl BinanceNormalizer {
     }
 
     /// Normalize a Binance trade message to TickData
+    ///
+    /// Automatically converts Binance symbol format (e.g., `BTCUSDT`) to
+    /// canonical DBT format (e.g., `BTCUSD`).
     pub fn normalize(&self, msg: BinanceTradeMessage) -> Result<TickData, ProviderError> {
         // Parse timestamp
         let ts_event = DateTime::from_timestamp_millis(msg.trade_time as i64)
@@ -79,10 +89,13 @@ impl BinanceNormalizer {
         // Get next sequence number
         let sequence = self.sequence.next();
 
+        // Convert Binance symbol to canonical format (BTCUSDT -> BTCUSD)
+        let canonical_symbol = to_canonical(&msg.symbol)?;
+
         Ok(TickData::with_details(
             ts_event,
             Utc::now(),
-            msg.symbol,
+            canonical_symbol,
             "BINANCE".to_string(),
             price,
             quantity,
@@ -108,6 +121,9 @@ impl BinanceNormalizer {
     ///
     /// This produces a native `dbn::TradeMsg` without intermediate TickData conversion,
     /// which is more efficient for DBN-native pipelines.
+    ///
+    /// Automatically converts Binance symbol format (e.g., `BTCUSDT`) to
+    /// canonical DBT format (e.g., `BTCUSD`).
     pub fn normalize_to_dbn(&self, msg: BinanceTradeMessage) -> Result<TradeMsg, ProviderError> {
         // Parse timestamp
         let ts_event = DateTime::from_timestamp_millis(msg.trade_time as i64)
@@ -144,13 +160,16 @@ impl BinanceNormalizer {
         // Get next sequence number
         let sequence = self.sequence.next();
 
+        // Convert Binance symbol to canonical format (BTCUSDT -> BTCUSD)
+        let canonical_symbol = to_canonical(&msg.symbol)?;
+
         let ts_nanos = datetime_to_nanos(ts_event);
         let ts_recv_nanos = datetime_to_nanos(Utc::now());
 
         Ok(create_trade_msg_from_decimals(
             ts_nanos,
             ts_recv_nanos,
-            &msg.symbol,
+            &canonical_symbol,
             "BINANCE",
             price,
             quantity,
@@ -175,24 +194,6 @@ pub fn validate_symbol(symbol: &str) -> Result<String, ProviderError> {
         .map_err(|e| ProviderError::Configuration(e.to_string()))
 }
 
-/// Build WebSocket subscription streams for Binance
-pub fn build_trade_streams(symbols: &[String]) -> Result<Vec<String>, ProviderError> {
-    if symbols.is_empty() {
-        return Err(ProviderError::Configuration(
-            "No symbols provided".to_string(),
-        ));
-    }
-
-    let mut streams = Vec::with_capacity(symbols.len());
-
-    for symbol in symbols {
-        let validated_symbol = validate_symbol(symbol)?;
-        streams.push(format!("{}@trade", validated_symbol.to_lowercase()));
-    }
-
-    Ok(streams)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,7 +214,8 @@ mod tests {
 
         let tick = normalizer.normalize(msg).unwrap();
 
-        assert_eq!(tick.symbol, "BTCUSDT");
+        // Symbol is converted to canonical format (BTCUSDT -> BTCUSD)
+        assert_eq!(tick.symbol, "BTCUSD");
         assert_eq!(tick.exchange, "BINANCE");
         assert_eq!(tick.price, dec!(50000.00));
         assert_eq!(tick.quantity, dec!(0.001));
@@ -238,6 +240,8 @@ mod tests {
         };
 
         let tick = normalizer.normalize(msg).unwrap();
+        // Symbol is converted to canonical format (ETHUSDT -> ETHUSD)
+        assert_eq!(tick.symbol, "ETHUSD");
         assert_eq!(tick.side, TradeSide::Sell);
         assert!(tick.is_buyer_maker);
     }
@@ -271,13 +275,57 @@ mod tests {
     }
 
     #[test]
-    fn test_build_streams() {
-        let symbols = vec!["BTCUSDT".to_string(), "ETHUSDT".to_string()];
-        let streams = build_trade_streams(&symbols).unwrap();
+    fn test_symbol_conversion_busd() {
+        let normalizer = BinanceNormalizer::new();
 
-        assert_eq!(streams.len(), 2);
-        assert_eq!(streams[0], "btcusdt@trade");
-        assert_eq!(streams[1], "ethusdt@trade");
+        let msg = BinanceTradeMessage {
+            symbol: "BTCBUSD".to_string(), // BUSD stablecoin
+            trade_id: 12345,
+            price: "50000.00".to_string(),
+            quantity: "0.001".to_string(),
+            trade_time: 1672515782136,
+            is_buyer_maker: false,
+        };
+
+        let tick = normalizer.normalize(msg).unwrap();
+        // BTCBUSD should be converted to BTCUSD (canonical)
+        assert_eq!(tick.symbol, "BTCUSD");
+    }
+
+    #[test]
+    fn test_symbol_conversion_usdc() {
+        let normalizer = BinanceNormalizer::new();
+
+        let msg = BinanceTradeMessage {
+            symbol: "ETHUSDC".to_string(), // USDC stablecoin
+            trade_id: 12345,
+            price: "3000.00".to_string(),
+            quantity: "0.1".to_string(),
+            trade_time: 1672515782136,
+            is_buyer_maker: false,
+        };
+
+        let tick = normalizer.normalize(msg).unwrap();
+        // ETHUSDC should be converted to ETHUSD (canonical)
+        assert_eq!(tick.symbol, "ETHUSD");
+    }
+
+    #[test]
+    fn test_symbol_non_usd_pair() {
+        let normalizer = BinanceNormalizer::new();
+
+        let msg = BinanceTradeMessage {
+            symbol: "ETHBTC".to_string(), // Non-USD pair
+            trade_id: 12345,
+            price: "0.05".to_string(),
+            quantity: "0.1".to_string(),
+            trade_time: 1672515782136,
+            is_buyer_maker: false,
+        };
+
+        let tick = normalizer.normalize(msg).unwrap();
+        // ETHBTC should remain as-is (not a USD pair)
+        assert_eq!(tick.symbol, "ETHBTC");
     }
 
     #[test]

@@ -696,7 +696,7 @@ mod tests {
         TickData::with_details(
             timestamp,
             timestamp,
-            "BTCUSDT".to_string(),
+            "BTCUSD".to_string(),
             "TEST".to_string(),
             Decimal::from_str(price).unwrap(),
             Decimal::from_str("1.0").unwrap(),
@@ -711,7 +711,7 @@ mod tests {
     #[test]
     fn test_time_based_single_bar() {
         let mut gen =
-            RealtimeOHLCGenerator::new_time_based("BTCUSDT".to_string(), Timeframe::OneMinute);
+            RealtimeOHLCGenerator::new_time_based("BTCUSD".to_string(), Timeframe::OneMinute);
 
         let base_time = Utc::now()
             .with_second(0)
@@ -738,7 +738,7 @@ mod tests {
     #[test]
     fn test_time_based_bar_close() {
         let mut gen =
-            RealtimeOHLCGenerator::new_time_based("BTCUSDT".to_string(), Timeframe::OneMinute);
+            RealtimeOHLCGenerator::new_time_based("BTCUSD".to_string(), Timeframe::OneMinute);
 
         let base_time = Utc::now()
             .with_second(0)
@@ -764,7 +764,7 @@ mod tests {
 
     #[test]
     fn test_tick_based_bar() {
-        let mut gen = RealtimeOHLCGenerator::new_tick_based("BTCUSDT".to_string(), 3);
+        let mut gen = RealtimeOHLCGenerator::new_tick_based("BTCUSD".to_string(), 3);
 
         let base_time = Utc::now();
 
@@ -797,7 +797,7 @@ mod tests {
     #[test]
     fn test_timer_close() {
         let mut gen =
-            RealtimeOHLCGenerator::new_time_based("BTCUSDT".to_string(), Timeframe::OneMinute);
+            RealtimeOHLCGenerator::new_time_based("BTCUSD".to_string(), Timeframe::OneMinute);
 
         let base_time = Utc::now()
             .with_second(0)
@@ -822,7 +822,7 @@ mod tests {
     #[test]
     fn test_synthetic_bar() {
         let mut gen =
-            RealtimeOHLCGenerator::new_time_based("BTCUSDT".to_string(), Timeframe::OneMinute);
+            RealtimeOHLCGenerator::new_time_based("BTCUSD".to_string(), Timeframe::OneMinute);
 
         let base_time = Utc::now()
             .with_second(0)
@@ -856,7 +856,7 @@ mod tests {
     #[test]
     fn test_session_config_default() {
         let gen =
-            RealtimeOHLCGenerator::new_time_based("BTCUSDT".to_string(), Timeframe::OneMinute);
+            RealtimeOHLCGenerator::new_time_based("BTCUSD".to_string(), Timeframe::OneMinute);
 
         // Default config should be 24/7 (no session schedule)
         assert!(gen.session_config().session_schedule.is_none());
@@ -871,7 +871,7 @@ mod tests {
             .with_session_close_truncation(true);
 
         let gen = RealtimeOHLCGenerator::with_session_config(
-            "BTCUSDT".to_string(),
+            "BTCUSD".to_string(),
             BarType::TimeBased(Timeframe::OneMinute),
             config,
         );
@@ -883,7 +883,7 @@ mod tests {
     #[test]
     fn test_set_session_config() {
         let mut gen =
-            RealtimeOHLCGenerator::new_time_based("BTCUSDT".to_string(), Timeframe::OneMinute);
+            RealtimeOHLCGenerator::new_time_based("BTCUSD".to_string(), Timeframe::OneMinute);
 
         // Initially default config
         assert!(!gen.session_config().align_to_session_open);
@@ -902,7 +902,7 @@ mod tests {
     fn test_no_session_config_flags_false() {
         // Without session config, session flags should be false
         let mut gen =
-            RealtimeOHLCGenerator::new_time_based("BTCUSDT".to_string(), Timeframe::OneMinute);
+            RealtimeOHLCGenerator::new_time_based("BTCUSD".to_string(), Timeframe::OneMinute);
 
         let base_time = Utc::now()
             .with_second(0)
@@ -923,7 +923,7 @@ mod tests {
         // 24/7 markets should work correctly with session config set to continuous
         let config = SessionAwareConfig::continuous();
         let mut gen = RealtimeOHLCGenerator::with_session_config(
-            "BTCUSDT".to_string(),
+            "BTCUSD".to_string(),
             BarType::TimeBased(Timeframe::OneMinute),
             config,
         );
@@ -946,7 +946,7 @@ mod tests {
     #[test]
     fn test_on_session_start_resets_state() {
         let mut gen =
-            RealtimeOHLCGenerator::new_time_based("BTCUSDT".to_string(), Timeframe::OneMinute);
+            RealtimeOHLCGenerator::new_time_based("BTCUSD".to_string(), Timeframe::OneMinute);
 
         let base_time = Utc::now()
             .with_second(0)
@@ -971,7 +971,7 @@ mod tests {
     #[test]
     fn test_tick_based_session_flags_default() {
         // Tick-based bars should also have session flags defaulting to false
-        let mut gen = RealtimeOHLCGenerator::new_tick_based("BTCUSDT".to_string(), 3);
+        let mut gen = RealtimeOHLCGenerator::new_tick_based("BTCUSD".to_string(), 3);
 
         let base_time = Utc::now();
 
@@ -986,7 +986,7 @@ mod tests {
     #[test]
     fn test_timer_close_session_flags_propagated() {
         let mut gen =
-            RealtimeOHLCGenerator::new_time_based("BTCUSDT".to_string(), Timeframe::OneMinute);
+            RealtimeOHLCGenerator::new_time_based("BTCUSD".to_string(), Timeframe::OneMinute);
 
         let base_time = Utc::now()
             .with_second(0)
@@ -1024,7 +1024,7 @@ mod tests {
     fn test_bar_close_subsequent_bars_not_session_aligned() {
         // After first bar closes, subsequent bars should not be session-aligned
         let mut gen =
-            RealtimeOHLCGenerator::new_time_based("BTCUSDT".to_string(), Timeframe::OneMinute);
+            RealtimeOHLCGenerator::new_time_based("BTCUSD".to_string(), Timeframe::OneMinute);
 
         let base_time = Utc::now()
             .with_second(0)
@@ -1050,7 +1050,7 @@ mod tests {
 
     #[test]
     fn test_tick_based_bar_close_subsequent_bars_not_session_aligned() {
-        let mut gen = RealtimeOHLCGenerator::new_tick_based("BTCUSDT".to_string(), 2);
+        let mut gen = RealtimeOHLCGenerator::new_tick_based("BTCUSD".to_string(), 2);
 
         let base_time = Utc::now();
 
