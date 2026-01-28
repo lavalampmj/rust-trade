@@ -11,3 +11,6 @@ __pycache__/
 
 # Python virtual environment
 .venv/
+
+# Data directory
+/data/
